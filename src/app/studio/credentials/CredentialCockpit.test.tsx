@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderWithIntl as render } from "@/test/renderWithIntl";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CredentialCockpit } from "./CredentialCockpit";
 
@@ -139,7 +140,7 @@ describe("CredentialCockpit", () => {
       });
       fireEvent.submit(
         screen.getByRole("button", {
-          name: "Vault Credential Profile",
+          name: "Vault credential profile",
         }).closest("form")!,
       );
     };
@@ -335,7 +336,7 @@ describe("CredentialCockpit", () => {
       expect(mutations.some((item) => item.capability === "credentials.profiles.reprovision@1")).toBe(true),
     );
 
-    fireEvent.change(screen.getByPlaceholderText("Agent Principal ID"), {
+    fireEvent.change(screen.getByPlaceholderText("Agent principal ID"), {
       target: { value: "agent-2" },
     });
     fireEvent.change(screen.getAllByRole("combobox")[0], {
@@ -344,7 +345,7 @@ describe("CredentialCockpit", () => {
     fireEvent.change(screen.getByPlaceholderText("Bound in cents"), {
       target: { value: "50" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Create Spend Grant" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create spend grant" }));
     await waitFor(() =>
       expect(mutations.some((item) => item.capability === "credentials.spend_grants.create@1")).toBe(true),
     );

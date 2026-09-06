@@ -1,6 +1,7 @@
 "use client"
 
 import type { ComposerMediaItem } from "@/store/socialComposerStore"
+import { useTranslations } from "next-intl"
 
 interface MastodonPreviewProps {
   displayName: string
@@ -15,6 +16,7 @@ export function MastodonPreview({
   content,
   media,
 }: MastodonPreviewProps) {
+  const t = useTranslations("social.preview")
   const images = media.filter((m) => m.type === "image").slice(0, 4)
 
   return (
@@ -23,12 +25,12 @@ export function MastodonPreview({
         <div className="size-9 flex-shrink-0 rounded-full bg-muted" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-col">
-            <span className="text-xs font-semibold">{displayName}</span>
+            <bdi className="text-xs font-semibold">{displayName}</bdi>
             <span className="text-[10px] text-muted-foreground">
-              {username ? `@${username}` : ""}
+              <bdi dir="ltr">{username ? `@${username}` : ""}</bdi>
             </span>
           </div>
-          <p className="mt-2 whitespace-pre-line text-xs leading-relaxed">
+          <p dir="auto" className="mt-2 whitespace-pre-line text-xs leading-relaxed">
             {content}
           </p>
           {images.length > 0 && (
@@ -58,10 +60,10 @@ export function MastodonPreview({
             </div>
           )}
           <div className="mt-2 flex gap-6 text-[10px] text-muted-foreground">
-            <span>Reply</span>
-            <span>Boost</span>
-            <span>Favourite</span>
-            <span>Bookmark</span>
+            <span>{t("reply")}</span>
+            <span>{t("boost")}</span>
+            <span>{t("favourite")}</span>
+            <span>{t("bookmark")}</span>
           </div>
         </div>
       </div>

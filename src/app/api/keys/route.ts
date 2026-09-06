@@ -5,6 +5,7 @@ import { isByokProvider } from "@/lib/byok/providers";
 import { validateProviderKey } from "@/lib/byok/validation";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 import type { ProviderKeySummary } from "@/lib/byok/repository";
+import { requireGovernanceStepUp } from "@/lib/governance/step-up-http";
 
 const ROUTE = "/api/keys";
 
@@ -22,7 +23,7 @@ interface KeySaveResponse {
 
 /** List the current workspace's BYOK provider keys — masked hints only. */
 export const GET = withStudioAuth<undefined>(
-  { route: ROUTE, action: "read" },
+  { route: ROUTE, action: "read", permission: "workspaces:read" },
   async (
     _request: NextRequest,
     authz,
@@ -39,7 +40,7 @@ export const GET = withStudioAuth<undefined>(
  * reaches the vault.
  */
 export const POST = withStudioAuth<undefined>(
-  { route: ROUTE, action: "write" },
+  { route: ROUTE, action: "write", permission: "workspaces:write" },
   async (
     request: NextRequest,
     authz,
@@ -80,6 +81,9 @@ export const POST = withStudioAuth<undefined>(
         { status: 400 },
       );
     }
+
+    const stepUpDenied = await requireGovernanceStepUp({ request, workspaceId: authz.workspaceId, userId: authz.userId, purpose: "credential.replace", resourceId: provider });
+    if (stepUpDenied) return stepUpDenied as NextResponse<KeySaveResponse>;
 
     const validation = await validateProviderKey(provider, apiKey);
     if (!validation.ok) {

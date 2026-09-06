@@ -134,6 +134,8 @@ export type ResolvedSecurityContext =
       workspaceId: string;
       userId: string;
       role: "owner" | "admin" | "member";
+      /** Opaque server-validated session identity used to bind replay. */
+      authContextId?: string;
       /**
        * Server-validated transport key for durable human mutations.
        */

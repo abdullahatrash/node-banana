@@ -3,6 +3,8 @@ import type {
   AuthenticateParams,
   AuthenticateResult,
   GenerateAuthUrlResult,
+  PostMetricsRequest,
+  PostMetricsResult,
   ProviderCapabilities,
   PublishRequest,
   PublishResult,
@@ -12,6 +14,7 @@ import type {
   SocialProviderError,
 } from "@/lib/social/provider-interface";
 import { registerProvider } from "@/lib/social/provider-registry";
+import { normalizedMetrics, responseRequestId, validatePostMetricIds } from "@/lib/social/post-metrics";
 
 const TIKTOK_OAUTH_SCOPES = [
   "video.list",
@@ -27,6 +30,8 @@ const TIKTOK_USER_INFO_URL =
   "https://open.tiktokapis.com/v2/user/info/?fields=open_id,avatar_url,display_name,union_id,username";
 const TIKTOK_PUBLISH_STATUS_URL =
   "https://open.tiktokapis.com/v2/post/publish/status/fetch/";
+const TIKTOK_VIDEO_QUERY_URL =
+  "https://open.tiktokapis.com/v2/video/query/?fields=id,view_count,like_count,comment_count,share_count";
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -311,6 +316,7 @@ export const tikTokProvider: SocialProviderAdapter = {
   supportsCarousel: true,
   maxImages: 35,
   maxConcurrentJobs: 5,
+  maxPostMetricsBatchSize: 20,
   requiresPageSelection: false,
 
   async generateAuthUrl(callbackUrl: string): Promise<GenerateAuthUrlResult> {
@@ -457,6 +463,35 @@ export const tikTokProvider: SocialProviderAdapter = {
     return fetchTikTokPublishStatus(platformUserId, platformPostId, accessToken);
   },
 
+  async getPostMetrics(request: PostMetricsRequest): Promise<PostMetricsResult[]> {
+    const ids = validatePostMetricIds(request.platformPostIds, 20);
+    const response = await fetch(TIKTOK_VIDEO_QUERY_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${request.accessToken}` },
+      body: JSON.stringify({ filters: { video_ids: ids } }),
+    });
+    const body = (await response.json()) as {
+      data?: { videos?: Array<{ id?: string; view_count?: unknown; like_count?: unknown; comment_count?: unknown; share_count?: unknown }> };
+      error?: { code?: string | number; message?: string; log_id?: string };
+    };
+    const providerCode = body.error?.code;
+    if (!response.ok || (providerCode !== undefined && providerCode !== "ok" && providerCode !== 0) || !Array.isArray(body.data?.videos)) {
+      throw new Error(`TikTok video metrics failed: ${String(providerCode ?? response.status)} ${body.error?.message ?? "unknown error"}`);
+    }
+    const requested = new Set(ids);
+    const results = body.data.videos.map((video): PostMetricsResult => {
+      if (!video.id || !requested.has(video.id)) throw new Error("SOCIAL_POST_METRICS_PROVIDER_MISMATCH");
+      return {
+        platformPostId: video.id,
+        metrics: normalizedMetrics({ views: video.view_count, likes: video.like_count, comments: video.comment_count, shares: video.share_count }),
+        sourceRef: TIKTOK_VIDEO_QUERY_URL,
+        providerRequestId: body.error?.log_id?.slice(0, 200) || responseRequestId(response, ["x-tt-logid"]),
+      };
+    });
+    if (new Set(results.map((item) => item.platformPostId)).size !== results.length) throw new Error("SOCIAL_POST_METRICS_PROVIDER_MISMATCH");
+    return results;
+  },
+
   classifyError(error: unknown): SocialProviderError {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes("access_token_invalid") || message.includes('"code":"access_token_invalid"')) {
@@ -495,6 +530,7 @@ export const tikTokProvider: SocialProviderAdapter = {
       supportsVideo: true,
       supportsCarousel: true,
       requiresPageSelection: false,
+      supportsPostMetrics: true,
     };
   },
 };

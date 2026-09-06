@@ -1,11 +1,11 @@
-import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
 import { withApiPermission } from "@/lib/studio/authz";
 import "@/lib/social/runtime-bootstrap";
 import { getProvider, isProviderRegistered } from "@/lib/social/provider-registry";
 import { isPlatformConfigured } from "@/lib/social/platform-config";
-import { getSocialPlanLimits, quotaExceededPayload } from "@/lib/social/limits";
+import { quotaExceededPayload } from "@/lib/social/limits";
+import { getWorkspaceChannelEntitlement } from "@/lib/commercial/channel-entitlement";
 import {
   countActiveSocialAccounts,
   createOAuthState,
@@ -95,16 +95,16 @@ export async function POST(
       }
       reconnectAccountId = reconnectAccount.id;
     } else {
-      const limits = getSocialPlanLimits(result.session.planTier);
+      const entitlement = await getWorkspaceChannelEntitlement(result.session.workspace.id);
       const activeChannels = await countActiveSocialAccounts(
         result.session.workspace.id,
       );
-      if (activeChannels >= limits.channels) {
+      if (activeChannels >= entitlement.connectedChannels) {
         return NextResponse.json(
           quotaExceededPayload({
             section: "channels",
             current: activeChannels,
-            limit: limits.channels,
+            limit: entitlement.connectedChannels,
           }),
           { status: 402 },
         );

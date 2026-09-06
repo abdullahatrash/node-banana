@@ -38,6 +38,57 @@
     },
     "src/app/api/social/internal/cleanup/route.ts": {
       "maxDuration": 60
+    },
+    "src/app/api/studio/internal/governance-sweep/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/operation-projection/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/replicate-recovery/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/product-telemetry-retention/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/product-campaign-runtime/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/reconcile-checkouts/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/reconcile-merchant-adjustments/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/referral-payouts/dispatch/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/notification-email/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/notification-projection/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/persona-training/dispatch/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/product-analytics-refresh/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/inspiration-trends/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/youtube-trends/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/licensed-trend-materialization/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/licensed-trend-provider-events/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/studio/internal/marketing-attribution/route.ts": {
+      "maxDuration": 60
     }
   },
   "crons": [
@@ -52,6 +103,78 @@
     {
       "path": "/api/studio/internal/observability-retention",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/governance-sweep",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/operation-projection",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/replicate-recovery",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/product-telemetry-retention?limit=500",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/studio/internal/product-campaign-runtime",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/reconcile-checkouts?limit=20",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/reconcile-merchant-adjustments?limit=20",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/referral-payouts/dispatch?limit=20",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/notification-projection?limit=50",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/notification-email?limit=20",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/persona-training/dispatch",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/product-analytics-refresh",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/inspiration-trends?limit=20",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/studio/internal/youtube-trends?limit=20",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/studio/internal/licensed-trend-materialization?limit=10",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/licensed-trend-provider-events?limit=10",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/marketing-attribution?limit=20",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/studio/internal/marketing-attribution?action=retention&limit=500",
+      "schedule": "15 2 * * *"
     },
     {
       "path": "/api/social/internal/dispatch",

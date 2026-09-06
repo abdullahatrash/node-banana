@@ -1,4 +1,5 @@
 import { betterAuth } from "better-auth";
+import { after } from "next/server";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { nextCookies } from "better-auth/next-js";
@@ -11,8 +12,13 @@ import {
   getSocialProviderConfig,
   isProductionLikeRuntime,
 } from "@/lib/auth/features";
+import { getAuthServerBaseURL } from "@/lib/auth/origins";
 import { getDb, isDatabaseConfigured, schema } from "@/lib/db";
-import { ensurePersonalWorkspaceForUser } from "@/lib/studio/repository";
+import { changeEmailConfirmationEmail, getEmailSender, verificationEmail } from "@/lib/auth/email-sender";
+import {
+  getOnboardingAnalytics,
+  recordOnboardingEventBestEffort,
+} from "@/lib/onboarding/analytics";
 
 const memoryDb = {
   user: [],
@@ -60,26 +66,16 @@ function getAuthSecret(): string {
   return DEV_SECRET_FALLBACK;
 }
 
-function getBaseUrl(): string {
+function getConfiguredBaseUrl(): string | undefined {
   const configured =
     process.env.BETTER_AUTH_URL?.trim() ||
     process.env.NEXT_PUBLIC_APP_URL?.trim() ||
     process.env.NEXT_PUBLIC_BETTER_AUTH_URL?.trim();
 
-  if (configured) {
-    return configured;
-  }
-
-  if (isProductionLikeRuntime()) {
-    throw new Error(
-      "BETTER_AUTH_URL (or NEXT_PUBLIC_APP_URL) must be set in production/staging environments.",
-    );
-  }
-
-  return "http://localhost:3000";
+  return configured;
 }
 
-function getTrustedOrigins(baseUrl: string): string[] {
+function getTrustedOrigins(configuredBaseUrl: string | undefined): string[] {
   const configured = [
     process.env.BETTER_AUTH_URL,
     process.env.NEXT_PUBLIC_APP_URL,
@@ -96,14 +92,21 @@ function getTrustedOrigins(baseUrl: string): string[] {
     configured.push("http://localhost:3000", "http://127.0.0.1:3000");
   }
 
-  configured.push(baseUrl);
+  if (configuredBaseUrl) {
+    configured.push(configuredBaseUrl);
+  }
   return Array.from(new Set(configured));
 }
 
-const baseUrl = getBaseUrl();
+const configuredBaseUrl = getConfiguredBaseUrl();
+const baseUrl = getAuthServerBaseURL(
+  configuredBaseUrl,
+  isProductionLikeRuntime(),
+);
 const authSecret = getAuthSecret();
 const authFeatureFlags = getAuthFeatureFlags();
 const authFeatureWarnings = getAuthFeatureWarnings(authFeatureFlags);
+const onboardingAnalytics = getOnboardingAnalytics();
 for (const warning of authFeatureWarnings) {
   // Keep startup resilient for optional, staged features.
   console.warn(`[auth] ${warning}`);
@@ -130,28 +133,71 @@ export const auth = betterAuth({
   basePath: "/api/auth",
   baseURL: baseUrl,
   secret: authSecret,
-  trustedOrigins: getTrustedOrigins(baseUrl),
+  trustedOrigins: getTrustedOrigins(configuredBaseUrl),
   database: getAuthDatabase(),
   plugins: authPlugins,
+  user: {
+    changeEmail: {
+      enabled: true,
+      sendChangeEmailConfirmation: async ({ user, newEmail, url }) => {
+        await getEmailSender().send(changeEmailConfirmationEmail({
+          to: user.email,
+          newEmail,
+          confirmationUrl: url,
+        }));
+      },
+    },
+  },
   emailAndPassword: {
     enabled: true,
-    requireEmailVerification: false,
+    requireEmailVerification: true,
+    minPasswordLength: 8,
+    maxPasswordLength: 128,
   },
-  socialProviders,
+  emailVerification: {
+    sendVerificationEmail: async ({ user, url }) => {
+      await getEmailSender().send(
+        verificationEmail({
+          to: user.email,
+          verificationUrl: url,
+        }),
+      );
+      await recordOnboardingEventBestEffort(onboardingAnalytics, {
+        eventName: "verification_sent",
+        userId: user.id,
+        occurredAt: new Date(),
+      });
+    },
+    sendOnSignUp: true,
+    sendOnSignIn: true,
+    autoSignInAfterVerification: true,
+    afterEmailVerification: async (user) => {
+      await recordOnboardingEventBestEffort(onboardingAnalytics, {
+        eventName: "verification_completed",
+        userId: user.id,
+        occurredAt: new Date(),
+      });
+    },
+  },
   databaseHooks: {
     user: {
       create: {
-        after: async (createdUser) => {
-          // Only provision workspace when Postgres is enabled.
-          if (!isDatabaseConfigured()) return;
-
-          await ensurePersonalWorkspaceForUser({
-            userId: createdUser.id,
-            userName: createdUser.name ?? null,
-            userEmail: createdUser.email ?? null,
+        after: async (user) => {
+          await recordOnboardingEventBestEffort(onboardingAnalytics, {
+            eventName: "signup_submitted",
+            userId: user.id,
+            occurredAt: new Date(),
           });
         },
       },
     },
   },
+  advanced: {
+    backgroundTasks: {
+      handler: (promise) => {
+        after(() => promise);
+      },
+    },
+  },
+  socialProviders,
 });

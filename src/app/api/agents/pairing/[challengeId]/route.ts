@@ -9,11 +9,12 @@ import {
   requireExplicitAgentWorkspace,
 } from "@/lib/agent-auth/http-request";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
+import { requireGovernanceStepUp } from "@/lib/governance/step-up-http";
 
 type PairingContext = { params: Promise<{ challengeId: string }> };
 
 export const GET = withStudioAuth<PairingContext>(
-  { route: "/api/agents/pairing/[challengeId]", action: "read" },
+  { route: "/api/agents/pairing/[challengeId]", action: "read", permission: "workspaces:read" },
   async (request, authz, context) => {
     const denied = requireAgentManagerRole(authz.role);
     if (denied) return denied;
@@ -34,7 +35,7 @@ export const GET = withStudioAuth<PairingContext>(
 );
 
 export const POST = withStudioAuth<PairingContext>(
-  { route: "/api/agents/pairing/[challengeId]", action: "write" },
+  { route: "/api/agents/pairing/[challengeId]", action: "write", permission: "workspaces:write" },
   async (request: NextRequest, authz, context) => {
     const denied = requireAgentManagerRole(authz.role);
     if (denied) return denied;
@@ -45,6 +46,8 @@ export const POST = withStudioAuth<PairingContext>(
     if (requestError) return requestError;
     try {
       const { challengeId } = await context.params;
+      const stepUpDenied = await requireGovernanceStepUp({ request, workspaceId: authz.workspaceId, userId: authz.userId, purpose: "agent.principal.create", resourceId: challengeId });
+      if (stepUpDenied) return stepUpDenied;
       const approval = await AGENT_AUTH_SERVICE.approvePairingConfirmation({
         confirmationId: challengeId,
         workspaceId: authz.workspaceId,

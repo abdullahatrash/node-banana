@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1280" viewBox="0 0 720 1280" role="img" aria-labelledby="title description">
+  <title id="title">TasmeemAI qualification Brand reference</title>
+  <desc id="description">A controlled bilingual vertical Brand fixture for image and video qualification.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="0.55" stop-color="#312e81"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="45%" r="55%">
+      <stop offset="0" stop-color="#fde68a" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#fde68a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="720" height="1280" fill="url(#background)"/>
+  <circle cx="360" cy="560" r="330" fill="url(#glow)" opacity="0.38"/>
+  <g fill="none" stroke="#fbbf24" stroke-width="18" stroke-linecap="round">
+    <path d="M252 456c0-92 48-164 108-164s108 72 108 164-48 164-108 164-108-72-108-164Z"/>
+    <path d="M306 396c36 26 72 26 108 0M306 516c36-26 72-26 108 0" opacity="0.72"/>
+  </g>
+  <text x="360" y="770" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="72" font-weight="700" text-anchor="middle" letter-spacing="3">TASMEEMAI</text>
+  <text x="360" y="866" fill="#fde68a" font-family="Arial, sans-serif" font-size="82" font-weight="700" text-anchor="middle" direction="rtl">تصميمي</text>
+  <text x="360" y="960" fill="#e5e7eb" font-family="Inter, Arial, sans-serif" font-size="28" text-anchor="middle" letter-spacing="5">CREATE · REMIX · PUBLISH</text>
+  <rect x="80" y="1080" width="560" height="2" fill="#ffffff" opacity="0.4"/>
+  <text x="360" y="1145" fill="#d1d5db" font-family="Inter, Arial, sans-serif" font-size="22" text-anchor="middle">CONTROLLED QUALIFICATION FIXTURE · 9:16</text>
+</svg>

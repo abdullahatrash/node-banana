@@ -43,7 +43,7 @@ export function ChannelAvatar({
         </div>
       )}
       <div
-        className="absolute -bottom-0.5 -right-0.5 rounded-full bg-neutral-900 p-0.5"
+        className="absolute -bottom-0.5 -end-0.5 rounded-full bg-neutral-900 p-0.5"
         style={{ width: badgeSize + 4, height: badgeSize + 4 }}
       >
         <PlatformIcon platform={platform} size={badgeSize} />

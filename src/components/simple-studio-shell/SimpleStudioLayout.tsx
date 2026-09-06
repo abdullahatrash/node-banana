@@ -3,21 +3,26 @@
 import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
-import { SimpleStudioAppSidebar } from "./SimpleStudioAppSidebar";
-import { SimpleStudioSiteHeader } from "./SimpleStudioSiteHeader";
+import { SimpleStudioHeaderActions } from "./SimpleStudioSiteHeader";
 import { SavePromptDialog } from "./SavePromptDialog";
-import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { ProductShell } from "@/components/product-shell/ProductShell";
+import type { ProductShellContext } from "@/lib/product-shell/server";
 import { modeFromPathname } from "./urlToMode";
 import { useGenerateShortcut } from "./useGenerateShortcut";
+import type { WorkspaceContentLanguage } from "@/lib/product-surfaces/workspace-language-preferences";
 
 interface SimpleStudioLayoutProps {
   children: React.ReactNode;
+  shellContext: ProductShellContext;
+  defaultContentLanguage: WorkspaceContentLanguage;
 }
 
-export function SimpleStudioLayout({ children }: SimpleStudioLayoutProps) {
+export function SimpleStudioLayout({ children, shellContext, defaultContentLanguage }: SimpleStudioLayoutProps) {
   const pathname = usePathname();
   const setMode = useSimpleStudioStore((s) => s.setMode);
   const loadRecentResults = useSimpleStudioStore((s) => s.loadRecentResults);
+  const setDialogueLanguage = useSimpleStudioStore((s) => s.setDialogueLanguage);
+  const setOutputLanguage = useSimpleStudioStore((s) => s.setOutputLanguage);
   const initialized = useRef(false);
 
   // Sync store mode with URL on every pathname change
@@ -28,6 +33,11 @@ export function SimpleStudioLayout({ children }: SimpleStudioLayoutProps) {
     }
   }, [pathname, setMode]);
 
+  useEffect(() => {
+    setDialogueLanguage(defaultContentLanguage);
+    setOutputLanguage(defaultContentLanguage);
+  }, [defaultContentLanguage, setDialogueLanguage, setOutputLanguage]);
+
   useGenerateShortcut(pathname);
 
   // Load recent results once on first mount
@@ -37,20 +47,9 @@ export function SimpleStudioLayout({ children }: SimpleStudioLayoutProps) {
   }
 
   return (
-    <SidebarProvider
-      style={
-        {
-          "--sidebar-width": "calc(var(--spacing) * 64)",
-          "--header-height": "calc(var(--spacing) * 12)",
-        } as React.CSSProperties
-      }
-    >
-      <SimpleStudioAppSidebar variant="inset" />
-      <SidebarInset>
-        <SimpleStudioSiteHeader />
-        <div className="flex flex-1 flex-col">{children}</div>
-        <SavePromptDialog />
-      </SidebarInset>
-    </SidebarProvider>
+    <ProductShell context={shellContext} headerActions={<SimpleStudioHeaderActions />}>
+      {children}
+      <SavePromptDialog />
+    </ProductShell>
   );
 }

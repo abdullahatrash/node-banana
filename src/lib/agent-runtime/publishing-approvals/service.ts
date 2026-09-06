@@ -11,6 +11,7 @@ import type {
   PublishingApprovalDto,
   PublishingApprovalListFilters,
   PublishingApprovalListPosition,
+  PublishingApprovalGovernancePolicyPort,
   PublishingApprovalPresentation,
   PublishingApprovalPresentationPort,
   PublishingApprovalRepository,
@@ -47,8 +48,10 @@ function date(value: string, label: string): Date {
 export function publishingApprovalStatus(
   request: PublishingApprovalRequestRecord,
   at: Date,
+  revisionIsCurrent = true,
 ): PublishingApprovalStatus {
   if (request.consumption) return "consumed";
+  if (!revisionIsCurrent) return "superseded";
   if (request.decision) return request.decision.decision;
   return request.decisionPolicy.expiresAt.getTime() <= at.getTime()
     ? "expired"
@@ -58,10 +61,11 @@ export function publishingApprovalStatus(
 export function publishingApprovalDto(
   request: PublishingApprovalRequestRecord,
   at: Date,
+  revisionIsCurrent = true,
 ): PublishingApprovalDto {
   return {
     ...structuredClone(request),
-    status: publishingApprovalStatus(request, at),
+    status: publishingApprovalStatus(request, at, revisionIsCurrent),
     inspectionDigest: publishingApprovalInspectionDigest(request),
     decisionPolicy: {
       mode: "expires_at",
@@ -94,6 +98,7 @@ export function publishingApprovalAgentDto(
     artifactIds: [...request.artifactIds],
     retrySource: structuredClone(request.retrySource),
     validation: structuredClone(request.validation),
+    governancePolicy: structuredClone(request.governancePolicy ?? null),
     decisionPolicy: {
       mode: "expires_at",
       expiresAt: request.decisionPolicy.expiresAt.toISOString(),
@@ -131,6 +136,7 @@ export function publishingApprovalAgentDtoFromDto(
     artifactIds: [...request.artifactIds],
     retrySource: structuredClone(request.retrySource),
     validation: structuredClone(request.validation),
+    governancePolicy: structuredClone(request.governancePolicy ?? null),
     decisionPolicy: structuredClone(request.decisionPolicy),
     status: request.status,
     decision: request.decision
@@ -206,7 +212,7 @@ function validAuthoritySession(input: {
     /^[A-Za-z0-9_-]{1,200}$/.test(session.id) &&
     session.workspaceId === input.workspaceId &&
     session.userId === input.userId &&
-    (session.subjectRole === "owner" || session.subjectRole === "admin") &&
+    (session.subjectRole === "owner" || session.subjectRole === "admin" || session.subjectRole === "member") &&
     session.action === input.action &&
     canonicalDigest(session.channelIds) === canonicalDigest(input.channelIds) &&
     canonicalDigest(grantChannels) === canonicalDigest(input.channelIds) &&
@@ -254,6 +260,7 @@ export class PublishingApprovalService {
     private readonly authority: PublishingApprovalAuthorityPort,
     private readonly presentation?: PublishingApprovalPresentationPort,
     private readonly clock: PublishingApprovalClock = systemClock,
+    private readonly governancePolicy?: PublishingApprovalGovernancePolicyPort,
   ) {}
 
   async request(input: {
@@ -269,6 +276,8 @@ export class PublishingApprovalService {
     channelIds: string[];
     artifactIds: string[];
     retrySource?: { deliveryId: string; evidenceDigest: string };
+    policyId?: string;
+    policyRevision?: number;
     expiresAt: string;
   }): Promise<PublishingApprovalDto> {
     const now = this.clock.now();
@@ -315,6 +324,8 @@ export class PublishingApprovalService {
       expiresAt: expiresAt.toISOString(),
       authorizationContractDigest,
       retrySource,
+      policyId: input.policyId ?? null,
+      policyRevision: input.policyRevision ?? null,
     });
     const prior = await this.repository.readMutationReceipt({
       workspaceId: input.workspaceId,
@@ -328,7 +339,8 @@ export class PublishingApprovalService {
     if (prior.kind === "replayed") {
       const replay = await this.repository.getRequest({ workspaceId: input.workspaceId, approvalRequestId: prior.approvalRequestId, requestingPrincipalId: principalId });
       if (!replay) failResult("unavailable");
-      return publishingApprovalDto(replay, now);
+      const current = replay.consumption ? true : Boolean(await this.revisions.getCurrentRevision({ workspaceId: input.workspaceId, revisionId: replay.planRevisionId }));
+      return publishingApprovalDto(replay, now, current);
     }
     if (
       expiresAt.getTime() <= now.getTime() ||
@@ -354,8 +366,42 @@ export class PublishingApprovalService {
       !validValidationSession({ session, workspaceId: input.workspaceId, revisionId: revision.id, revisionDigest: revision.definitionDigest, targetIds: selection.targetIds, binding: expectedBinding, now }) ||
       expiresAt.getTime() > session.expiresAt.getTime()
     ) failResult("stale_validation");
+    const requestId = `par_${canonicalDigest({
+      workspaceId: input.workspaceId,
+      principalId,
+      capability: "publishing_approvals.request@1",
+      key,
+    }).slice("sha256:".length)}`;
+    let governancePolicy = null;
+    if (this.governancePolicy) {
+      if (!input.policyId || !input.policyRevision) {
+        throw new PublishingApprovalServiceError(
+          "PUBLISHING_APPROVAL_INVALID_INPUT",
+          "An exact active Workspace Publishing Approval Policy revision is required.",
+        );
+      }
+      governancePolicy = await this.governancePolicy.bind({
+        workspaceId: input.workspaceId,
+        runtimeApprovalRequestId: requestId,
+        requestingPrincipalId: principalId,
+        planId: revision.planId,
+        planRevisionId: revision.id,
+        planRevision: revision.revision,
+        planRevisionDigest: revision.definitionDigest,
+        policyId: approvalIdentifier(input.policyId, "Publishing Approval Policy"),
+        policyRevision: input.policyRevision,
+        expiresAt,
+        requestedAt: now,
+      });
+      if (!governancePolicy) {
+        throw new PublishingApprovalServiceError(
+          "PUBLISHING_APPROVAL_STALE_VALIDATION",
+          "The exact active Workspace Publishing Approval Policy revision is unavailable.",
+        );
+      }
+    }
     const request: PublishingApprovalRequestRecord = {
-      id: `par_${randomUUID().replaceAll("-", "")}`,
+      id: requestId,
       workspaceId: input.workspaceId,
       planId: revision.planId,
       planRevisionId: revision.id,
@@ -373,6 +419,7 @@ export class PublishingApprovalService {
         resources: { channelIds: selection.channelIds, artifactIds: selection.artifactIds },
       },
       validation: expectedBinding,
+      governancePolicy,
       decisionPolicy: { mode: "expires_at", expiresAt },
       createdAt: now,
       decision: null,
@@ -429,7 +476,8 @@ export class PublishingApprovalService {
     if (prior.kind === "replayed") {
       const replay = await this.repository.getRequest({ workspaceId: input.workspaceId, approvalRequestId: prior.approvalRequestId });
       if (!replay) failResult("unavailable");
-      return publishingApprovalDto(replay, now);
+      const current = replay.consumption ? true : Boolean(await this.revisions.getCurrentRevision({ workspaceId: input.workspaceId, revisionId: replay.planRevisionId }));
+      return publishingApprovalDto(replay, now, current);
     }
     const request = await this.repository.getRequest({ workspaceId: input.workspaceId, approvalRequestId });
     if (!request) {
@@ -464,6 +512,28 @@ export class PublishingApprovalService {
       !authoritySession ||
       !validAuthoritySession({ session: authoritySession, workspaceId: input.workspaceId, userId, action: request.action, channelIds: request.channelIds, now })
     ) failResult("authority_stale");
+    if (this.governancePolicy) {
+      if (!request.governancePolicy) failResult("unavailable");
+      const policyResult = await this.governancePolicy.decide({
+        workspaceId: input.workspaceId,
+        binding: request.governancePolicy,
+        runtimeApprovalRequestId: request.id,
+        userId,
+        legacyRole: authoritySession.subjectRole,
+        decision: input.decision === "approved" ? "approve" : "reject",
+        idempotencyKey: key,
+        decidedAt: now,
+      });
+      if (policyResult === "pending") return publishingApprovalDto(request, now);
+      if (policyResult === "expired") failResult("expired");
+      if (policyResult === "forbidden") failResult("authority_stale");
+      if (policyResult === "conflict") failResult("conflict");
+      if (policyResult === "unavailable") failResult("unavailable");
+      if (
+        (policyResult === "accepted" && input.decision !== "approved") ||
+        (policyResult === "rejected" && input.decision !== "denied")
+      ) failResult("unavailable");
+    }
     const decision: PublishingApprovalDecisionRecord = {
       id: `pad_${randomUUID().replaceAll("-", "")}`,
       workspaceId: input.workspaceId,
@@ -518,7 +588,11 @@ export class PublishingApprovalService {
         throw new PublishingApprovalServiceError("PUBLISHING_APPROVAL_NOT_FOUND", "The Approval request is unavailable.");
       }
     }
-    return publishingApprovalDto(request, this.clock.now());
+    const current = request.consumption ? true : Boolean(await this.revisions.getCurrentRevision({
+      workspaceId: input.workspaceId,
+      revisionId: request.planRevisionId,
+    }));
+    return publishingApprovalDto(request, this.clock.now(), current);
   }
 
   async getAgent(input: {
@@ -552,13 +626,21 @@ export class PublishingApprovalService {
           }
         : {}),
     };
-    return (await this.repository.listRequests({
+    const requests = await this.repository.listRequests({
       workspaceId: input.workspaceId,
-      filters,
+      filters: filters.status === "superseded" ? { ...filters, status: undefined } : filters,
       before: input.before,
       limit: input.limit,
       evaluatedAt: at,
-    })).map((request) => publishingApprovalDto(request, at));
+    });
+    const items = await Promise.all(requests.map(async (request) => {
+      const current = request.consumption ? true : Boolean(await this.revisions.getCurrentRevision({
+        workspaceId: input.workspaceId,
+        revisionId: request.planRevisionId,
+      }));
+      return publishingApprovalDto(request, at, current);
+    }));
+    return input.filters.status ? items.filter((item) => item.status === input.filters.status) : items;
   }
 
   async listAgent(input: {
@@ -605,7 +687,7 @@ export class PublishingApprovalService {
     if (!authority || !validAuthoritySession({ session: authority, workspaceId: input.workspaceId, userId: humanUserId, action: request.action, channelIds: request.channelIds, now })) blockerCodes.push("AUTHORITY_MISSING");
     return {
       schema: "publishing-approval-presentation/v1",
-      approval: publishingApprovalDto(request, now),
+      approval: publishingApprovalDto(request, now, Boolean(currentRevision)),
       targets: await this.presentation.present({ approval: request, revision, actorUserId: input.userId, presentedAt: now }),
       decisionEligibility: { eligible: blockerCodes.length === 0, blockerCodes },
       authorityCoverage: request.targetIds.map((targetId) => {

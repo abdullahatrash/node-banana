@@ -1,0 +1,3 @@
+# Managed Execution Uses Fixed Credit Quotes
+
+Every Managed Provider Execution presents an immutable **Managed Execution Quote** in Generation Credits before Durable Acceptance and reserves exactly that amount. A successful usable output settles no more than the quote, a known failure before usable output releases or refunds it, and an outcome-unknown effect keeps the reservation visibly held until reconciliation; underlying provider-cost variance is Tasmeemai's commercial risk rather than a surprise customer debit, which favors price trust and auditable balances over passing unpredictable execution cost through after the fact.

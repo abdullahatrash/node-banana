@@ -3,37 +3,18 @@
 import { usePathname } from "next/navigation";
 import { PlusIcon, BookmarkIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
-import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
   useSimpleStudioShellStore,
   type LibraryModeFilter,
 } from "@/store/simpleStudioShellStore";
+import { useTranslations } from "next-intl";
 
-const PAGE_TITLES: Record<string, string> = {
-  "/simple-studio/images": "Images",
-  "/simple-studio/videos": "Videos",
-  "/simple-studio/copy": "Copy",
-  "/simple-studio/library": "Library",
-  "/simple-studio/prompt-library": "Prompt Library",
-};
-
-const FILTER_VALUES: { value: LibraryModeFilter; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "photo", label: "Photo" },
-  { value: "video", label: "Video" },
-  { value: "copy", label: "Copy" },
+const FILTER_VALUES: { value: LibraryModeFilter }[] = [
+  { value: "all" },
+  { value: "photo" },
+  { value: "video" },
+  { value: "copy" },
 ];
-
-function resolveTitle(pathname: string | null): string {
-  if (!pathname) return "Simple Studio";
-  const exact = PAGE_TITLES[pathname];
-  if (exact) return exact;
-  const prefixMatch = Object.entries(PAGE_TITLES).find(([path]) =>
-    pathname.startsWith(path + "/"),
-  );
-  return prefixMatch ? prefixMatch[1] : "Simple Studio";
-}
 
 function isFormRoute(pathname: string | null): boolean {
   if (!pathname) return false;
@@ -47,9 +28,9 @@ function isFormRoute(pathname: string | null): boolean {
   );
 }
 
-export function SimpleStudioSiteHeader() {
+export function SimpleStudioHeaderActions() {
   const pathname = usePathname();
-  const title = resolveTitle(pathname);
+  const t = useTranslations("shell");
   const openSavePromptDialog = useSimpleStudioShellStore(
     (s) => s.openSavePromptDialog,
   );
@@ -63,27 +44,33 @@ export function SimpleStudioSiteHeader() {
   const isForm = isFormRoute(pathname);
 
   return (
-    <header className="flex h-(--header-height) shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">
-      <div className="flex w-full items-center gap-1 px-4 lg:gap-2 lg:px-6">
-        <SidebarTrigger className="-ms-1" />
-        <Separator
-          orientation="vertical"
-          className="mx-2 h-4 data-vertical:self-auto"
-        />
-        <h1 className="text-base font-medium">{title}</h1>
-
-        <div className="ms-auto flex items-center gap-2">
-          {isLibrary &&
-            FILTER_VALUES.map((f) => (
-              <Button
-                key={f.value}
-                size="sm"
-                variant={libraryModeFilter === f.value ? "default" : "ghost"}
-                onClick={() => setLibraryModeFilter(f.value)}
+        <>
+          {isLibrary && (
+            <>
+              <select
+                aria-label={t("filtersLabel")}
+                className="h-9 max-w-24 rounded-lg border border-input bg-background px-2 text-sm xl:hidden"
+                value={libraryModeFilter}
+                onChange={(event) => setLibraryModeFilter(event.target.value as LibraryModeFilter)}
               >
-                {f.label}
-              </Button>
-            ))}
+                {FILTER_VALUES.map((filter) => (
+                  <option key={filter.value} value={filter.value}>{t(`filters.${filter.value}`)}</option>
+                ))}
+              </select>
+              <div className="hidden items-center gap-1 xl:flex">
+                {FILTER_VALUES.map((filter) => (
+                  <Button
+                    key={filter.value}
+                    size="sm"
+                    variant={libraryModeFilter === filter.value ? "default" : "ghost"}
+                    onClick={() => setLibraryModeFilter(filter.value)}
+                  >
+                    {t(`filters.${filter.value}`)}
+                  </Button>
+                ))}
+              </div>
+            </>
+          )}
 
           {isForm && (
             <Button
@@ -92,18 +79,20 @@ export function SimpleStudioSiteHeader() {
               onClick={() => openSavePromptDialog()}
             >
               <BookmarkIcon className="size-4" />
-              Save prompt
+              {t("actions.savePrompt")}
             </Button>
           )}
 
           {isPromptLibrary && (
-            <Button size="sm" onClick={() => openSavePromptDialog()}>
+            <Button
+              size="sm"
+              aria-label={t("actions.newSavedPrompt")}
+              title={t("actions.newSavedPrompt")}
+              onClick={() => openSavePromptDialog()}
+            >
               <PlusIcon className="size-4" />
-              New Saved Prompt
             </Button>
           )}
-        </div>
-      </div>
-    </header>
+        </>
   );
 }

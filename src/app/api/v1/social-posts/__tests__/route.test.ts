@@ -14,6 +14,8 @@ const {
   mockCountSocialPostsCreatedInRange,
   mockEmitSocialEvent,
   mockValidatePublishingSettings,
+  mockInspectPublishingApproval,
+  mockConsumePublishingApproval,
 } = vi.hoisted(() => ({
   mockAuthorize: vi.fn(),
   mockIsDatabaseConfigured: vi.fn(() => true),
@@ -25,6 +27,8 @@ const {
   mockCountSocialPostsCreatedInRange: vi.fn(),
   mockEmitSocialEvent: vi.fn(),
   mockValidatePublishingSettings: vi.fn(),
+  mockInspectPublishingApproval: vi.fn(),
+  mockConsumePublishingApproval: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/server", () => ({
@@ -69,6 +73,15 @@ vi.mock("@/lib/social/publishing-settings", () => ({
     mockValidatePublishingSettings(...args),
 }));
 
+vi.mock("@/lib/agent-tools/social-publishing-approval", () => ({
+  exactApprovedSocialPostInput: () => true,
+  governedPublishingMarker: () => "governed-publishing-marker",
+  PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION: {
+    inspect: (...args: unknown[]) => mockInspectPublishingApproval(...args),
+    consume: (...args: unknown[]) => mockConsumePublishingApproval(...args),
+  },
+}));
+
 import { GET, POST } from "../route";
 
 function authorized(workspaceId = "ws_1") {
@@ -99,12 +112,44 @@ function postRequest(body: unknown): NextRequest {
   } as unknown as NextRequest;
 }
 
+function publishingApproval() {
+  return {
+    approvalRequestId: "par_approved",
+    targetId: "target_x",
+    targetEvidenceDigest: `sha256:${"a".repeat(64)}`,
+    consumingPrincipalId: "principal_agent",
+    consumingKeyId: "key_agent",
+    authorizationEvidenceRef: "authz-agent-release",
+    authorizationIssuedAt: "2026-07-10T14:00:00.000Z",
+    authorizationExpiresAt: "2026-07-10T16:00:00.000Z",
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockIsDatabaseConfigured.mockReturnValue(true);
   mockListSocialAccounts.mockResolvedValue([{ id: "sacct_x", platform: "x" }]);
   mockCountSocialPostsCreatedInRange.mockResolvedValue(0);
   mockValidatePublishingSettings.mockReturnValue({ valid: true, errors: [] });
+  mockInspectPublishingApproval.mockImplementation(async ({ evidence }) => ({
+    requestId: evidence.approvalRequestId,
+    decisionId: "pad_approved",
+    channelIds: ["sacct_x"],
+    artifactIds: ["artifact_text"],
+    evidence,
+    target: {
+      targetId: evidence.targetId,
+      channel: { id: "sacct_x", platform: "x", authorKind: "organization", displayName: "Acme", historical: false },
+      content: { artifactId: "artifact_text", digest: `sha256:${"b".repeat(64)}`, mediaType: "text/plain; charset=utf-8", text: "Scheduled" },
+      media: [],
+      settings: {},
+      timing: { kind: "scheduled", publishAt: "2026-07-10T15:00:00.000Z" },
+      targetEvidenceDigest: evidence.targetEvidenceDigest,
+      validation: {},
+      costContext: null,
+    },
+  }));
+  mockConsumePublishingApproval.mockResolvedValue("consumed");
 });
 
 describe("/api/v1/social-posts GET", () => {
@@ -216,6 +261,7 @@ describe("/api/v1/social-posts POST", () => {
         socialAccountId: "sacct_x",
         content: "Scheduled",
         scheduledAt: "2026-07-10T15:00:00.000Z",
+        publishingApproval: publishingApproval(),
       }),
     );
     const data = await response.json();
@@ -223,6 +269,8 @@ describe("/api/v1/social-posts POST", () => {
     expect(response.status).toBe(201);
     expect(data.status).toBe("queued");
     expect(data.scheduledAt).toBe("2026-07-10T15:00:00.000Z");
+    expect(mockInspectPublishingApproval).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: "ws_1", evidence: publishingApproval() }));
+    expect(mockConsumePublishingApproval).toHaveBeenCalledTimes(1);
     expect(mockEmitSocialEvent).toHaveBeenCalled();
   });
 

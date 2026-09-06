@@ -6,6 +6,9 @@ const mockListProjectAssets = vi.fn();
 const mockListWorkspaceAssets = vi.fn();
 const mockGetProject = vi.fn();
 const mockRecordAsset = vi.fn();
+const mockRequireRegion = vi.fn(async (_input?: unknown) => undefined);
+
+vi.mock("@/lib/governance/region-enforcement", () => ({ GOVERNANCE_REGION_ROUTES: { assetStorage: { kind: "primary_storage", routeId: "storage:workspace-assets" } }, requireGovernanceRegionRoute: (...args: unknown[]) => mockRequireRegion(args[0]) }));
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: vi.fn(() => true),
@@ -99,6 +102,7 @@ describe("/api/studio/assets auth hardening", () => {
       {
         route: "/api/studio/assets",
         action: "read",
+        permission: "assets:read",
       },
     );
   });
@@ -192,6 +196,7 @@ describe("/api/studio/assets auth hardening", () => {
       {
         route: "/api/studio/assets",
         action: "write",
+        permission: "assets:write",
       },
     );
   });

@@ -4,9 +4,11 @@ import type {
   CapabilityAuthorizer,
 } from "@/types/agentAuthorization";
 import {
+  closureAllowsCapability,
   CompositeCapabilityAuthorizer,
   HumanCapabilityAuthorizer,
 } from "../composite-authorizer";
+import { legacyRoleBinding } from "@/lib/governance/roles";
 
 function request(
   securityContext: CapabilityAuthorizationRequest["securityContext"],
@@ -15,26 +17,46 @@ function request(
   return {
     audience,
     securityContext,
-    capability: { name: "credentials.profile.list", version: 1 },
+    capability: { name: "artifacts.list", version: 1 },
     authorizationContractDigest: `sha256:${"a".repeat(64)}`,
     resources: [],
     resourceExtractionValid: true,
   };
 }
 
-function database(role: "owner" | "admin" | "member" | undefined) {
+function database(
+  role: "owner" | "admin" | "member" | undefined,
+  governance?: {
+    assignment?: { status: string; body: Record<string, unknown> };
+    customRole?: { status: string; body: Record<string, unknown> };
+    unbound?: boolean;
+  },
+) {
   const values = vi.fn(async () => undefined);
-  const selectChain = {
-    from: vi.fn(),
-    innerJoin: vi.fn(),
-    where: vi.fn(),
-    limit: vi.fn(async () => (role ? [{ role }] : [])),
-  };
-  selectChain.from.mockReturnValue(selectChain);
-  selectChain.innerJoin.mockReturnValue(selectChain);
-  selectChain.where.mockReturnValue(selectChain);
+  const selections = [
+    role ? [{ role }] : [],
+    governance?.assignment
+      ? [governance.assignment]
+      : role && !governance?.unbound
+        ? [{ status: "active", body: { binding: { kind: "built_in", role: legacyRoleBinding(role) } } }]
+        : [],
+    governance?.customRole ? [governance.customRole] : [],
+  ];
+  let selection = 0;
   const tx = {
-    select: vi.fn(() => selectChain),
+    select: vi.fn(() => {
+      const rows = selections[selection++] ?? [];
+      const selectChain = {
+        from: vi.fn(),
+        innerJoin: vi.fn(),
+        where: vi.fn(),
+        limit: vi.fn(async () => rows),
+      };
+      selectChain.from.mockReturnValue(selectChain);
+      selectChain.innerJoin.mockReturnValue(selectChain);
+      selectChain.where.mockReturnValue(selectChain);
+      return selectChain;
+    }),
     insert: vi.fn(() => ({ values })),
   };
   return {
@@ -48,6 +70,56 @@ function database(role: "owner" | "admin" | "member" | undefined) {
 }
 
 describe("unified capability authorization", () => {
+  it("allows reads and only explicit closure continuations during cooling off", () => {
+    expect(closureAllowsCapability({
+      ...request({
+        kind: "human",
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        role: "owner",
+      }),
+      effect: {
+        mutation: "none",
+        visibility: "private",
+        timing: "immediate",
+        reversibility: "reversible",
+        maySpendProviderBudget: false,
+      },
+    })).toBe(true);
+    expect(closureAllowsCapability({
+      ...request({
+        kind: "human",
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        role: "owner",
+      }),
+      capability: { name: "workspace.close", version: 1 },
+      effect: {
+        mutation: "runtime-state",
+        visibility: "private",
+        timing: "immediate",
+        reversibility: "conditional",
+        maySpendProviderBudget: false,
+      },
+    })).toBe(true);
+    expect(closureAllowsCapability({
+      ...request({
+        kind: "human",
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        role: "owner",
+      }),
+      capability: { name: "artifacts.create", version: 1 },
+      effect: {
+        mutation: "runtime-state",
+        visibility: "private",
+        timing: "immediate",
+        reversibility: "conditional",
+        maySpendProviderBudget: false,
+      },
+    })).toBe(false);
+  });
+
   it("persists an allowed human manager decision", async () => {
     const db = database("admin");
     const authorizer = new HumanCapabilityAuthorizer(db.getDb);
@@ -86,16 +158,107 @@ describe("unified capability authorization", () => {
     expect(admission.allowed).toBe(true);
   });
 
-  it("denies a Workspace member access to human administration capabilities", async () => {
-    const db = database("member");
+  it("fails closed when canonical membership has no active versioned role binding", async () => {
+    const db = database("owner", { unbound: true });
     const authorizer = new HumanCapabilityAuthorizer(db.getDb);
     const admission = await authorizer.authorize(
       request({
         kind: "human",
         workspaceId: "workspace-1",
         userId: "user-1",
+        role: "owner",
+      }, "shared"),
+    );
+    expect(admission.allowed).toBe(false);
+  });
+
+  it("uses the pinned active Custom Role revision for governance authorization", async () => {
+    const db = database("member", {
+      assignment: {
+        status: "active",
+        body: { binding: { kind: "custom", roleId: "role-1", roleRevision: 2 } },
+      },
+      customRole: {
+        status: "active",
+        body: {
+          revisions: [
+            { revision: 1, capabilities: ["governance.view"], applicationCapabilities: [] },
+            { revision: 2, capabilities: ["governance.view", "audit.export"], applicationCapabilities: [] },
+          ],
+        },
+      },
+    });
+    const authorizer = new HumanCapabilityAuthorizer(db.getDb);
+    const admission = await authorizer.authorize({
+      ...request({
+        kind: "human",
+        workspaceId: "workspace-1",
+        userId: "user-1",
         role: "member",
-      }),
+      }, "shared"),
+      capability: { name: "audit.export", version: 1 },
+    });
+
+    expect(admission.allowed).toBe(true);
+  });
+
+  it("uses exact versioned Application Capability refs from a Custom Role", async () => {
+    const db = database("member", {
+      assignment: {
+        status: "active",
+        body: { binding: { kind: "custom", roleId: "role-1", roleRevision: 2 } },
+      },
+      customRole: {
+        status: "active",
+        body: {
+          revisions: [{ revision: 2, capabilities: ["governance.view"], applicationCapabilities: [{ name: "artifacts.list", version: 1 }] }],
+        },
+      },
+    });
+    const authorizer = new HumanCapabilityAuthorizer(db.getDb);
+    const context = { kind: "human" as const, workspaceId: "workspace-1", userId: "user-1", role: "member" as const };
+    expect((await authorizer.authorize({ ...request(context, "shared"), capability: { name: "artifacts.list", version: 1 } })).allowed).toBe(true);
+    expect((await authorizer.authorize({ ...request(context, "shared"), capability: { name: "artifacts.list", version: 2 } })).allowed).toBe(false);
+  });
+
+  it("never authorizes a revoked role assignment", async () => {
+    const db = database("owner", {
+      assignment: { status: "revoked", body: { binding: { kind: "built_in", role: "owner" } } },
+    });
+    const authorizer = new HumanCapabilityAuthorizer(db.getDb);
+    const admission = await authorizer.authorize(request({ kind: "human", workspaceId: "workspace-1", userId: "owner-1", role: "owner" }, "shared"));
+    expect(admission.allowed).toBe(false);
+  });
+
+  it("never derives Publishing Approval from a built-in Workspace Role", async () => {
+    const db = database("owner");
+    const authorizer = new HumanCapabilityAuthorizer(db.getDb);
+    const admission = await authorizer.authorize({
+      ...request({
+        kind: "human",
+        workspaceId: "workspace-1",
+        userId: "owner-1",
+        role: "owner",
+      }, "shared"),
+      capability: { name: "reviews.decide_publishing", version: 1 },
+    });
+
+    expect(admission.allowed).toBe(false);
+  });
+
+  it("denies a Workspace member access to a capability outside the active role bundle", async () => {
+    const db = database("member");
+    const authorizer = new HumanCapabilityAuthorizer(db.getDb);
+    const admission = await authorizer.authorize(
+      {
+        ...request({
+        kind: "human",
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        role: "member",
+        }),
+        capability: { name: "usage_records.list", version: 1 },
+      },
     );
     expect(admission.allowed).toBe(false);
     expect(db.values).toHaveBeenCalledWith(

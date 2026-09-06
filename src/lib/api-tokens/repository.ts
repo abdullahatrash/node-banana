@@ -117,11 +117,17 @@ export async function revokeApiToken(input: {
 export async function resolveWorkspaceIdByRawToken(
   rawToken: string,
 ): Promise<string | null> {
+  return (await resolveApiTokenAuthorityByRawToken(rawToken))?.workspaceId ?? null;
+}
+
+export async function resolveApiTokenAuthorityByRawToken(
+  rawToken: string,
+): Promise<{ workspaceId: string; createdByUserId: string } | null> {
   const db = getDb();
   const hash = hashApiToken(rawToken);
 
   const [row] = await db
-    .select({ id: apiTokens.id, workspaceId: apiTokens.workspaceId })
+    .select({ id: apiTokens.id, workspaceId: apiTokens.workspaceId, createdByUserId: apiTokens.createdByUserId })
     .from(apiTokens)
     .where(and(eq(apiTokens.tokenHash, hash), eq(apiTokens.revoked, false)))
     .limit(1);
@@ -133,5 +139,5 @@ export async function resolveWorkspaceIdByRawToken(
     .set({ lastUsedAt: new Date() })
     .where(eq(apiTokens.id, row.id));
 
-  return row.workspaceId;
+  return { workspaceId: row.workspaceId, createdByUserId: row.createdByUserId };
 }

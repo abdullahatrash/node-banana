@@ -7,9 +7,16 @@ const mockRecordPending = vi.fn();
 const mockFinalizeAssetUpload = vi.fn();
 const mockPutObjectToS3 = vi.fn();
 const mockStreamUploadToS3 = vi.fn();
-const mockDeleteObjectFromS3 = vi.fn();
 const mockBuildAssetObjectKey = vi.fn();
 const mockCreatePresignedDownload = vi.fn();
+const mockRequireRegion = vi.fn(async (_input?: unknown) => undefined);
+const mockFetchPublicRemoteFile = vi.fn();
+const mockCollectBufferedAssetEvidence = vi.fn();
+const mockCollectFileAssetEvidence = vi.fn();
+
+vi.mock("@/lib/governance/region-enforcement", () => ({ GOVERNANCE_REGION_ROUTES: { assetStorage: { kind: "primary_storage", routeId: "storage:workspace-assets" }, assetProcessing: { kind: "processing", routeId: "processing:asset-ingestion" } }, requireGovernanceRegionRoute: (...args: unknown[]) => mockRequireRegion(args[0]) }));
+vi.mock("@/lib/security/remote-file-fetch", () => ({ fetchPublicRemoteFile: (...args: unknown[]) => mockFetchPublicRemoteFile(...args) }));
+vi.mock("@/lib/studio/asset-media-evidence", () => ({ collectBufferedAssetEvidence: (...args: unknown[]) => mockCollectBufferedAssetEvidence(...args), collectFileAssetEvidence: (...args: unknown[]) => mockCollectFileAssetEvidence(...args) }));
 
 const { MockStudioAssetQuotaExceededError } = vi.hoisted(() => {
   class StudioAssetQuotaExceededError extends Error {
@@ -31,7 +38,6 @@ vi.mock("@/lib/storage", () => ({
   buildAssetObjectKey: (...args: unknown[]) => mockBuildAssetObjectKey(...args),
   putObjectToS3: (...args: unknown[]) => mockPutObjectToS3(...args),
   streamUploadToS3: (...args: unknown[]) => mockStreamUploadToS3(...args),
-  deleteObjectFromS3: (...args: unknown[]) => mockDeleteObjectFromS3(...args),
   createPresignedDownload: (...args: unknown[]) => mockCreatePresignedDownload(...args),
 }));
 
@@ -65,12 +71,22 @@ describe("/api/studio/assets/ingest", () => {
     mockFinalizeAssetUpload.mockResolvedValue({ id: "asset_1" });
     mockPutObjectToS3.mockResolvedValue(undefined);
     mockStreamUploadToS3.mockResolvedValue({ sizeBytes: 5 });
-    mockDeleteObjectFromS3.mockResolvedValue(undefined);
     mockCreatePresignedDownload.mockResolvedValue({
       key: "env/dev/ws/ws_1/proj/proj_1/image/2026/03/29/key.png",
       downloadUrl: "https://example-download",
       expiresInSeconds: 900,
     });
+    mockFetchPublicRemoteFile.mockResolvedValue({
+      path: "/tmp/quarantine",
+      mimeType: "image/png",
+      sizeBytes: 1024,
+      digest: `sha256:${"a".repeat(64)}`,
+      createReadStream: () => ({ mocked: true }),
+      cleanup: vi.fn(async () => undefined),
+    });
+    const evidence = { checksum: `sha256:${"b".repeat(64)}`, width: 1080, height: 1920, metadata: { dimensionEvidence: "server-media-probe/v1" } };
+    mockCollectBufferedAssetEvidence.mockResolvedValue(evidence);
+    mockCollectFileAssetEvidence.mockResolvedValue(evidence);
   });
 
   it("returns 401 for unauthenticated request", async () => {
@@ -151,6 +167,9 @@ describe("/api/studio/assets/ingest", () => {
         workspaceId: "ws_1",
         assetId: "asset_1",
         uploadState: "ready",
+        checksum: `sha256:${"b".repeat(64)}`,
+        width: 1080,
+        height: 1920,
       }),
     );
   });
@@ -262,81 +281,26 @@ describe("/api/studio/assets/ingest", () => {
     });
     mockStreamUploadToS3.mockResolvedValue({ sizeBytes: 1024 });
 
-    // Mock global fetch for the remote URL
-    const mockBody = new ReadableStream({
-      start(controller) {
-        controller.enqueue(new Uint8Array([1, 2, 3]));
-        controller.close();
-      },
-    });
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      headers: new Headers({ "content-type": "image/png", "content-length": "1024" }),
-      body: mockBody,
-    });
-
-    try {
-      const response = await POST(
-        createRequest({
-          assetType: "image",
-          sourceUrl: "https://example.com/image.png",
-        }),
-      );
-      const data = await response.json();
-
-      expect(response.status).toBe(200);
-      expect(data.success).toBe(true);
-      expect(mockStreamUploadToS3).toHaveBeenCalled();
-      expect(mockPutObjectToS3).not.toHaveBeenCalled();
-      expect(mockFinalizeAssetUpload).toHaveBeenCalledWith(
-        expect.objectContaining({
-          uploadState: "ready",
-          sizeBytes: 1024,
-        }),
-      );
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    const response = await POST(createRequest({ assetType: "image", sourceUrl: "https://example.com/image.png" }));
+    const data = await response.json();
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(mockFetchPublicRemoteFile).toHaveBeenCalledWith(expect.objectContaining({ sourceUrl: "https://example.com/image.png" }));
+    expect(mockStreamUploadToS3).toHaveBeenCalled();
+    expect(mockPutObjectToS3).not.toHaveBeenCalled();
+    expect(mockFinalizeAssetUpload).toHaveBeenCalledWith(expect.objectContaining({ uploadState: "ready", sizeBytes: 1024, checksum: `sha256:${"b".repeat(64)}`, metadata: { dimensionEvidence: "server-media-probe/v1" } }));
   });
 
-  it("deletes object and fails asset when stream exceeds max size", async () => {
+  it("rejects an oversized remote response before storage upload", async () => {
     mockAuthorizeStudioRequest.mockResolvedValue({
       authorized: true,
       userId: "user_1",
       workspaceId: "ws_1",
       role: "member",
     });
-    // Simulate stream returning more bytes than MAX_INGEST_BYTES
-    mockStreamUploadToS3.mockResolvedValue({ sizeBytes: 600 * 1024 * 1024 });
-
-    const mockBody = new ReadableStream({
-      start(controller) {
-        controller.close();
-      },
-    });
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      headers: new Headers({ "content-type": "image/png" }),
-      body: mockBody,
-    });
-
-    try {
-      const response = await POST(
-        createRequest({
-          assetType: "image",
-          sourceUrl: "https://example.com/huge-file.png",
-        }),
-      );
-
-      expect(response.status).toBe(413);
-      expect(mockDeleteObjectFromS3).toHaveBeenCalled();
-      expect(mockFinalizeAssetUpload).toHaveBeenCalledWith(
-        expect.objectContaining({ uploadState: "failed" }),
-      );
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    mockFetchPublicRemoteFile.mockRejectedValue(new Error("REMOTE_FILE_TOO_LARGE"));
+    const response = await POST(createRequest({ assetType: "image", sourceUrl: "https://example.com/huge-file.png" }));
+    expect(response.status).toBe(500);
+    expect(mockStreamUploadToS3).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useFormatter, useTranslations } from "next-intl";
 import type {
   CredentialAuditEvent,
   CredentialSpendGrant,
@@ -12,6 +13,8 @@ import {
 } from "@/lib/studio/client";
 
 export function CredentialCockpit() {
+  const t = useTranslations("runtimeUi.credentials");
+  const format = useFormatter();
   const [profiles, setProfiles] = useState<SafeCredentialProfile[]>([]);
   const [grants, setGrants] = useState<CredentialSpendGrant[]>([]);
   const [auditEvents, setAuditEvents] = useState<CredentialAuditEvent[]>([]);
@@ -35,9 +38,9 @@ export function CredentialCockpit() {
     return next;
   }
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     if (!getActiveWorkspaceId()) {
-      throw new Error("Select a Workspace before managing credentials.");
+      throw new Error(t("errors.workspace"));
     }
     const [body, grantBody, auditBody] = await Promise.all([
       invokeCredentialApplicationCapability("credentials.profiles.list@1"),
@@ -58,13 +61,13 @@ export function CredentialCockpit() {
     setProfiles(profilesBody.profiles ?? []);
     setGrants(grantsBody.grants ?? []);
     setAuditEvents(eventsBody.events ?? []);
-  }
+  }, [t]);
 
   useEffect(() => {
     void refresh().catch((cause) =>
       setError(cause instanceof Error ? cause.message : String(cause)),
     );
-  }, []);
+  }, [refresh]);
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -85,7 +88,7 @@ export function CredentialCockpit() {
         { idempotencyKey: stableSubmitKey(scope, input) },
       );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Credential handoff failed.");
+      setError(cause instanceof Error ? cause.message : t("errors.handoff"));
       form.reset();
       return;
     }
@@ -115,7 +118,7 @@ export function CredentialCockpit() {
         { idempotencyKey: stableSubmitKey(scope, input) },
       );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Spend Grant creation failed.");
+      setError(cause instanceof Error ? cause.message : t("errors.grantCreate"));
       return;
     }
     submitKeys.current.delete(scope);
@@ -131,7 +134,7 @@ export function CredentialCockpit() {
         { grantId },
       );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Spend Grant revocation failed.");
+      setError(cause instanceof Error ? cause.message : t("errors.grantRevoke"));
       return;
     }
     await refresh();
@@ -148,7 +151,7 @@ export function CredentialCockpit() {
         { profileId: profile.id, status },
       );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Credential status update failed.");
+      setError(cause instanceof Error ? cause.message : t("errors.status"));
       return;
     }
     await refresh();
@@ -163,7 +166,7 @@ export function CredentialCockpit() {
     const form = event.currentTarget;
     const data = new FormData(form);
     if (profile.activeVersion === null) {
-      setError("Reprovision this legacy Credential Profile before rotating it.");
+      setError(t("errors.reprovisionFirst"));
       return;
     }
     const input = {
@@ -180,7 +183,7 @@ export function CredentialCockpit() {
         { idempotencyKey: stableSubmitKey(scope, input) },
       );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Credential rotation failed.");
+      setError(cause instanceof Error ? cause.message : t("errors.rotate"));
       form.reset();
       return;
     }
@@ -192,7 +195,7 @@ export function CredentialCockpit() {
   async function revokeVersion(profile: SafeCredentialProfile) {
     setError("");
     if (profile.activeVersion === null) {
-      setError("This legacy Credential Profile has no vaulted version.");
+      setError(t("errors.noVersion"));
       return;
     }
     try {
@@ -201,7 +204,7 @@ export function CredentialCockpit() {
         { profileId: profile.id, version: profile.activeVersion },
       );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Credential version revocation failed.");
+      setError(cause instanceof Error ? cause.message : t("errors.versionRevoke"));
       return;
     }
     await refresh();
@@ -233,7 +236,7 @@ export function CredentialCockpit() {
       await refresh();
     } catch (cause) {
       setError(
-        cause instanceof Error ? cause.message : "Credential reprovision failed.",
+        cause instanceof Error ? cause.message : t("errors.reprovision"),
       );
     }
   }
@@ -241,31 +244,30 @@ export function CredentialCockpit() {
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-8 text-zinc-100">
       <header>
-        <h1 className="text-2xl font-semibold">Credential Profiles</h1>
+        <h1 className="text-2xl font-semibold">{t("title")}</h1>
         <p className="text-sm text-zinc-400">
-          Secrets are vaulted during handoff. Agents receive slot IDs and
-          redacted metadata only.
+          {t("description")}
         </p>
       </header>
       <form
         className="grid gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-5 md:grid-cols-2"
         onSubmit={create}
       >
-        <input name="name" required placeholder="Profile name" className="rounded bg-zinc-900 p-2" />
-        <input name="provider" required placeholder="Provider" className="rounded bg-zinc-900 p-2" />
-        <input name="slotName" required placeholder="Logical slot" className="rounded bg-zinc-900 p-2" />
-        <input name="secret" type="password" required autoComplete="off" placeholder="Secret handoff" className="rounded bg-zinc-900 p-2" />
+        <input name="name" required placeholder={t("fields.profileName")} className="rounded bg-zinc-900 p-2" />
+        <input name="provider" required placeholder={t("fields.provider")} className="rounded bg-zinc-900 p-2" />
+        <input name="slotName" required placeholder={t("fields.slot")} className="rounded bg-zinc-900 p-2" />
+        <input name="secret" type="password" required autoComplete="off" placeholder={t("fields.secretHandoff")} className="rounded bg-zinc-900 p-2" />
         <button className="rounded bg-yellow-400 px-4 py-2 font-medium text-black md:col-span-2">
-          Vault Credential Profile
+          {t("vault")}
         </button>
       </form>
       <form
         className="grid gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-5 md:grid-cols-2"
         onSubmit={grantSpend}
       >
-        <input name="principalId" required placeholder="Agent Principal ID" className="rounded bg-zinc-900 p-2" />
+        <input name="principalId" required placeholder={t("fields.principal")} className="rounded bg-zinc-900 p-2" dir="ltr" />
         <select name="profileId" required className="rounded bg-zinc-900 p-2">
-          <option value="">Credential Profile</option>
+          <option value="">{t("profile")}</option>
           {profiles
             .filter(
               (profile) =>
@@ -279,16 +281,16 @@ export function CredentialCockpit() {
           ))}
         </select>
         <select name="mode" required className="rounded bg-zinc-900 p-2">
-          <option value="bounded">Bounded spend</option>
-          <option value="audited_unbounded">Audited unbounded spend</option>
+          <option value="bounded">{t("grant.bounded")}</option>
+          <option value="audited_unbounded">{t("grant.unbounded")}</option>
         </select>
-        <input name="limitCents" type="number" min="1" placeholder="Bound in cents" className="rounded bg-zinc-900 p-2" />
+        <input name="limitCents" type="number" min="1" placeholder={t("grant.limitPlaceholder")} className="rounded bg-zinc-900 p-2" dir="ltr" />
         <button className="rounded bg-zinc-100 px-4 py-2 font-medium text-black md:col-span-2">
-          Create Spend Grant
+          {t("grant.create")}
         </button>
       </form>
       <section className="space-y-2">
-        <h2 className="text-lg font-medium">Spend Grants</h2>
+        <h2 className="text-lg font-medium">{t("grant.title")}</h2>
         {grants.map((grant) => (
           <article
             key={grant.id}
@@ -305,7 +307,7 @@ export function CredentialCockpit() {
                 className="rounded border border-red-900 px-3 py-1 text-sm text-red-300"
                 onClick={() => void revokeGrant(grant.id)}
               >
-                Revoke
+                {t("revoke")}
               </button>
             ) : null}
           </article>
@@ -317,7 +319,7 @@ export function CredentialCockpit() {
           <article key={profile.id} className="rounded-xl border border-zinc-800 p-4">
             <div className="flex items-center justify-between">
               <strong>{profile.name}</strong>
-              <span>{profile.secretHint ?? "redacted legacy entry"}</span>
+              <span>{profile.secretHint ?? t("redactedLegacy")}</span>
             </div>
             <p className="text-sm text-zinc-400">
               {profile.reprovisionable
@@ -339,8 +341,8 @@ export function CredentialCockpit() {
                 <input
                   name="slotName"
                   required
-                  placeholder="Logical slot"
-                  aria-label={`Logical slot for ${profile.name}`}
+                  placeholder={t("fields.slot")}
+                  aria-label={t("fields.slotFor", { name: profile.name })}
                   className="rounded bg-zinc-900 p-1 text-sm"
                 />
                 <input
@@ -349,12 +351,12 @@ export function CredentialCockpit() {
                   required
                   minLength={8}
                   autoComplete="off"
-                  placeholder="Replacement secret"
-                  aria-label={`Replacement secret for ${profile.name}`}
+                  placeholder={t("fields.replacementSecret")}
+                  aria-label={t("fields.replacementSecretFor", { name: profile.name })}
                   className="rounded bg-zinc-900 p-1 text-sm"
                 />
                 <button className="rounded bg-yellow-400 px-3 py-1 text-sm font-medium text-black md:col-span-3">
-                  Reprovision legacy profile
+                  {t("reprovision")}
                 </button>
               </form>
             ) : (
@@ -374,7 +376,7 @@ export function CredentialCockpit() {
                     )
                   }
                 >
-                  {profile.status === "active" ? "Disable" : "Enable"}
+                  {profile.status === "active" ? t("disable") : t("enable")}
                 </button>
               )}
               <form
@@ -387,8 +389,8 @@ export function CredentialCockpit() {
                   required
                   minLength={8}
                   autoComplete="off"
-                  aria-label={`New secret for ${profile.name}`}
-                  placeholder="New secret"
+                  aria-label={t("fields.newSecretFor", { name: profile.name })}
+                  placeholder={t("fields.newSecret")}
                   className="rounded bg-zinc-900 p-1 text-sm"
                 />
                 <input
@@ -397,13 +399,13 @@ export function CredentialCockpit() {
                   min="0"
                   max="86400"
                   defaultValue="0"
-                  aria-label={`Rotation overlap seconds for ${profile.name}`}
+                  aria-label={t("fields.rotationOverlapFor", { name: profile.name })}
                   className="w-24 rounded bg-zinc-900 p-1 text-sm"
                 />
                 <button
                   className="rounded border border-zinc-700 px-3 py-1 text-sm"
                 >
-                  Rotate
+                  {t("rotate")}
                 </button>
               </form>
               <button
@@ -411,7 +413,7 @@ export function CredentialCockpit() {
                 className="rounded border border-red-900 px-3 py-1 text-sm text-red-300"
                 onClick={() => void revokeVersion(profile)}
               >
-                Emergency revoke v{profile.activeVersion}
+                {t("emergencyRevoke", { version: profile.activeVersion ?? "—" })}
               </button>
             </div>
             )}
@@ -419,7 +421,7 @@ export function CredentialCockpit() {
         ))}
       </section>
       <section className="space-y-2">
-        <h2 className="text-lg font-medium">Unified security audit</h2>
+        <h2 className="text-lg font-medium">{t("audit")}</h2>
         {auditEvents.map((event) => (
           <article
             key={`${event.source}:${event.id}`}
@@ -429,7 +431,7 @@ export function CredentialCockpit() {
             {event.principalId ? ` · Agent ${event.principalId}` : ""}
             {event.profileId ? ` · Profile ${event.profileId}` : ""}
             {" · "}
-            {new Date(event.createdAt).toLocaleString()}
+            {format.dateTime(new Date(event.createdAt), { dateStyle: "medium", timeStyle: "short" })}
           </article>
         ))}
       </section>

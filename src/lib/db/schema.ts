@@ -24,6 +24,7 @@ import type {
   WorkflowStepAttemptInput,
   WorkflowStepAttemptRecord,
 } from "@/lib/agent-runtime/runs/types";
+import type { WorkflowRunAcceptedSpendQuote } from "@/lib/agent-runtime/runs/spend-quote";
 import type {
   CostValuation,
   FxSnapshot,
@@ -68,6 +69,7 @@ import type {
   NormalizedPublishingPlanDefinition,
   PublishingPlanSuccessfulValidationEvidence,
 } from "@/lib/agent-runtime/publishing-plans/types";
+import type { PublishingApprovalGovernanceBinding } from "@/lib/agent-runtime/publishing-approvals/types";
 import type {
   PublishingDeliveryAcceptedRef,
   PublishingDeliveryEvent,
@@ -83,6 +85,11 @@ import type {
   AutomationRevisionRecord,
   AutomationStageAttemptRecord,
 } from "@/lib/agent-runtime/automations/types";
+import type {
+  ActivationArtifactV1,
+  BrandProfileV1,
+  OnboardingAnswersV1,
+} from "@/lib/onboarding/schemas";
 
 /**
  * Better Auth tables (singular names expected by default adapter mapping).
@@ -259,6 +266,37 @@ export const verification = pgTable(
 );
 
 /**
+ * Minimal proof that personal authentication state was irreversibly erased.
+ * The referenced user row is a pseudonymous tombstone retained only so
+ * immutable Workspace, rights, audit, and financial evidence remains valid.
+ */
+export const identityErasureReceipts = pgTable(
+  "identity_erasure_receipts",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => user.id, { onDelete: "restrict" }),
+    receiptId: text("receipt_id").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    result: jsonb("result").$type<Record<string, number>>().notNull(),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    receiptUnique: uniqueIndex("identity_erasure_receipts_receipt_id_unique").on(
+      table.receiptId,
+    ),
+    valuesCheck: check(
+      "identity_erasure_receipts_values_check",
+      sql`${table.receiptId} ~ '^ier_[a-f0-9]{32}$'
+        and ${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'
+        and octet_length(${table.result}::text) between 2 and 4096
+        and ${table.completedAt} >= ${table.requestedAt}`,
+    ),
+  }),
+);
+
+/**
  * ContentOS domain tables (workspace-scoped, multi-tenant aware).
  */
 export const workspaceRoleEnum = pgEnum("workspace_role", [
@@ -274,6 +312,7 @@ export const assetTypeEnum = pgEnum("asset_type", [
   "image",
   "video",
   "audio",
+  "document",
   "model3d",
   "workflow",
 ]);
@@ -293,6 +332,48 @@ export const planTierEnum = pgEnum("plan_tier", [
   "free",
   "pro",
   "enterprise",
+]);
+export const onboardingStatusEnum = pgEnum("onboarding_status", [
+  "not_started",
+  "in_progress",
+  "ready",
+  "completed",
+  "completed_legacy",
+]);
+export const onboardingStepEnum = pgEnum("onboarding_step", [
+  "identity",
+  "brand_source",
+  "company_stage",
+  "role",
+  "business_classification",
+  "goals",
+  "attribution",
+  "review",
+  "education",
+]);
+export const brandSourceKindEnum = pgEnum("brand_source_kind", [
+  "website",
+  "description",
+]);
+export const brandAnalysisStageEnum = pgEnum("brand_analysis_stage", [
+  "queued",
+  "fetching_source",
+  "extracting",
+  "generating_profile",
+  "generating_first_value",
+  "ready",
+]);
+export const brandAnalysisStatusEnum = pgEnum("brand_analysis_status", [
+  "queued",
+  "running",
+  "ready",
+  "failed_retryable",
+  "failed_terminal",
+]);
+export const brandProfileStatusEnum = pgEnum("brand_profile_status", [
+  "draft",
+  "active",
+  "superseded",
 ]);
 export const agentPrincipalStatusEnum = pgEnum("agent_principal_status", [
   "active",
@@ -348,6 +429,13 @@ export const workspaceSettings = pgTable(
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
     planTier: planTierEnum("plan_tier").default("free").notNull(),
+    defaultContentLanguage: text("default_content_language")
+      .default("ar")
+      .notNull(),
+    defaultInterfaceLocale: text("default_interface_locale").default("ar").notNull(),
+    contentMarket: text("content_market").default("SA").notNull(),
+    schedulingTimezone: text("scheduling_timezone").default("UTC").notNull(),
+    schedulingWeekStart: integer("scheduling_week_start").default(1).notNull(),
     brandKit: jsonb("brand_kit").$type<Record<string, unknown>>(),
     billingCustomerId: text("billing_customer_id"),
     billingSubscriptionId: text("billing_subscription_id"),
@@ -364,6 +452,19 @@ export const workspaceSettings = pgTable(
       table.organizationId,
     ),
     planTierIdx: index("workspace_settings_plan_tier_idx").on(table.planTier),
+    schedulingPreferencesCheck: check(
+      "workspace_settings_scheduling_preferences_check",
+      sql`length(${table.schedulingTimezone}) between 1 and 100
+        and ${table.schedulingWeekStart} between 0 and 6`,
+    ),
+    interfaceLocaleCheck: check(
+      "workspace_settings_default_interface_locale_check",
+      sql`${table.defaultInterfaceLocale} in ('ar', 'en')`,
+    ),
+    contentMarketCheck: check(
+      "workspace_settings_content_market_check",
+      sql`${table.contentMarket} in ('SA', 'AE', 'EG', 'QA', 'KW', 'BH', 'OM', 'JO', 'LB', 'IQ', 'MA', 'DZ', 'TN', 'LY', 'YE', 'PS', 'SD', 'SY')`,
+    ),
   }),
 );
 
@@ -403,6 +504,384 @@ export const workspaceMembers = pgTable(
       columns: [table.workspaceId, table.userId],
     }),
     userIdx: index("workspace_members_user_idx").on(table.userId),
+  }),
+);
+
+/** Legacy pre-Workspace locale compatibility; authenticated product reads use the scoped table below. */
+export const userPreferences = pgTable("user_preferences", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  interfaceLocale: text("interface_locale").default("ar").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+}, (table) => ({
+  localeCheck: check(
+    "user_preferences_interface_locale_check",
+    sql`${table.interfaceLocale} in ('ar', 'en')`,
+  ),
+}));
+
+/** A person's Interface Locale is scoped to a Workspace, never global content semantics. */
+export const workspaceInterfaceLocalePreferences = pgTable(
+  "workspace_interface_locale_preferences",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    userId: text("user_id").notNull(),
+    interfaceLocale: text("interface_locale").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      name: "workspace_interface_locale_preferences_pk",
+      columns: [table.workspaceId, table.userId],
+    }),
+    membershipFk: foreignKey({
+      columns: [table.workspaceId, table.userId],
+      foreignColumns: [workspaceMembers.workspaceId, workspaceMembers.userId],
+      name: "workspace_interface_locale_preferences_membership_fk",
+    }).onDelete("cascade"),
+    userIdx: index("workspace_interface_locale_preferences_user_idx").on(table.userId, table.workspaceId),
+    localeCheck: check(
+      "workspace_interface_locale_preferences_locale_check",
+      sql`${table.interfaceLocale} in ('ar', 'en')`,
+    ),
+  }),
+);
+
+/** Resumable, user-owned onboarding state. JSONB is parsed at repository edges. */
+export const onboardingSessions = pgTable(
+  "onboarding_sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id").references(() => workspaces.id, {
+      onDelete: "set null",
+    }),
+    status: onboardingStatusEnum("status").default("not_started").notNull(),
+    currentStep: onboardingStepEnum("current_step").default("identity").notNull(),
+    answers: jsonb("answers").$type<OnboardingAnswersV1>().notNull(),
+    contentLanguage: text("content_language").default("ar").notNull(),
+    revision: integer("revision").default(0).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    userUnique: uniqueIndex("onboarding_sessions_user_unique").on(table.userId),
+    workspaceIdx: index("onboarding_sessions_workspace_idx").on(table.workspaceId),
+    statusIdx: index("onboarding_sessions_status_idx").on(table.status),
+    revisionCheck: check(
+      "onboarding_sessions_revision_check",
+      sql`${table.revision} >= 0`,
+    ),
+  }),
+);
+
+/** Immutable input revisions used to derive Brand Profiles. */
+export const brandSources = pgTable(
+  "brand_sources",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    kind: brandSourceKindEnum("kind").notNull(),
+    submittedUrl: text("submitted_url"),
+    finalUrl: text("final_url"),
+    submittedDescription: text("submitted_description"),
+    cleanedText: text("cleaned_text"),
+    contentHash: text("content_hash"),
+    sourceLanguage: text("source_language"),
+    extractedBytes: integer("extracted_bytes"),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceRevisionUnique: uniqueIndex(
+      "brand_sources_workspace_revision_unique",
+    ).on(table.workspaceId, table.revision),
+    workspaceCreatedIdx: index("brand_sources_workspace_created_idx").on(
+      table.workspaceId,
+      table.createdAt,
+    ),
+    createdByIdx: index("brand_sources_created_by_idx").on(table.createdByUserId),
+    revisionCheck: check("brand_sources_revision_check", sql`${table.revision} > 0`),
+    byteCheck: check(
+      "brand_sources_extracted_bytes_check",
+      sql`${table.extractedBytes} is null or (${table.extractedBytes} >= 0 and ${table.extractedBytes} <= 6291456)`,
+    ),
+    sourceShapeCheck: check(
+      "brand_sources_shape_check",
+      sql`(${table.kind} = 'website' and ${table.submittedUrl} is not null and ${table.submittedDescription} is null) or (${table.kind} = 'description' and ${table.submittedDescription} is not null and ${table.submittedUrl} is null)`,
+    ),
+  }),
+);
+
+/** Canonical asynchronous analysis resource; external execution is an Adapter. */
+export const brandAnalysisRuns = pgTable(
+  "brand_analysis_runs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => brandSources.id, { onDelete: "restrict" }),
+    retryOfRunId: text("retry_of_run_id"),
+    status: brandAnalysisStatusEnum("status").default("queued").notNull(),
+    stage: brandAnalysisStageEnum("stage").default("queued").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceIdempotencyUnique: uniqueIndex(
+      "brand_analysis_runs_workspace_idempotency_unique",
+    ).on(table.workspaceId, table.idempotencyKey),
+    workspaceStatusIdx: index("brand_analysis_runs_workspace_status_idx").on(
+      table.workspaceId,
+      table.status,
+    ),
+    sourceIdx: index("brand_analysis_runs_source_idx").on(table.sourceId),
+    retryIdx: index("brand_analysis_runs_retry_idx").on(table.retryOfRunId),
+  }),
+);
+
+/** Transactional dispatch intent prevents a committed analysis run from being lost. */
+export const onboardingAnalysisDispatchIntents = pgTable(
+  "onboarding_analysis_dispatch_intents",
+  {
+    runId: text("run_id")
+      .primaryKey()
+      .references(() => brandAnalysisRuns.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    status: text("status").default("pending").notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    lastErrorCode: text("last_error_code"),
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceStatusIdx: index(
+      "onboarding_analysis_dispatch_workspace_status_idx",
+    ).on(table.workspaceId, table.status, table.createdAt),
+    statusCheck: check(
+      "onboarding_analysis_dispatch_status_check",
+      sql`${table.status} in ('pending', 'dispatched')`,
+    ),
+    attemptsCheck: check(
+      "onboarding_analysis_dispatch_attempts_check",
+      sql`${table.attempts} >= 0`,
+    ),
+  }),
+);
+
+/** Immutable, versioned Brand Profile revisions. */
+export const brandProfiles = pgTable(
+  "brand_profiles",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    status: brandProfileStatusEnum("status").default("draft").notNull(),
+    schemaVersion: integer("schema_version").default(1).notNull(),
+    profile: jsonb("profile").$type<BrandProfileV1>().notNull(),
+    generatedFromRunId: text("generated_from_run_id")
+      .references(() => brandAnalysisRuns.id, { onDelete: "restrict" }),
+    sourceProfileId: text("source_profile_id"),
+    acceptedByUserId: text("accepted_by_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceRevisionUnique: uniqueIndex(
+      "brand_profiles_workspace_revision_unique",
+    ).on(table.workspaceId, table.revision),
+    activeWorkspaceUnique: uniqueIndex(
+      "brand_profiles_active_workspace_unique",
+    )
+      .on(table.workspaceId)
+      .where(sql`${table.status} = 'active'`),
+    runUnique: uniqueIndex("brand_profiles_run_unique").on(table.generatedFromRunId),
+    acceptedByIdx: index("brand_profiles_accepted_by_idx").on(table.acceptedByUserId),
+    sourceProfileIdx: index("brand_profiles_source_profile_idx").on(table.sourceProfileId),
+    sourceProfileFk: foreignKey({
+      columns: [table.sourceProfileId],
+      foreignColumns: [table.id],
+      name: "brand_profiles_source_profile_id_fk",
+    }).onDelete("restrict"),
+    revisionCheck: check("brand_profiles_revision_check", sql`${table.revision} > 0`),
+    schemaVersionCheck: check(
+      "brand_profiles_schema_version_check",
+      sql`${table.schemaVersion} = 1`,
+    ),
+  }),
+);
+
+/** First-value output used until the full Blitz domain replaces this Adapter. */
+export const onboardingActivationArtifacts = pgTable(
+  "onboarding_activation_artifacts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    brandProfileId: text("brand_profile_id")
+      .notNull()
+      .references(() => brandProfiles.id, { onDelete: "restrict" }),
+    schemaVersion: integer("schema_version").default(1).notNull(),
+    artifact: jsonb("artifact").$type<ActivationArtifactV1>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceProfileUnique: uniqueIndex(
+      "onboarding_activation_artifacts_workspace_profile_unique",
+    ).on(table.workspaceId, table.brandProfileId),
+    profileIdx: index("onboarding_activation_artifacts_profile_idx").on(
+      table.brandProfileId,
+    ),
+    schemaVersionCheck: check(
+      "onboarding_activation_artifacts_schema_version_check",
+      sql`${table.schemaVersion} = 1`,
+    ),
+  }),
+);
+
+/** Idempotent command receipts prevent duplicate workspaces, sources, and runs. */
+export const onboardingCommandReceipts = pgTable(
+  "onboarding_command_receipts",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    commandType: text("command_type").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    sessionRevision: integer("session_revision").notNull(),
+    result: jsonb("result").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      name: "onboarding_command_receipts_pk",
+      columns: [table.userId, table.idempotencyKey],
+    }),
+    fingerprintCheck: check(
+      "onboarding_command_receipts_fingerprint_check",
+      sql`${table.requestFingerprint} ~ '^sha256:[a-f0-9]{64}$'`,
+    ),
+    revisionCheck: check(
+      "onboarding_command_receipts_revision_check",
+      sql`${table.sessionRevision} > 0`,
+    ),
+  }),
+);
+
+/** Privacy-bounded onboarding funnel telemetry; no arbitrary JSON or source text. */
+export const onboardingAnalyticsEvents = pgTable(
+  "onboarding_analytics_events",
+  {
+    id: text("id").primaryKey(),
+    eventName: text("event_name").notNull(),
+    userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+    workspaceId: text("workspace_id").references(() => workspaces.id, {
+      onDelete: "set null",
+    }),
+    sessionId: text("session_id"),
+    runId: text("run_id"),
+    step: text("step"),
+    sourceKind: text("source_kind"),
+    stage: text("stage"),
+    interfaceLocale: text("interface_locale"),
+    contentLanguage: text("content_language"),
+    durationMs: integer("duration_ms"),
+    failureCode: text("failure_code"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    eventTimeIdx: index("onboarding_analytics_event_time_idx").on(
+      table.eventName,
+      table.occurredAt,
+    ),
+    workspaceTimeIdx: index("onboarding_analytics_workspace_time_idx").on(
+      table.workspaceId,
+      table.occurredAt,
+    ),
+    userIdx: index("onboarding_analytics_user_idx").on(table.userId),
+    eventCheck: check(
+      "onboarding_analytics_event_name_check",
+      sql`${table.eventName} in ('signup_submitted','verification_sent','verification_completed','step_viewed','step_completed','source_selected','analysis_stage_completed','analysis_failed','profile_accepted','profile_edited','first_value_viewed','onboarding_completed')`,
+    ),
+    stepCheck: check(
+      "onboarding_analytics_step_check",
+      sql`${table.step} is null or ${table.step} in ('identity','brand_source','company_stage','role','business_classification','goals','attribution','review','education')`,
+    ),
+    sourceKindCheck: check(
+      "onboarding_analytics_source_kind_check",
+      sql`${table.sourceKind} is null or ${table.sourceKind} in ('website','description')`,
+    ),
+    stageCheck: check(
+      "onboarding_analytics_stage_check",
+      sql`${table.stage} is null or ${table.stage} in ('queued','fetching_source','extracting','generating_profile','generating_first_value','ready')`,
+    ),
+    localeCheck: check(
+      "onboarding_analytics_locale_check",
+      sql`${table.interfaceLocale} is null or ${table.interfaceLocale} in ('ar','en')`,
+    ),
+    durationCheck: check(
+      "onboarding_analytics_duration_check",
+      sql`${table.durationMs} is null or (${table.durationMs} >= 0 and ${table.durationMs} <= 86400000)`,
+    ),
+    failureCodeCheck: check(
+      "onboarding_analytics_failure_code_check",
+      sql`${table.failureCode} is null or ${table.failureCode} ~ '^[A-Z][A-Z0-9_]{0,79}$'`,
+    ),
   }),
 );
 
@@ -580,6 +1059,7 @@ type StoredAgentResourceConstraints = {
   credentialProfileIds: string[];
   workflowIds: string[];
   automationIds: string[];
+  studioAssetIds?: string[];
   artifactIds?: string[];
 };
 
@@ -642,8 +1122,11 @@ export const agentGrantSets = pgTable(
     activeRevision: integer("active_revision"),
     disabledAt: timestamp("disabled_at", { withTimezone: true }),
     createdByUserId: text("created_by_user_id")
-      .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
+    createdBySystemActorId: text("created_by_system_actor_id"),
+    initiatingUserId: text("initiating_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -661,6 +1144,12 @@ export const agentGrantSets = pgTable(
     principalUnique: uniqueIndex("agent_grant_sets_principal_unique").on(
       table.principalId,
     ),
+    workspacePrincipalIdUnique: uniqueIndex("agent_grant_sets_workspace_principal_id_unique").on(table.workspaceId, table.principalId, table.id),
+    actorCheck: check(
+      "agent_grant_sets_actor_check",
+      sql`(${table.createdByUserId} is not null and ${table.createdBySystemActorId} is null and ${table.initiatingUserId} is null)
+        or (${table.createdByUserId} is null and ${table.createdBySystemActorId} = 'tasmeemai:builtin-service-authority@1' and ${table.initiatingUserId} is not null)`,
+    ),
   }),
 );
 
@@ -674,8 +1163,11 @@ export const agentGrantRevisions = pgTable(
     revision: integer("revision").notNull(),
     grants: jsonb("grants").$type<StoredAgentCapabilityGrant[]>().notNull(),
     createdByUserId: text("created_by_user_id")
-      .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
+    createdBySystemActorId: text("created_by_system_actor_id"),
+    initiatingUserId: text("initiating_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -686,6 +1178,12 @@ export const agentGrantRevisions = pgTable(
       table.revision,
     ),
     setIdx: index("agent_grant_revisions_set_idx").on(table.grantSetId),
+    setIdUnique: uniqueIndex("agent_grant_revisions_set_id_unique").on(table.grantSetId, table.id),
+    actorCheck: check(
+      "agent_grant_revisions_actor_check",
+      sql`(${table.createdByUserId} is not null and ${table.createdBySystemActorId} is null and ${table.initiatingUserId} is null)
+        or (${table.createdByUserId} is null and ${table.createdBySystemActorId} = 'tasmeemai:builtin-service-authority@1' and ${table.initiatingUserId} is not null)`,
+    ),
   }),
 );
 
@@ -700,8 +1198,11 @@ export const workspaceAgentPolicyRevisions = pgTable(
     enabled: boolean("enabled").notNull(),
     grants: jsonb("grants").$type<StoredAgentCapabilityGrant[]>().notNull(),
     createdByUserId: text("created_by_user_id")
-      .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
+    createdBySystemActorId: text("created_by_system_actor_id"),
+    initiatingUserId: text("initiating_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -713,6 +1214,11 @@ export const workspaceAgentPolicyRevisions = pgTable(
     workspaceIdUnique: uniqueIndex(
       "workspace_agent_policy_revisions_workspace_id_unique",
     ).on(table.workspaceId, table.id),
+    actorCheck: check(
+      "workspace_agent_policy_revisions_actor_check",
+      sql`(${table.createdByUserId} is not null and ${table.createdBySystemActorId} is null and ${table.initiatingUserId} is null)
+        or (${table.createdByUserId} is null and ${table.createdBySystemActorId} = 'tasmeemai:builtin-service-authority@1' and ${table.initiatingUserId} is not null)`,
+    ),
   }),
 );
 
@@ -727,8 +1233,11 @@ export const workspaceAgentPolicies = pgTable(
     enabled: boolean("enabled").default(false).notNull(),
     grants: jsonb("grants").$type<StoredAgentCapabilityGrant[]>().notNull(),
     updatedByUserId: text("updated_by_user_id")
-      .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
+    updatedBySystemActorId: text("updated_by_system_actor_id"),
+    initiatingUserId: text("initiating_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -742,6 +1251,11 @@ export const workspaceAgentPolicies = pgTable(
       ],
       name: "workspace_agent_policies_active_revision_workspace_fk",
     }).onDelete("restrict"),
+    actorCheck: check(
+      "workspace_agent_policies_actor_check",
+      sql`(${table.updatedByUserId} is not null and ${table.updatedBySystemActorId} is null and ${table.initiatingUserId} is null)
+        or (${table.updatedByUserId} is null and ${table.updatedBySystemActorId} = 'tasmeemai:builtin-service-authority@1' and ${table.initiatingUserId} is not null)`,
+    ),
   }),
 );
 
@@ -1222,6 +1736,9 @@ export const credentialSecurityEvents = pgTable(
     workspaceCreatedIdx: index(
       "credential_security_events_workspace_created_idx",
     ).on(table.workspaceId, table.createdAt),
+    notificationCursorIdx: index(
+      "credential_security_events_notification_cursor_idx",
+    ).on(table.createdAt, table.id).where(sql`${table.eventType} in ('profile.created','profile.reprovisioned','profile.rotated','version.revoked','profile.status_changed','spend_grant.created','spend_grant.revoked')`),
     workspaceEffectIdx: index(
       "credential_security_events_workspace_effect_idx",
     ).on(table.workspaceId, table.effectRef),
@@ -2320,7 +2837,7 @@ export const runtimePublishingApprovalAuthorityGrants = pgTable(
     actionCheck: check(
       "runtime_publishing_approval_authority_grants_action_check",
       sql`${table.action} = 'publish'
-        and ${table.subjectRoleAtIssue} in ('owner','admin')`,
+        and ${table.subjectRoleAtIssue} in ('owner','admin','member')`,
     ),
     expiryCheck: check(
       "runtime_publishing_approval_authority_grants_expiry_check",
@@ -2461,6 +2978,8 @@ export const runtimePublishingApprovalRequests = pgTable(
     validationRuntimePolicyContractDigest: text(
       "validation_runtime_policy_contract_digest",
     ).notNull(),
+    governancePolicy: jsonb("governance_policy")
+      .$type<PublishingApprovalGovernanceBinding>(),
     decisionPolicyMode: text("decision_policy_mode").notNull(),
     decisionPolicyExpiresAt: timestamp("decision_policy_expires_at", {
       withTimezone: true,
@@ -2552,6 +3071,9 @@ export const runtimePublishingApprovalRequests = pgTable(
     workspaceStateExpiryIdx: index(
       "runtime_publishing_approval_requests_workspace_expiry_idx",
     ).on(table.workspaceId, table.decisionPolicyExpiresAt, table.id),
+    notificationCursorIdx: index(
+      "runtime_publishing_approval_requests_notification_cursor_idx",
+    ).on(table.createdAt, table.id),
     retrySourceIdx: index(
       "runtime_publishing_approval_requests_retry_source_idx",
     ).on(table.workspaceId, table.retrySourceDeliveryId,
@@ -2601,6 +3123,16 @@ export const runtimePublishingApprovalRequests = pgTable(
         and ${table.validationRuntimePolicyIdentity} = 'publishing-runtime-policy/default@1'
         and ${table.validationRuntimePolicyContractDigest} = 'sha256:c372d0a34f6b1ca086ef4cad760db2bbffab1ac5c668fede7f256106305b7cf1'
         and ${table.validationExpiresAt} > ${table.validationEvaluatedAt}`,
+    ),
+    governancePolicyCheck: check(
+      "runtime_publishing_approval_requests_governance_policy_check",
+      sql`${table.governancePolicy} is null or (
+        ${table.governancePolicy}->>'schema' = 'publishing-approval-governance-binding/v1'
+        and (${table.governancePolicy}->>'policyRevision')::integer > 0
+        and ${table.governancePolicy}->>'policyDigest' ~ '^sha256:[a-f0-9]{64}$'
+        and length(${table.governancePolicy}->>'governanceRequestId') between 1 and 200
+        and length(${table.governancePolicy}->>'policyId') between 1 and 200
+      )`,
     ),
     requestAuthorizationCheck: check(
       "runtime_publishing_approval_requests_request_authorization_check",
@@ -2667,6 +3199,9 @@ export const runtimePublishingApprovalDecisions = pgTable(
     workspaceDecidedIdx: index(
       "runtime_publishing_approval_decisions_workspace_decided_idx",
     ).on(table.workspaceId, table.decidedAt.desc(), table.id.desc()),
+    notificationCursorIdx: index(
+      "runtime_publishing_approval_decisions_notification_cursor_idx",
+    ).on(table.decidedAt, table.id),
     identityCheck: check(
       "runtime_publishing_approval_decisions_identity_check",
       sql`length(${table.id}) between 1 and 200
@@ -4545,6 +5080,9 @@ export const runtimePublishingDeliveryEvents = pgTable(
     deliverySequenceIdx: index(
       "runtime_publishing_delivery_events_delivery_sequence_idx",
     ).on(table.workspaceId, table.deliveryId, table.sequence),
+    notificationCursorIdx: index(
+      "runtime_publishing_delivery_events_notification_cursor_idx",
+    ).on(table.occurredAt, table.id).where(sql`${table.type} in ('publication.failed_terminal','publication.outcome_unknown')`),
     sequenceCheck: check(
       "runtime_publishing_delivery_events_sequence_check",
       sql`${table.sequence} > 0`,
@@ -4872,13 +5410,17 @@ export const workflowRuns = pgTable(
     snapshotCheck: check(
       "workflow_runs_snapshot_check",
       sql`jsonb_typeof(${table.startSnapshot}) = 'object'
-        and ${table.startSnapshot}->>'schema' in ('workflow-run-start-snapshot/v1', 'workflow-run-start-snapshot/v2')
+        and ${table.startSnapshot}->>'schema' in ('workflow-run-start-snapshot/v1', 'workflow-run-start-snapshot/v2', 'workflow-run-start-snapshot/v3')
         and (
-          ${table.startSnapshot}->>'schema' <> 'workflow-run-start-snapshot/v2'
+          ${table.startSnapshot}->>'schema' = 'workflow-run-start-snapshot/v1'
           or (
             jsonb_typeof(${table.startSnapshot}->'providerResolutions') = 'array'
             and jsonb_array_length(${table.startSnapshot}->'providerResolutions') > 0
           )
+        )
+        and (
+          ${table.startSnapshot}->>'schema' <> 'workflow-run-start-snapshot/v3'
+          or valid_workflow_run_studio_asset_references(${table.startSnapshot}->'studioAssetReferences')
         )
         and ${table.startSnapshot}->>'workflowId' = ${table.workflowId}
         and ${table.startSnapshot}->>'workflowRevisionId' = ${table.workflowRevisionId}
@@ -5592,6 +6134,7 @@ export const workflowRunMutationReceipts = pgTable(
       sql`${table.capability} in (
         'workflow_runs.start@1',
         'workflow_runs.start@2',
+        'workflow_runs.start@3',
         'workflow_runs.retry@1',
         'workflow_runs.reconcile@1',
         'workflow_runs.resume@1'
@@ -5619,7 +6162,8 @@ export const workflowRunMutationReceipts = pgTable(
       sql`(
         ${table.capability} in (
           'workflow_runs.start@1',
-          'workflow_runs.start@2'
+          'workflow_runs.start@2',
+          'workflow_runs.start@3'
         )
         and ${table.result} is null
       ) or (
@@ -5758,6 +6302,10 @@ export const agentSecurityEvents = pgTable(
     actorUserId: text("actor_user_id").references(() => user.id, {
       onDelete: "restrict",
     }),
+    systemActorId: text("system_actor_id"),
+    initiatingUserId: text("initiating_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
     eventType: text("event_type").notNull(),
     capabilityName: text("capability_name").notNull(),
     capabilityVersion: integer("capability_version").notNull(),
@@ -5777,6 +6325,10 @@ export const agentSecurityEvents = pgTable(
     principalCreatedIdx: index(
       "agent_security_events_principal_created_idx",
     ).on(table.principalId, table.createdAt),
+    systemActorCheck: check(
+      "agent_security_events_system_actor_check",
+      sql`${table.systemActorId} is null or (${table.actorUserId} is null and ${table.systemActorId} = 'tasmeemai:builtin-service-authority@1' and ${table.initiatingUserId} is not null)`,
+    ),
   }),
 );
 
@@ -5816,6 +6368,66 @@ export const agentAuthorityProvisioningReceipts = pgTable(
     requestUnique: uniqueIndex(
       "agent_authority_provisioning_receipts_request_unique",
     ).on(table.workspaceId, table.actorUserId, table.requestId),
+  }),
+);
+
+export const builtInAgentAuthorityProvisioningReceipts = pgTable(
+  "built_in_agent_authority_provisioning_receipts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    purpose: text("purpose").notNull(),
+    systemActorId: text("system_actor_id").notNull(),
+    initiatingUserId: text("initiating_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    sponsorUserId: text("sponsor_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    principalId: text("principal_id").notNull(),
+    keyId: text("key_id").notNull().references(() => agentKeys.id, { onDelete: "restrict" }),
+    grantSetId: text("grant_set_id").notNull().references(() => agentGrantSets.id, { onDelete: "restrict" }),
+    grantRevisionId: text("grant_revision_id").notNull().references(() => agentGrantRevisions.id, { onDelete: "restrict" }),
+    grantRevision: integer("grant_revision").notNull(),
+    policyRevisionId: text("policy_revision_id").notNull().references(() => workspaceAgentPolicyRevisions.id, { onDelete: "restrict" }),
+    policyRevision: integer("policy_revision").notNull(),
+    capability: text("capability").notNull(),
+    authorizationContractDigest: text("authorization_contract_digest").notNull(),
+    resources: jsonb("resources").$type<StoredAgentResourceConstraints>().notNull(),
+    requestId: text("request_id").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    principalFk: foreignKey({
+      name: "built_in_agent_authority_receipts_principal_fk",
+      columns: [table.workspaceId, table.principalId],
+      foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id],
+    }).onDelete("restrict"),
+    keyFk: foreignKey({
+      name: "built_in_agent_authority_receipts_key_fk",
+      columns: [table.principalId, table.keyId],
+      foreignColumns: [agentKeys.principalId, agentKeys.id],
+    }).onDelete("restrict"),
+    grantSetFk: foreignKey({
+      name: "built_in_agent_authority_receipts_grant_set_fk",
+      columns: [table.workspaceId, table.principalId, table.grantSetId],
+      foreignColumns: [agentGrantSets.workspaceId, agentGrantSets.principalId, agentGrantSets.id],
+    }).onDelete("restrict"),
+    grantRevisionFk: foreignKey({
+      name: "built_in_agent_authority_receipts_grant_revision_fk",
+      columns: [table.grantSetId, table.grantRevisionId],
+      foreignColumns: [agentGrantRevisions.grantSetId, agentGrantRevisions.id],
+    }).onDelete("restrict"),
+    policyRevisionFk: foreignKey({
+      name: "built_in_agent_authority_receipts_policy_revision_fk",
+      columns: [table.workspaceId, table.policyRevisionId],
+      foreignColumns: [workspaceAgentPolicyRevisions.workspaceId, workspaceAgentPolicyRevisions.id],
+    }).onDelete("restrict"),
+    requestUnique: uniqueIndex("built_in_agent_authority_receipts_request_unique").on(table.workspaceId, table.purpose, table.requestId),
+    keyUnique: uniqueIndex("built_in_agent_authority_receipts_key_unique").on(table.keyId),
+    initiatorIdx: index("built_in_agent_authority_receipts_initiator_idx").on(table.workspaceId, table.initiatingUserId, table.createdAt),
+    purposeCheck: check("built_in_agent_authority_receipts_purpose_check", sql`(${table.purpose} = 'content_workflow' and ${table.capability} in ('workflow_runs.start@2', 'workflow_runs.start@3')) or (${table.purpose} = 'calendar_reschedule' and ${table.capability} = 'publishing_plan_revisions.create@1')`),
+    actorCheck: check("built_in_agent_authority_receipts_actor_check", sql`${table.systemActorId} = 'tasmeemai:builtin-service-authority@1'`),
+    digestCheck: check("built_in_agent_authority_receipts_digest_check", sql`${table.authorizationContractDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.requestFingerprint} ~ '^sha256:[a-f0-9]{64}$'`),
+    revisionCheck: check("built_in_agent_authority_receipts_revision_check", sql`${table.grantRevision} > 0 and ${table.policyRevision} > 0`),
+    resourcesCheck: check("built_in_agent_authority_receipts_resources_check", sql`jsonb_typeof(${table.resources}) = 'object' and ${table.resources} ?& array['channelIds','credentialProfileIds','workflowIds','automationIds','artifactIds'] and (${table.resources} - array['channelIds','credentialProfileIds','workflowIds','automationIds','studioAssetIds','artifactIds']) = '{}'::jsonb and jsonb_typeof(${table.resources}->'channelIds') = 'array' and jsonb_typeof(${table.resources}->'credentialProfileIds') = 'array' and jsonb_typeof(${table.resources}->'workflowIds') = 'array' and jsonb_typeof(${table.resources}->'automationIds') = 'array' and (not (${table.resources} ? 'studioAssetIds') or jsonb_typeof(${table.resources}->'studioAssetIds') = 'array') and jsonb_typeof(${table.resources}->'artifactIds') = 'array' and (${table.capability} <> 'workflow_runs.start@3' or ${table.resources} ? 'studioAssetIds') and ((${table.purpose} = 'content_workflow' and ${table.resources}->'channelIds' = '[]'::jsonb and ${table.resources}->'credentialProfileIds' = '[]'::jsonb and ${table.resources}->'automationIds' = '[]'::jsonb) or (${table.purpose} = 'calendar_reschedule' and ${table.resources}->'credentialProfileIds' = '[]'::jsonb and ${table.resources}->'workflowIds' = '[]'::jsonb and ${table.resources}->'automationIds' = '[]'::jsonb and (not (${table.resources} ? 'studioAssetIds') or ${table.resources}->'studioAssetIds' = '[]'::jsonb)))`),
   }),
 );
 
@@ -5933,6 +6545,7 @@ export const assets = pgTable(
   },
   (table) => ({
     workspaceIdx: index("assets_workspace_idx").on(table.workspaceId),
+    workspaceIdUnique: uniqueIndex("assets_workspace_id_unique").on(table.workspaceId, table.id),
     projectIdx: index("assets_project_idx").on(table.projectId),
     storageIdx: uniqueIndex("assets_storage_provider_key_unique").on(
       table.storageProvider,
@@ -6091,7 +6704,11 @@ export const socialAccounts = pgTable(
     workspacePlatformUserUnique: uniqueIndex(
       "social_accounts_workspace_platform_user_unique",
     ).on(table.workspaceId, table.platform, table.platformUserId),
+    workspaceIdUnique: uniqueIndex("social_accounts_workspace_id_unique").on(table.workspaceId, table.id),
     workspaceIdx: index("social_accounts_workspace_idx").on(table.workspaceId),
+    consentExpiryIdx: index("social_accounts_consent_expiry_idx")
+      .on(table.tokenExpiresAt, table.id)
+      .where(sql`${table.disabled} = false and ${table.requiresReauth} = false and ${table.tokenExpiresAt} is not null`),
     createdAtIdx: index("social_accounts_created_at_idx").on(table.createdAt),
   }),
 );
@@ -6123,6 +6740,19 @@ export const socialPosts = pgTable(
     mediaUrls: jsonb("media_urls").$type<
       Array<{ type: string; url: string; alt?: string }>
     >(),
+    /** Ordered, digest-bound canonical media relation used by portability. */
+    stableMediaRefs: jsonb("stable_media_refs")
+      .$type<
+        Array<{
+          resourceKind?: "studio_asset" | "artifact";
+          assetId: string;
+          assetDigest: string;
+          order: number;
+          alt?: string;
+        }>
+      >()
+      .default([])
+      .notNull(),
     platformSettings: jsonb("platform_settings").$type<
       Record<string, unknown>
     >(),
@@ -6148,6 +6778,7 @@ export const socialPosts = pgTable(
   },
   (table) => ({
     workspaceIdx: index("social_posts_workspace_idx").on(table.workspaceId),
+    workspaceIdUnique: uniqueIndex("social_posts_workspace_id_unique").on(table.workspaceId, table.id),
     socialAccountIdx: index("social_posts_account_idx").on(
       table.socialAccountId,
     ),
@@ -6170,6 +6801,10 @@ export const socialPosts = pgTable(
       table.scheduledAt,
     ),
     createdAtIdx: index("social_posts_created_at_idx").on(table.createdAt),
+    stableMediaRefsArrayCheck: check(
+      "social_posts_stable_media_refs_array_check",
+      sql`jsonb_typeof(${table.stableMediaRefs}) = 'array'`,
+    ),
   }),
 );
 
@@ -6286,6 +6921,126 @@ export const socialEvents = pgTable(
     postIdx: index("social_events_post_idx").on(table.postId),
     accountIdx: index("social_events_account_idx").on(table.accountId),
     createdAtIdx: index("social_events_created_at_idx").on(table.createdAt),
+    notificationCursorIdx: index("social_events_notification_cursor_idx")
+      .on(table.createdAt, table.id)
+      .where(sql`${table.userFacing} = true and ${table.eventType} in ('account.reauth_required','post.failed','dispatch.failed')`),
+  }),
+);
+
+/** Explicit Workspace-owned performance observations used to identify reusable
+ * winning content. These are never inferred from arbitrary social event
+ * metadata, and every row pins the exact published post, ready Studio Asset,
+ * and Rights Snapshot that can later enter the Inspiration/Blitz pipeline. */
+export const workspaceContentPerformanceObservations = pgTable(
+  "workspace_content_performance_observations",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    id: text("id").notNull(),
+    postId: text("post_id").notNull(),
+    sourceAssetId: text("source_asset_id").notNull(),
+    rightsSnapshotId: text("rights_snapshot_id").notNull(),
+    rightsSnapshotRevision: integer("rights_snapshot_revision").notNull(),
+    rightsSnapshotDigest: text("rights_snapshot_digest").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    sourceRef: text("source_ref").notNull(),
+    sourceDigest: text("source_digest").notNull(),
+    views: bigint("views", { mode: "number" }),
+    likes: bigint("likes", { mode: "number" }),
+    comments: bigint("comments", { mode: "number" }),
+    platform: socialPlatformEnum("platform"),
+    providerAccountId: text("provider_account_id"),
+    providerPostId: text("provider_post_id"),
+    providerRequestId: text("provider_request_id"),
+    reportedMetrics: jsonb("reported_metrics").$type<string[]>().default([]).notNull(),
+    providerReceipt: jsonb("provider_receipt").$type<Record<string, unknown>>().default({}).notNull(),
+    region: text("region").notNull(),
+    contentLanguage: text("content_language").notNull(),
+    arabicVariety: text("arabic_variety"),
+    format: text("format").notNull(),
+    tags: jsonb("tags").$type<string[]>().notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
+    createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "workspace_content_performance_observations_pk", columns: [table.workspaceId, table.id] }),
+    idempotencyUnique: uniqueIndex("workspace_content_performance_observations_idempotency_unique").on(table.workspaceId, table.idempotencyKey),
+    postFk: foreignKey({ name: "workspace_content_performance_observations_post_fk", columns: [table.workspaceId, table.postId], foreignColumns: [socialPosts.workspaceId, socialPosts.id] }).onDelete("restrict"),
+    assetFk: foreignKey({ name: "workspace_content_performance_observations_asset_fk", columns: [table.workspaceId, table.sourceAssetId], foreignColumns: [assets.workspaceId, assets.id] }).onDelete("restrict"),
+    cursorIdx: index("workspace_content_performance_observations_cursor_idx").on(table.workspaceId, table.observedAt.desc(), table.id.desc()),
+    postCursorIdx: index("workspace_content_performance_observations_post_cursor_idx").on(table.workspaceId, table.postId, table.observedAt.desc(), table.id.desc()),
+    assetIdx: index("workspace_content_performance_observations_asset_idx").on(table.workspaceId, table.sourceAssetId),
+    sourceDigestUnique: uniqueIndex("workspace_content_performance_observations_verified_digest_unique").on(table.workspaceId, table.sourceDigest).where(sql`${table.sourceKind} = 'platform_verified'`),
+    valuesCheck: check("workspace_content_performance_observations_values_check", sql`${table.sourceKind} in ('workspace_attested','platform_verified') and length(${table.sourceRef}) between 1 and 500 and ${table.sourceDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.rightsSnapshotDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.rightsSnapshotRevision} > 0 and (${table.views} is null or ${table.views} between 0 and 9007199254740991) and (${table.likes} is null or ${table.likes} between 0 and 9007199254740991) and (${table.comments} is null or ${table.comments} between 0 and 9007199254740991) and (${table.views} is not null or ${table.likes} is not null or ${table.comments} is not null) and ${table.contentLanguage} in ('ar','en') and (${table.arabicVariety} is null or ${table.arabicVariety} in ('msa','gulf','egyptian','levantine','maghrebi')) and ${table.format} in ('slideshow','wall_of_text','video_hook_demo','speaking_hook_demo','talking_head_ugc','green_screen_meme','talking_head_green_screen','product_spokesperson','green_screen_mobile_app','claymation','character_swap','custom_upload') and jsonb_typeof(${table.tags}) = 'array' and jsonb_typeof(${table.reportedMetrics}) = 'array' and jsonb_typeof(${table.providerReceipt}) = 'object' and ${table.observedAt} <= ${table.capturedAt} and length(${table.idempotencyKey}) between 8 and 200 and ${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+  }),
+);
+
+export const workspaceContentPerformanceSyncs = pgTable(
+  "workspace_content_performance_syncs",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    id: text("id").notNull(),
+    postId: text("post_id").notNull(),
+    sourceAssetId: text("source_asset_id").notNull(),
+    socialAccountId: text("social_account_id").notNull(),
+    rightsSnapshotId: text("rights_snapshot_id").notNull(),
+    rightsSnapshotRevision: integer("rights_snapshot_revision").notNull(),
+    rightsSnapshotDigest: text("rights_snapshot_digest").notNull(),
+    region: text("region").notNull(),
+    contentLanguage: text("content_language").notNull(),
+    arabicVariety: text("arabic_variety"),
+    format: text("format").notNull(),
+    tags: jsonb("tags").$type<string[]>().default([]).notNull(),
+    state: text("state").default("active").notNull(),
+    scheduleMinutes: integer("schedule_minutes").default(60).notNull(),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
+    lastObservedAt: timestamp("last_observed_at", { withTimezone: true }),
+    lastSourceDigest: text("last_source_digest"),
+    lastErrorCode: text("last_error_code"),
+    createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "workspace_content_performance_syncs_pk", columns: [table.workspaceId, table.id] }),
+    postUnique: uniqueIndex("workspace_content_performance_syncs_post_unique").on(table.workspaceId, table.postId, table.sourceAssetId),
+    postFk: foreignKey({ name: "workspace_content_performance_syncs_post_fk", columns: [table.workspaceId, table.postId], foreignColumns: [socialPosts.workspaceId, socialPosts.id] }).onDelete("cascade"),
+    assetFk: foreignKey({ name: "workspace_content_performance_syncs_asset_fk", columns: [table.workspaceId, table.sourceAssetId], foreignColumns: [assets.workspaceId, assets.id] }).onDelete("restrict"),
+    accountFk: foreignKey({ name: "workspace_content_performance_syncs_account_fk", columns: [table.workspaceId, table.socialAccountId], foreignColumns: [socialAccounts.workspaceId, socialAccounts.id] }).onDelete("cascade"),
+    dueIdx: index("workspace_content_performance_syncs_due_idx").on(table.nextRunAt, table.workspaceId, table.id).where(sql`${table.state} = 'active'`),
+    valuesCheck: check("workspace_content_performance_syncs_values_check", sql`${table.state} in ('active','paused','needs_reauth') and ${table.scheduleMinutes} between 15 and 10080 and ${table.rightsSnapshotRevision} > 0 and ${table.rightsSnapshotDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.contentLanguage} in ('ar','en') and (${table.arabicVariety} is null or ${table.arabicVariety} in ('msa','gulf','egyptian','levantine','maghrebi')) and ${table.format} in ('slideshow','wall_of_text','video_hook_demo','speaking_hook_demo','talking_head_ugc','green_screen_meme','talking_head_green_screen','product_spokesperson','green_screen_mobile_app','claymation','character_swap','custom_upload') and jsonb_typeof(${table.tags}) = 'array'`),
+  }),
+);
+
+export const workspaceContentPerformanceSyncJobs = pgTable(
+  "workspace_content_performance_sync_jobs",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    id: text("id").notNull(),
+    syncId: text("sync_id").notNull(),
+    sourceKey: text("source_key").notNull(),
+    state: text("state").default("queued").notNull(),
+    attempt: integer("attempt").default(0).notNull(),
+    maxAttempts: integer("max_attempts").default(4).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    leaseGeneration: integer("lease_generation").default(0).notNull(),
+    failureCode: text("failure_code"),
+    observationId: text("observation_id"),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "workspace_content_performance_sync_jobs_pk", columns: [table.workspaceId, table.id] }),
+    sourceUnique: uniqueIndex("workspace_content_performance_sync_jobs_source_unique").on(table.workspaceId, table.syncId, table.sourceKey),
+    activeSyncUnique: uniqueIndex("workspace_content_performance_sync_jobs_active_sync_unique").on(table.workspaceId, table.syncId).where(sql`${table.state} in ('queued','claimed')`),
+    syncFk: foreignKey({ name: "workspace_content_performance_sync_jobs_sync_fk", columns: [table.workspaceId, table.syncId], foreignColumns: [workspaceContentPerformanceSyncs.workspaceId, workspaceContentPerformanceSyncs.id] }).onDelete("cascade"),
+    dueIdx: index("workspace_content_performance_sync_jobs_due_idx").on(table.nextAttemptAt, table.workspaceId, table.id).where(sql`${table.state} = 'queued'`),
+    valuesCheck: check("workspace_content_performance_sync_jobs_values_check", sql`${table.state} in ('queued','claimed','succeeded','failed_known') and ${table.attempt} between 0 and ${table.maxAttempts} and ${table.maxAttempts} between 1 and 10 and ${table.leaseGeneration} >= 0 and length(${table.sourceKey}) between 1 and 200 and ((${table.state} = 'claimed' and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} <> 'claimed' and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null))`),
   }),
 );
 
@@ -7487,6 +8242,34 @@ export const runtimeBudgetAdmissions = pgTable(
   }),
 );
 
+/** One atomic redemption per signed fixed provider-spend quote. */
+export const runtimeWorkflowRunSpendQuoteRedemptions = pgTable(
+  "runtime_workflow_run_spend_quote_redemptions",
+  {
+    quoteId: text("quote_id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    runId: text("run_id").notNull(),
+    principalId: text("principal_id").notNull(),
+    keyId: text("key_id").notNull(),
+    amount: text("amount").notNull(),
+    currency: text("currency").notNull(),
+    pricingSnapshotIds: jsonb("pricing_snapshot_ids").$type<string[]>().notNull(),
+    targetStateDigest: text("target_state_digest").notNull(),
+    ceilingDigest: text("ceiling_digest").notNull(),
+    quote: jsonb("quote").$type<WorkflowRunAcceptedSpendQuote>().notNull(),
+    redeemedAt: timestamp("redeemed_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    runUnique: uniqueIndex("runtime_workflow_run_spend_quote_redemptions_run_unique").on(table.workspaceId, table.runId),
+    runFk: foreignKey({ columns: [table.workspaceId, table.runId], foreignColumns: [workflowRuns.workspaceId, workflowRuns.id], name: "runtime_workflow_run_spend_quote_redemptions_run_fk" }).onDelete("restrict"),
+    principalFk: foreignKey({ columns: [table.workspaceId, table.principalId], foreignColumns: [agentPrincipals.workspaceId, agentPrincipals.id], name: "runtime_workflow_run_spend_quote_redemptions_principal_fk" }).onDelete("restrict"),
+    amountCheck: check("runtime_workflow_run_spend_quote_redemptions_amount_check", sql`${table.amount} ~ '^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$'`),
+    currencyCheck: check("runtime_workflow_run_spend_quote_redemptions_currency_check", sql`${table.currency} ~ '^[A-Z]{3}$'`),
+    targetDigestCheck: check("runtime_workflow_run_spend_quote_redemptions_target_digest_check", sql`${table.targetStateDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+    ceilingDigestCheck: check("runtime_workflow_run_spend_quote_redemptions_ceiling_digest_check", sql`${table.ceilingDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+  }),
+);
+
 export const runtimeBudgetAdmissionGrants = pgTable(
   "runtime_budget_admission_grants",
   {
@@ -8167,6 +8950,1448 @@ export const runtimeAutomationOccurrenceCancellations = pgTable(
     dispositionCheck: check("runtime_automation_occurrence_cancellations_disposition_check", sql`${table.disposition} in ('prevented','cancellation_requested','too_late')`),
   }),
 );
+
+/**
+ * Workspace governance is a versioned resource ledger. Domain validation lives
+ * in the governance service; these rows provide atomic optimistic updates,
+ * Workspace isolation, and durable lifecycle projections without turning
+ * Better Auth organization roles into business authority.
+ */
+export const workspaceGovernanceResources = pgTable(
+  "workspace_governance_resources",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    kind: text("kind").notNull(),
+    id: text("id").notNull(),
+    version: integer("version").notNull(),
+    status: text("status").notNull(),
+    body: jsonb("body").$type<Record<string, unknown>>().notNull(),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      name: "workspace_governance_resources_pk",
+      columns: [table.workspaceId, table.kind, table.id],
+    }),
+    workspaceKindStatusIdx: index(
+      "workspace_governance_resources_workspace_kind_status_idx",
+    ).on(table.workspaceId, table.kind, table.status, table.updatedAt),
+    membershipProjectionClaimIdx: index(
+      "workspace_governance_membership_projection_claim_idx",
+    ).on(table.status, table.updatedAt).where(
+      sql`${table.kind} = 'membership_projection' and ${table.status} in ('queued','retry_pending','processing')`,
+    ),
+    identityCheck: check(
+      "workspace_governance_resources_identity_check",
+      sql`${table.id} ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$' and ${table.version} > 0 and length(${table.status}) between 1 and 80`,
+    ),
+    kindCheck: check(
+      "workspace_governance_resources_kind_check",
+      sql`${table.kind} in ('custom_role','member_role_assignment','invitation_binding','portfolio','portfolio_assignment','review_guest_grant','review_guest_session','approval_policy','approval_request','step_up_challenge','step_up_session','audit_export','workspace_export','workspace_import','data_region_policy','retention_policy','retention_hold','deletion_receipt','tombstone','safety_decision','safety_appeal','bulk_operation','workspace_closure','membership_projection')`,
+    ),
+    bodySizeCheck: check(
+      "workspace_governance_resources_body_size_check",
+      sql`octet_length(${table.body}::text) <= 2097152`,
+    ),
+  }),
+);
+
+/** Durable idempotency evidence for every governance mutation. */
+export const workspaceGovernanceMutationReceipts = pgTable(
+  "workspace_governance_mutation_receipts",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    capability: text("capability").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    actorIdentity: text("actor_identity"),
+    authContextDigest: text("auth_context_digest"),
+    result: jsonb("result").$type<unknown>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      name: "workspace_governance_mutation_receipts_pk",
+      columns: [table.workspaceId, table.capability, table.idempotencyKey],
+    }),
+    digestCheck: check(
+      "workspace_governance_mutation_receipts_digest_check",
+      sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.capability} ~ '^[a-z][a-z0-9_.]*@[1-9][0-9]*$' and length(${table.idempotencyKey}) between 8 and 200`,
+    ),
+    actorBindingCheck: check(
+      "workspace_governance_mutation_receipts_actor_binding_check",
+      sql`((${table.actorIdentity} is null and ${table.authContextDigest} is null) or (${table.actorIdentity} ~ '^(human|review_guest):[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$' and ${table.authContextDigest} ~ '^sha256:[a-f0-9]{64}$'))`,
+    ),
+  }),
+);
+
+/** Encrypted, bounded retry delivery; permanent receipts remain redacted. */
+export const workspaceGovernanceSecretDeliveries = pgTable(
+  "workspace_governance_secret_deliveries",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    capability: text("capability").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    actorIdentity: text("actor_identity").notNull(),
+    authContextDigest: text("auth_context_digest").notNull(),
+    encryptedPayload: text("encrypted_payload").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "workspace_governance_secret_deliveries_pk", columns: [table.workspaceId, table.capability, table.idempotencyKey] }),
+    expiryIdx: index("workspace_governance_secret_deliveries_expiry_idx").on(table.expiresAt),
+    digestCheck: check("workspace_governance_secret_deliveries_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+    actorBindingCheck: check("workspace_governance_secret_deliveries_actor_binding_check", sql`${table.actorIdentity} ~ '^(human|review_guest):[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$' and ${table.authContextDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+    envelopeCheck: check("workspace_governance_secret_deliveries_envelope_check", sql`${table.encryptedPayload} like 'v1.%' and octet_length(${table.encryptedPayload}) <= 65536`),
+  }),
+);
+
+/** Customer-visible append-only evidence; sensitive payloads are redacted before insertion. */
+export const workspaceAuditTrailEvents = pgTable(
+  "workspace_audit_trail_events",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    sequence: integer("sequence").notNull(),
+    id: text("id").notNull(),
+    event: jsonb("event").$type<Record<string, unknown>>().notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      name: "workspace_audit_trail_events_pk",
+      columns: [table.workspaceId, table.sequence],
+    }),
+    idUnique: uniqueIndex("workspace_audit_trail_events_id_unique").on(
+      table.workspaceId,
+      table.id,
+    ),
+    workspaceTimeIdx: index("workspace_audit_trail_events_workspace_time_idx").on(
+      table.workspaceId,
+      table.occurredAt,
+      table.sequence,
+    ),
+    sequenceCheck: check(
+      "workspace_audit_trail_events_sequence_check",
+      sql`${table.sequence} > 0 and octet_length(${table.event}::text) <= 65536`,
+    ),
+  }),
+);
+
+/**
+ * Durable provenance and idempotency ledger for canonical Workspace imports.
+ * The source payload is retained as portable customer data, never as authority:
+ * role, credential, policy, and secret kinds are rejected before this boundary.
+ */
+export const workspacePortableImportRecords = pgTable(
+  "workspace_portable_import_records",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    kind: text("kind").notNull(),
+    source: text("source").notNull(),
+    sourceManifestDigest: text("source_manifest_digest").notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceDigest: text("source_digest").notNull(),
+    destinationId: text("destination_id").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    mapping: jsonb("mapping").$type<Record<string, string>>().notNull(),
+    disposition: text("disposition").notNull(),
+    requestedByUserId: text("requested_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      name: "workspace_portable_import_records_pk",
+      columns: [table.workspaceId, table.idempotencyKey],
+    }),
+    sourceUnique: uniqueIndex("workspace_portable_import_records_source_unique").on(
+      table.workspaceId,
+      table.sourceManifestDigest,
+      table.kind,
+      table.sourceId,
+    ),
+    destinationIdx: index("workspace_portable_import_records_destination_idx").on(
+      table.workspaceId,
+      table.kind,
+      table.destinationId,
+    ),
+    kindCheck: check(
+      "workspace_portable_import_records_kind_check",
+      sql`${table.kind} in ('media','content_revision','prompt','brand_source','calendar_plan','platform_export_metadata')`,
+    ),
+    digestCheck: check(
+      "workspace_portable_import_records_digest_check",
+      sql`${table.sourceManifestDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.sourceDigest} ~ '^sha256:[a-f0-9]{64}$'`,
+    ),
+    dispositionCheck: check(
+      "workspace_portable_import_records_disposition_check",
+      sql`${table.disposition} in ('created','matched','archived')`,
+    ),
+  }),
+);
+
+/**
+ * Workspace-owned product records back the creator-facing surfaces that do not
+ * belong to the generation or publishing runtimes. Their payloads are
+ * validated by the product-surfaces module before crossing this boundary.
+ * Revision provides optimistic concurrency; command receipts make writes
+ * idempotent across retries and devices.
+ */
+export const workspaceProductRecords = pgTable(
+  "workspace_product_records",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(),
+    kind: text("kind").notNull(),
+    title: text("title").notNull(),
+    state: text("state").notNull(),
+    revision: integer("revision").default(1).notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    updatedByUserId: text("updated_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.id],
+      name: "workspace_product_records_pk",
+    }),
+    workspaceKindStateIdx: index(
+      "workspace_product_records_workspace_kind_state_idx",
+    ).on(table.workspaceId, table.kind, table.state, table.updatedAt),
+    revisionCheck: check(
+      "workspace_product_records_revision_check",
+      sql`${table.revision} > 0`,
+    ),
+  }),
+);
+
+export const workspaceProductCommandReceipts = pgTable(
+  "workspace_product_command_receipts",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    recordId: text("record_id").notNull(),
+    resultRevision: integer("result_revision").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.workspaceId, table.idempotencyKey],
+      name: "workspace_product_command_receipts_pk",
+    }),
+    recordFk: foreignKey({
+      columns: [table.workspaceId, table.recordId],
+      foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id],
+      name: "workspace_product_command_receipts_record_fk",
+    }).onDelete("restrict"),
+    digestCheck: check(
+      "workspace_product_command_receipts_digest_check",
+      sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.resultRevision} > 0`,
+    ),
+  }),
+);
+
+/** Append-only snapshots preserve draft history without making files mutable. */
+export const workspaceProductRecordRevisions = pgTable(
+  "workspace_product_record_revisions",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    recordId: text("record_id").notNull(),
+    revision: integer("revision").notNull(),
+    title: text("title").notNull(),
+    state: text("state").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    authorUserId: text("author_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.recordId, table.revision], name: "workspace_product_record_revisions_pk" }),
+    recordFk: foreignKey({ columns: [table.workspaceId, table.recordId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id], name: "workspace_product_record_revisions_record_fk" }).onDelete("restrict"),
+    revisionCheck: check("workspace_product_record_revisions_revision_check", sql`${table.revision} > 0`),
+  }),
+);
+
+/** Immutable, source-revision-bound Website and GEO measurements. */
+export const productAnalyticsObservations = pgTable(
+  "product_analytics_observations",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceRevision: integer("source_revision").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    eventId: text("event_id").notNull(),
+    eventType: text("event_type").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    metric: text("metric").notNull(),
+    value: integer("value").notNull(),
+    windowStartedAt: timestamp("window_started_at", { withTimezone: true }).notNull(),
+    windowEndedAt: timestamp("window_ended_at", { withTimezone: true }).notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
+    evidenceDigest: text("evidence_digest").notNull(),
+    credentialDigest: text("credential_digest").notNull(),
+    receiptSignature: text("receipt_signature").notNull(),
+    scope: jsonb("scope").$type<{
+      region: "mena" | "eu" | "other" | "unknown";
+      consentRevision: string;
+      consentPurpose: "analytics";
+      retentionUntil: string;
+      campaignTag: string | null;
+      contentType: "page" | "article" | "landing_page" | "social_post" | "video" | "image" | "other";
+      platform: "website" | "google" | "bing" | "chatgpt" | "perplexity" | "other";
+      accountRefDigest: string | null;
+      publishingState: "not_applicable" | "draft" | "queued" | "publishing" | "published" | "failed";
+    }>().notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "product_analytics_observations_pk", columns: [table.workspaceId, table.id] }),
+    idempotencyUnique: uniqueIndex("product_analytics_observations_idempotency_unique").on(table.workspaceId, table.sourceId, table.idempotencyKey),
+    eventUnique: uniqueIndex("product_analytics_observations_event_unique").on(table.workspaceId, table.sourceId, table.eventId),
+    sourceRevisionFk: foreignKey({ columns: [table.workspaceId, table.sourceId, table.sourceRevision], foreignColumns: [workspaceProductRecordRevisions.workspaceId, workspaceProductRecordRevisions.recordId, workspaceProductRecordRevisions.revision], name: "product_analytics_observations_source_revision_fk" }).onDelete("restrict"),
+    rangeIdx: index("product_analytics_observations_range_idx").on(table.workspaceId, table.metric, table.windowEndedAt, table.id),
+    sourceIdx: index("product_analytics_observations_source_idx").on(table.workspaceId, table.sourceId, table.windowEndedAt, table.id),
+    sourceCheck: check("product_analytics_observations_source_check", sql`(${table.sourceKind} = 'website_analytics_source' and ${table.metric} = 'websiteViews' and ${table.eventType} = 'page_view') or (${table.sourceKind} = 'geo_analytics_source' and ${table.metric} = 'geoCitations' and ${table.eventType} = 'citation_observed')`),
+    valueCheck: check("product_analytics_observations_value_check", sql`(${table.eventId} like 'legacy:%' and ${table.value} between 0 and 10000000) or (${table.eventId} not like 'legacy:%' and ${table.value} = 1)`),
+    windowCheck: check("product_analytics_observations_window_check", sql`${table.windowEndedAt} > ${table.windowStartedAt} and ${table.windowEndedAt} <= ${table.windowStartedAt} + interval '24 hours' and ${table.occurredAt} >= ${table.windowStartedAt} and ${table.occurredAt} < ${table.windowEndedAt}`),
+    digestCheck: check("product_analytics_observations_digest_check", sql`${table.evidenceDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.credentialDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.receiptSignature} ~ '^hmac-sha256:[a-f0-9]{64}$' and ${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and length(${table.eventId}) between 8 and 200 and length(${table.idempotencyKey}) between 8 and 200`),
+    scopeCheck: check("product_analytics_observations_scope_check", sql`jsonb_typeof(${table.scope}) = 'object' and ${table.scope}->>'region' in ('mena','eu','other','unknown') and ${table.scope}->>'consentPurpose' = 'analytics' and length(${table.scope}->>'consentRevision') between 1 and 100 and (${table.scope}->>'retentionUntil')::timestamptz > ${table.capturedAt}`),
+  }),
+);
+
+/** Recoverable, leased refresh work bound to one immutable Analytics source revision. */
+export const productAnalyticsRefreshJobs = pgTable(
+  "product_analytics_refresh_jobs",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceRevision: integer("source_revision").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    state: text("state").notNull(),
+    cursor: text("cursor"),
+    processedEvents: integer("processed_events").default(0).notNull(),
+    attempt: integer("attempt").default(0).notNull(),
+    maxAttempts: integer("max_attempts").default(8).notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseEpoch: integer("lease_epoch").default(0).notNull(),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(),
+    lastErrorCode: text("last_error_code"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    requestedByUserId: text("requested_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "product_analytics_refresh_jobs_pk", columns: [table.workspaceId, table.id] }),
+    commandUnique: uniqueIndex("product_analytics_refresh_jobs_command_unique").on(table.workspaceId, table.idempotencyKey),
+    sourceRevisionFk: foreignKey({ columns: [table.workspaceId, table.sourceId, table.sourceRevision], foreignColumns: [workspaceProductRecordRevisions.workspaceId, workspaceProductRecordRevisions.recordId, workspaceProductRecordRevisions.revision], name: "product_analytics_refresh_jobs_source_revision_fk" }).onDelete("restrict"),
+    dueIdx: index("product_analytics_refresh_jobs_due_idx").on(table.state, table.nextAttemptAt, table.leaseExpiresAt, table.id),
+    sourceIdx: index("product_analytics_refresh_jobs_source_idx").on(table.workspaceId, table.sourceId, table.requestedAt, table.id),
+    stateCheck: check("product_analytics_refresh_jobs_state_check", sql`${table.state} in ('queued','claimed','running','succeeded','failed_known','outcome_unknown') and ${table.sourceKind} in ('website_analytics_source','geo_analytics_source') and ${table.processedEvents} >= 0 and ${table.attempt} >= 0 and ${table.attempt} <= ${table.maxAttempts} and ${table.maxAttempts} between 1 and 20 and ${table.leaseEpoch} >= 0`),
+    leaseCheck: check("product_analytics_refresh_jobs_lease_check", sql`(${table.state} in ('claimed','running') and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} not in ('claimed','running') and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null)`),
+    digestCheck: check("product_analytics_refresh_jobs_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and length(${table.idempotencyKey}) between 8 and 200`),
+  }),
+);
+
+export const productCampaignOccurrences = pgTable(
+  "product_campaign_occurrences",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(),
+    campaignId: text("campaign_id").notNull(),
+    campaignRevision: integer("campaign_revision").notNull(),
+    campaignDigest: text("campaign_digest").notNull(),
+    occurrenceKey: text("occurrence_key").notNull(),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
+    format: text("format").notNull(),
+    snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
+    state: text("state").notNull(),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    leaseGeneration: integer("lease_generation").default(0).notNull(),
+    workflowRunId: text("workflow_run_id"),
+    startSnapshotDigest: text("start_snapshot_digest"),
+    quoteId: text("quote_id"),
+    quotedAmount: text("quoted_amount"),
+    currency: text("currency"),
+    failureCode: text("failure_code"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "product_campaign_occurrences_pk", columns: [table.workspaceId, table.id] }),
+    keyUnique: uniqueIndex("product_campaign_occurrences_key_unique").on(table.workspaceId, table.campaignId, table.occurrenceKey),
+    campaignFk: foreignKey({ columns: [table.workspaceId, table.campaignId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id], name: "product_campaign_occurrences_campaign_fk" }).onDelete("restrict"),
+    runFk: foreignKey({ columns: [table.workspaceId, table.workflowRunId], foreignColumns: [workflowRuns.workspaceId, workflowRuns.id], name: "product_campaign_occurrences_run_fk" }).onDelete("restrict"),
+    dueIdx: index("product_campaign_occurrences_due_idx").on(table.state, table.scheduledAt, table.id),
+    campaignIdx: index("product_campaign_occurrences_campaign_idx").on(table.workspaceId, table.campaignId, table.scheduledAt, table.id),
+    digestCheck: check("product_campaign_occurrences_digest_check", sql`${table.campaignRevision} > 0 and ${table.campaignDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+    stateCheck: check("product_campaign_occurrences_state_check", sql`${table.state} in ('scheduled','claimed','submitting','running','succeeded','failed_known','outcome_unknown','cancelled')`),
+    leaseCheck: check("product_campaign_occurrences_lease_check", sql`(${table.state} = 'claimed' and ${table.leaseToken} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} <> 'claimed' and ${table.leaseToken} is null and ${table.leaseExpiresAt} is null)`),
+    runCheck: check("product_campaign_occurrences_run_check", sql`(${table.workflowRunId} is null and ${table.startSnapshotDigest} is null) or (${table.workflowRunId} is not null and ${table.startSnapshotDigest} ~ '^sha256:[a-f0-9]{64}$')`),
+  }),
+);
+
+/** Campaign-local money and managed-credit exposure, reserved before a Workflow Run is submitted. */
+export const productCampaignSpendReservations = pgTable(
+  "product_campaign_spend_reservations",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    occurrenceId: text("occurrence_id").notNull(),
+    campaignId: text("campaign_id").notNull(),
+    campaignRevision: integer("campaign_revision").notNull(),
+    quoteId: text("quote_id").notNull(),
+    currency: text("currency").notNull(),
+    quotedAmountCents: bigint("quoted_amount_cents", { mode: "number" }).notNull(),
+    reservedCreditUnits: bigint("reserved_credit_units", { mode: "number" }).notNull(),
+    creditUnitPriceUsd: text("credit_unit_price_usd"),
+    state: text("state").notNull(),
+    actualAmountCents: bigint("actual_amount_cents", { mode: "number" }),
+    actualCreditUnits: bigint("actual_credit_units", { mode: "number" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "product_campaign_spend_reservations_pk", columns: [table.workspaceId, table.occurrenceId] }),
+    quoteUnique: uniqueIndex("product_campaign_spend_reservations_quote_unique").on(table.workspaceId, table.quoteId),
+    occurrenceFk: foreignKey({ columns: [table.workspaceId, table.occurrenceId], foreignColumns: [productCampaignOccurrences.workspaceId, productCampaignOccurrences.id], name: "product_campaign_spend_reservations_occurrence_fk" }).onDelete("restrict"),
+    campaignIdx: index("product_campaign_spend_reservations_campaign_idx").on(table.workspaceId, table.campaignId, table.state, table.createdAt),
+    valuesCheck: check("product_campaign_spend_reservations_values_check", sql`${table.campaignRevision} > 0 and ${table.currency} = 'USD' and ${table.quotedAmountCents} > 0 and ${table.reservedCreditUnits} >= 0 and (${table.creditUnitPriceUsd} is null or ${table.creditUnitPriceUsd} ~ '^(0|[1-9][0-9]*)([.][0-9]+)?$') and ${table.state} in ('held','settled','released','outcome_unknown') and (${table.actualAmountCents} is null or ${table.actualAmountCents} >= 0) and (${table.actualCreditUnits} is null or ${table.actualCreditUnits} >= 0)`),
+  }),
+);
+
+export const productRuntimeScanCheckpoints = pgTable(
+  "product_runtime_scan_checkpoints",
+  {
+    scanKey: text("scan_key").primaryKey(),
+    cursorAt: timestamp("cursor_at", { withTimezone: true }),
+    cursorId: text("cursor_id"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({ cursorCheck: check("product_runtime_scan_checkpoints_cursor_check", sql`(${table.cursorAt} is null and ${table.cursorId} is null) or (${table.cursorAt} is not null and ${table.cursorId} is not null)`) }),
+);
+
+/** Provider-neutral scheduled inputs for the rights-aware Inspiration feed.
+ * Credentials and provider-specific configuration never live in this table;
+ * adapter keys resolve through deployment configuration. */
+export const inspirationTrendSources = pgTable(
+  "inspiration_trend_sources",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(), adapterKey: text("adapter_key").notNull(), sourceKind: text("source_kind").notNull(), displayName: text("display_name").notNull(), state: text("state").notNull(),
+    scheduleMinutes: integer("schedule_minutes").notNull(), nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(), cursor: text("cursor"),
+    preferredRegions: jsonb("preferred_regions").$type<string[]>().notNull(), preferredArabicVarieties: jsonb("preferred_arabic_varieties").$type<string[]>().notNull(),
+    preferredFormats: jsonb("preferred_formats").$type<string[]>().notNull(), preferredTags: jsonb("preferred_tags").$type<string[]>().notNull(), excludedTags: jsonb("excluded_tags").$type<string[]>().notNull(),
+    createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "inspiration_trend_sources_pk", columns: [table.workspaceId, table.id] }),
+    dueIdx: index("inspiration_trend_sources_due_idx").on(table.state, table.nextRunAt, table.workspaceId, table.id),
+    valuesCheck: check("inspiration_trend_sources_values_check", sql`${table.state} in ('active','paused') and ${table.sourceKind} in ('official_api','licensed_dataset','public_metadata','embeddable_feed','workspace_owned_analytics') and ${table.adapterKey} ~ '^[a-z][a-z0-9._-]{1,119}$' and ${table.scheduleMinutes} between 5 and 10080`),
+  }),
+);
+
+export const inspirationTrendIngestionJobs = pgTable(
+  "inspiration_trend_ingestion_jobs",
+  {
+    workspaceId: text("workspace_id").notNull(), id: text("id").notNull(), sourceId: text("source_id").notNull(), sourceKey: text("source_key").notNull(), requestedByUserId: text("requested_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    state: text("state").notNull(), cursor: text("cursor"), rankingContext: jsonb("ranking_context").$type<import("@/lib/product-surfaces/trend-types").TrendRankingContext>().notNull(), leaseOwner: text("lease_owner"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }), leaseEpoch: integer("lease_epoch").default(0).notNull(),
+    attempt: integer("attempt").default(0).notNull(), maxAttempts: integer("max_attempts").default(5).notNull(), pageCount: integer("page_count").default(0).notNull(),
+    insertedCount: integer("inserted_count").default(0).notNull(), updatedCount: integer("updated_count").default(0).notNull(), replayedCount: integer("replayed_count").default(0).notNull(), restrictedCount: integer("restricted_count").default(0).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(), failureCode: text("failure_code"), requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(), startedAt: timestamp("started_at", { withTimezone: true }), finishedAt: timestamp("finished_at", { withTimezone: true }), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "inspiration_trend_ingestion_jobs_pk", columns: [table.workspaceId, table.id] }),
+    sourceKeyUnique: uniqueIndex("inspiration_trend_ingestion_jobs_source_key_unique").on(table.workspaceId, table.sourceId, table.sourceKey),
+    sourceFk: foreignKey({ name: "inspiration_trend_ingestion_jobs_source_fk", columns: [table.workspaceId, table.sourceId], foreignColumns: [inspirationTrendSources.workspaceId, inspirationTrendSources.id] }).onDelete("restrict"),
+    dueIdx: index("inspiration_trend_ingestion_jobs_due_idx").on(table.state, table.nextAttemptAt, table.leaseExpiresAt, table.id),
+    valuesCheck: check("inspiration_trend_ingestion_jobs_values_check", sql`${table.state} in ('queued','claimed','succeeded','failed_known') and ${table.leaseEpoch} >= 0 and ${table.attempt} >= 0 and ${table.attempt} <= ${table.maxAttempts} and ${table.maxAttempts} between 1 and 20 and ${table.pageCount} >= 0 and ${table.insertedCount} >= 0 and ${table.updatedCount} >= 0 and ${table.replayedCount} >= 0 and ${table.restrictedCount} >= 0`),
+    leaseCheck: check("inspiration_trend_ingestion_jobs_lease_check", sql`(${table.state} = 'claimed' and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} <> 'claimed' and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null)`),
+  }),
+);
+
+/** Mutable read projection; its immutable source, rights, and ranking evidence
+ * remains in Workspace Product Record revisions and ingestion receipts. */
+export const inspirationTrendFeedEntries = pgTable(
+  "inspiration_trend_feed_entries",
+  {
+    workspaceId: text("workspace_id").notNull(), inspirationItemId: text("inspiration_item_id").notNull(), sourceId: text("source_id").notNull(), externalItemId: text("external_item_id").notNull(),
+    score: integer("score").notNull(), rankingDigest: text("ranking_digest").notNull(), metricsObservedAt: timestamp("metrics_observed_at", { withTimezone: true }).notNull(), sourcePublishedAt: timestamp("source_published_at", { withTimezone: true }).notNull(), rightsExpiresAt: timestamp("rights_expires_at", { withTimezone: true }),
+    region: text("region").notNull(), contentLanguage: text("content_language").notNull(), arabicVariety: text("arabic_variety"), format: text("format").notNull(), rightsStatus: text("rights_status").notNull(), eligibleForBlitz: boolean("eligible_for_blitz").notNull(), searchableText: text("searchable_text").notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "inspiration_trend_feed_entries_pk", columns: [table.workspaceId, table.inspirationItemId] }),
+    sourceItemUnique: uniqueIndex("inspiration_trend_feed_entries_source_item_unique").on(table.workspaceId, table.sourceId, table.externalItemId),
+    itemFk: foreignKey({ name: "inspiration_trend_feed_entries_item_fk", columns: [table.workspaceId, table.inspirationItemId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id] }).onDelete("restrict"),
+    sourceFk: foreignKey({ name: "inspiration_trend_feed_entries_source_fk", columns: [table.workspaceId, table.sourceId], foreignColumns: [inspirationTrendSources.workspaceId, inspirationTrendSources.id] }).onDelete("restrict"),
+    rankIdx: index("inspiration_trend_feed_entries_rank_idx").on(table.workspaceId, table.score.desc(), table.metricsObservedAt.desc(), table.inspirationItemId),
+    filterIdx: index("inspiration_trend_feed_entries_filter_idx").on(table.workspaceId, table.contentLanguage, table.region, table.format, table.rightsStatus),
+    valuesCheck: check("inspiration_trend_feed_entries_values_check", sql`${table.score} between 0 and 10000 and ${table.rankingDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.contentLanguage} in ('ar','en') and ${table.rightsStatus} in ('licensed','user_submitted','embeddable','metadata_only','restricted')`),
+  }),
+);
+
+export const inspirationTrendIngestionReceipts = pgTable(
+  "inspiration_trend_ingestion_receipts",
+  {
+    workspaceId: text("workspace_id").notNull(), sourceId: text("source_id").notNull(), externalItemId: text("external_item_id").notNull(), observationDigest: text("observation_digest").notNull(),
+    inspirationItemId: text("inspiration_item_id").notNull(), inspirationItemRevision: integer("inspiration_item_revision").notNull(), sourceContentDigest: text("source_content_digest").notNull(), rightsEvidenceDigest: text("rights_evidence_digest").notNull(), rankingDigest: text("ranking_digest").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "inspiration_trend_ingestion_receipts_pk", columns: [table.workspaceId, table.sourceId, table.externalItemId, table.observationDigest, table.rankingDigest] }),
+    sourceFk: foreignKey({ name: "inspiration_trend_ingestion_receipts_source_fk", columns: [table.workspaceId, table.sourceId], foreignColumns: [inspirationTrendSources.workspaceId, inspirationTrendSources.id] }).onDelete("restrict"),
+    revisionFk: foreignKey({ name: "inspiration_trend_ingestion_receipts_revision_fk", columns: [table.workspaceId, table.inspirationItemId, table.inspirationItemRevision], foreignColumns: [workspaceProductRecordRevisions.workspaceId, workspaceProductRecordRevisions.recordId, workspaceProductRecordRevisions.revision] }).onDelete("restrict"),
+    itemIdx: index("inspiration_trend_ingestion_receipts_item_idx").on(table.workspaceId, table.inspirationItemId, table.createdAt),
+    digestsCheck: check("inspiration_trend_ingestion_receipts_digests_check", sql`${table.observationDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.sourceContentDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.rightsEvidenceDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.rankingDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.inspirationItemRevision} > 0`),
+  }),
+);
+
+/** Operator-published, licensed media packages. This global catalog is kept
+ * physically separate from policy-isolated public metadata discovery. */
+export const licensedTrendCatalogEntries = pgTable(
+  "licensed_trend_catalog_entries",
+  {
+    id: text("id").primaryKey(),
+    providerKey: text("provider_key").notNull(),
+    providerItemId: text("provider_item_id").notNull(),
+    activeRevision: integer("active_revision").notNull(),
+    state: text("state").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    providerItemUnique: uniqueIndex("licensed_trend_catalog_entries_provider_item_unique").on(table.providerKey, table.providerItemId),
+    stateIdx: index("licensed_trend_catalog_entries_state_idx").on(table.state, table.updatedAt, table.id),
+    valuesCheck: check("licensed_trend_catalog_entries_values_check", sql`${table.activeRevision} > 0 and ${table.state} in ('active','paused','revoked') and ${table.providerKey} ~ '^[a-z][a-z0-9._-]{1,119}$'`),
+  }),
+);
+
+export const licensedTrendCatalogRevisions = pgTable(
+  "licensed_trend_catalog_revisions",
+  {
+    catalogId: text("catalog_id").notNull(),
+    revision: integer("revision").notNull(),
+    document: jsonb("document").$type<import("@/lib/product-surfaces/licensed-trend-types").LicensedTrendCatalogDocument>().notNull(),
+    documentDigest: text("document_digest").notNull(),
+    contentLanguage: text("content_language").notNull(),
+    arabicVariety: text("arabic_variety"),
+    region: text("region").notNull(),
+    format: text("format").notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    metricsObservedAt: timestamp("metrics_observed_at", { withTimezone: true }).notNull(),
+    rightsExpiresAt: timestamp("rights_expires_at", { withTimezone: true }),
+    searchableText: text("searchable_text").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "licensed_trend_catalog_revisions_pk", columns: [table.catalogId, table.revision] }),
+    catalogFk: foreignKey({ name: "licensed_trend_catalog_revisions_catalog_fk", columns: [table.catalogId], foreignColumns: [licensedTrendCatalogEntries.id] }).onDelete("restrict"),
+    browseIdx: index("licensed_trend_catalog_revisions_browse_idx").on(table.contentLanguage, table.region, table.format, table.metricsObservedAt, table.catalogId),
+    valuesCheck: check("licensed_trend_catalog_revisions_values_check", sql`${table.revision} > 0 and ${table.documentDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.contentLanguage} in ('ar','en') and (${table.contentLanguage} = 'ar' or ${table.arabicVariety} is null) and ${table.metricsObservedAt} >= ${table.publishedAt}`),
+    documentCheck: check("licensed_trend_catalog_revisions_document_check", sql`${table.document}->>'schema' = 'licensed-trend-catalog-entry/v1' and ${table.document}->>'id' = ${table.catalogId} and (${table.document}->>'revision')::integer = ${table.revision} and ${table.document}->>'digest' = ${table.documentDigest}`),
+  }),
+);
+
+/** Ordered cursor for a contracted provider's signed catalog-event stream. */
+export const licensedTrendProviderCursors = pgTable(
+  "licensed_trend_provider_cursors",
+  {
+    providerKey: text("provider_key").primaryKey(),
+    lastSequence: bigint("last_sequence", { mode: "number" }).default(0).notNull(),
+    lastEventId: text("last_event_id"),
+    lastOccurredAt: timestamp("last_occurred_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    valuesCheck: check("licensed_trend_provider_cursors_values_check", sql`${table.providerKey} ~ '^[a-z][a-z0-9._-]{1,119}$' and ${table.lastSequence} >= 0 and ((${table.lastSequence} = 0 and ${table.lastEventId} is null and ${table.lastOccurredAt} is null) or (${table.lastSequence} > 0 and ${table.lastEventId} is not null and ${table.lastOccurredAt} is not null))`),
+  }),
+);
+
+/** Immutable signed input plus mutable, leased processing state. Events are
+ * consumed strictly in provider sequence; gaps never get silently skipped. */
+export const licensedTrendProviderEvents = pgTable(
+  "licensed_trend_provider_events",
+  {
+    providerKey: text("provider_key").notNull(),
+    eventId: text("event_id").notNull(),
+    sequence: bigint("sequence", { mode: "number" }).notNull(),
+    eventDigest: text("event_digest").notNull(),
+    keyId: text("key_id").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+    payload: jsonb("payload").$type<import("@/lib/product-surfaces/licensed-trend-provider-contract").LicensedTrendProviderEvent>().notNull(),
+    state: text("state").notNull(),
+    attempt: integer("attempt").default(0).notNull(),
+    maxAttempts: integer("max_attempts").default(8).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    failureCode: text("failure_code"),
+    operatorNote: text("operator_note"),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "licensed_trend_provider_events_pk", columns: [table.providerKey, table.eventId] }),
+    sequenceUnique: uniqueIndex("licensed_trend_provider_events_sequence_unique").on(table.providerKey, table.sequence),
+    providerFk: foreignKey({ name: "licensed_trend_provider_events_provider_fk", columns: [table.providerKey], foreignColumns: [licensedTrendProviderCursors.providerKey] }).onDelete("restrict"),
+    dueIdx: index("licensed_trend_provider_events_due_idx").on(table.nextAttemptAt, table.providerKey, table.sequence).where(sql`${table.state} in ('queued','claimed')`),
+    valuesCheck: check("licensed_trend_provider_events_values_check", sql`${table.providerKey} ~ '^[a-z][a-z0-9._-]{1,119}$' and octet_length(${table.eventId}) between 1 and 200 and ${table.sequence} > 0 and ${table.eventDigest} ~ '^sha256:[a-f0-9]{64}$' and octet_length(${table.keyId}) between 1 and 120 and ${table.payload}->>'schema' = 'licensed-trend-provider-event/v1' and ${table.payload}->>'action' in ('publish_batch','set_catalog_state') and ${table.state} in ('queued','claimed','succeeded','failed_known','outcome_unknown','skipped') and ${table.attempt} between 0 and ${table.maxAttempts} and ${table.maxAttempts} between 1 and 20 and (${table.operatorNote} is null or octet_length(${table.operatorNote}) between 8 and 500)`),
+    leaseCheck: check("licensed_trend_provider_events_lease_check", sql`(${table.state} = 'claimed' and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} <> 'claimed' and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null)`),
+  }),
+);
+
+export const licensedTrendWorkspaceEntitlements = pgTable(
+  "licensed_trend_workspace_entitlements",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    id: text("id").notNull(),
+    catalogId: text("catalog_id").notNull(),
+    catalogRevision: integer("catalog_revision").notNull(),
+    catalogDigest: text("catalog_digest").notNull(),
+    state: text("state").notNull(),
+    document: jsonb("document").$type<import("@/lib/product-surfaces/licensed-trend-types").LicensedTrendEntitlementDocument>().notNull(),
+    documentDigest: text("document_digest").notNull(),
+    grantedAt: timestamp("granted_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "licensed_trend_workspace_entitlements_pk", columns: [table.workspaceId, table.id] }),
+    exactGrantUnique: uniqueIndex("licensed_trend_workspace_entitlements_exact_unique").on(table.workspaceId, table.catalogId, table.catalogRevision),
+    catalogRevisionFk: foreignKey({ name: "licensed_trend_workspace_entitlements_catalog_revision_fk", columns: [table.catalogId, table.catalogRevision], foreignColumns: [licensedTrendCatalogRevisions.catalogId, licensedTrendCatalogRevisions.revision] }).onDelete("restrict"),
+    browseIdx: index("licensed_trend_workspace_entitlements_browse_idx").on(table.workspaceId, table.state, table.expiresAt, table.catalogId),
+    valuesCheck: check("licensed_trend_workspace_entitlements_values_check", sql`${table.catalogRevision} > 0 and ${table.catalogDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.documentDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.state} in ('active','revoked') and ((${table.state} = 'active' and ${table.revokedAt} is null) or (${table.state} = 'revoked' and ${table.revokedAt} is not null)) and (${table.expiresAt} is null or ${table.expiresAt} > ${table.grantedAt})`),
+    documentCheck: check("licensed_trend_workspace_entitlements_document_check", sql`${table.document}->>'schema' = 'licensed-trend-workspace-entitlement/v1' and ${table.document}->>'id' = ${table.id} and ${table.document}->>'workspaceId' = ${table.workspaceId} and ${table.document}->>'digest' = ${table.documentDigest}`),
+  }),
+);
+
+/** Recoverable tenant materialization. External S3 copies are fenced by the
+ * lease generation and deterministic destination keys. */
+export const licensedTrendMaterializationJobs = pgTable(
+  "licensed_trend_materialization_jobs",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    id: text("id").notNull(),
+    entitlementId: text("entitlement_id").notNull(),
+    catalogId: text("catalog_id").notNull(),
+    catalogRevision: integer("catalog_revision").notNull(),
+    catalogDigest: text("catalog_digest").notNull(),
+    state: text("state").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    requestedByUserId: text("requested_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    sourceDestinationKey: text("source_destination_key").notNull(),
+    evidenceDestinationKey: text("evidence_destination_key").notNull(),
+    sourceAssetId: text("source_asset_id").references(() => assets.id, { onDelete: "restrict" }),
+    evidenceDocumentAssetId: text("evidence_document_asset_id").references(() => assets.id, { onDelete: "restrict" }),
+    rightsEvidenceId: text("rights_evidence_id"),
+    rightsSnapshotId: text("rights_snapshot_id"),
+    inspirationItemId: text("inspiration_item_id"),
+    attempt: integer("attempt").default(0).notNull(),
+    maxAttempts: integer("max_attempts").default(5).notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseGeneration: integer("lease_generation").default(0).notNull(),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(),
+    failureCode: text("failure_code"),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "licensed_trend_materialization_jobs_pk", columns: [table.workspaceId, table.id] }),
+    commandUnique: uniqueIndex("licensed_trend_materialization_jobs_command_unique").on(table.workspaceId, table.idempotencyKey),
+    entitlementUnique: uniqueIndex("licensed_trend_materialization_jobs_entitlement_unique").on(table.workspaceId, table.entitlementId),
+    entitlementFk: foreignKey({ name: "licensed_trend_materialization_jobs_entitlement_fk", columns: [table.workspaceId, table.entitlementId], foreignColumns: [licensedTrendWorkspaceEntitlements.workspaceId, licensedTrendWorkspaceEntitlements.id] }).onDelete("restrict"),
+    catalogRevisionFk: foreignKey({ name: "licensed_trend_materialization_jobs_catalog_revision_fk", columns: [table.catalogId, table.catalogRevision], foreignColumns: [licensedTrendCatalogRevisions.catalogId, licensedTrendCatalogRevisions.revision] }).onDelete("restrict"),
+    inspirationItemFk: foreignKey({ name: "licensed_trend_materialization_jobs_inspiration_item_fk", columns: [table.workspaceId, table.inspirationItemId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id] }).onDelete("restrict"),
+    dueIdx: index("licensed_trend_materialization_jobs_due_idx").on(table.state, table.nextAttemptAt, table.leaseExpiresAt, table.id),
+    valuesCheck: check("licensed_trend_materialization_jobs_values_check", sql`${table.catalogRevision} > 0 and ${table.catalogDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and length(${table.idempotencyKey}) between 8 and 200 and ${table.state} in ('queued','claimed','succeeded','failed_known') and ${table.attempt} >= 0 and ${table.attempt} <= ${table.maxAttempts} and ${table.maxAttempts} between 1 and 20 and ${table.leaseGeneration} >= 0`),
+    leaseCheck: check("licensed_trend_materialization_jobs_lease_check", sql`(${table.state} = 'claimed' and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} <> 'claimed' and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null)`),
+  }),
+);
+
+/** Policy-isolated YouTube chart configuration. YouTube API Data must never
+ * enter the scored/immutable Inspiration tables above. */
+export const youtubeTrendDiscoverySources = pgTable(
+  "youtube_trend_discovery_sources",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    id: text("id").notNull(),
+    regionCode: text("region_code").notNull(),
+    categoryId: text("category_id").default("0").notNull(),
+    displayName: text("display_name").notNull(),
+    state: text("state").default("active").notNull(),
+    scheduleMinutes: integer("schedule_minutes").default(360).notNull(),
+    pageSize: integer("page_size").default(25).notNull(),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
+    lastRefreshedAt: timestamp("last_refreshed_at", { withTimezone: true }),
+    lastErrorCode: text("last_error_code"),
+    createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "youtube_trend_discovery_sources_pk", columns: [table.workspaceId, table.id] }),
+    chartUnique: uniqueIndex("youtube_trend_discovery_sources_chart_unique").on(table.workspaceId, table.regionCode, table.categoryId),
+    dueIdx: index("youtube_trend_discovery_sources_due_idx").on(table.nextRunAt, table.workspaceId, table.id).where(sql`${table.state} = 'active'`),
+    valuesCheck: check("youtube_trend_discovery_sources_values_check", sql`${table.regionCode} ~ '^[A-Z]{2}$' and ${table.categoryId} ~ '^(0|[1-9][0-9]*)$' and ${table.state} in ('active','paused') and ${table.scheduleMinutes} between 60 and 10080 and ${table.pageSize} between 1 and 50 and length(${table.displayName}) between 1 and 200`),
+  }),
+);
+
+/** Mutable, purgeable latest-view projection of YouTube API Data. Counter
+ * strings preserve the API's unsigned-long values without lossy conversion. */
+export const youtubeTrendDiscoveryEntries = pgTable(
+  "youtube_trend_discovery_entries",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    sourceId: text("source_id").notNull(),
+    videoId: text("video_id").notNull(),
+    providerRank: integer("provider_rank").notNull(),
+    title: text("title").notNull(),
+    channelId: text("channel_id").notNull(),
+    channelTitle: text("channel_title").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    thumbnailUrl: text("thumbnail_url"),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    viewCount: text("view_count"),
+    likeCount: text("like_count"),
+    commentCount: text("comment_count"),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "youtube_trend_discovery_entries_pk", columns: [table.workspaceId, table.sourceId, table.videoId] }),
+    sourceFk: foreignKey({ name: "youtube_trend_discovery_entries_source_fk", columns: [table.workspaceId, table.sourceId], foreignColumns: [youtubeTrendDiscoverySources.workspaceId, youtubeTrendDiscoverySources.id] }).onDelete("cascade"),
+    providerOrderIdx: index("youtube_trend_discovery_entries_order_idx").on(table.workspaceId, table.sourceId, table.providerRank, table.videoId),
+    expiryIdx: index("youtube_trend_discovery_entries_expiry_idx").on(table.expiresAt, table.workspaceId, table.sourceId),
+    valuesCheck: check("youtube_trend_discovery_entries_values_check", sql`${table.providerRank} between 1 and 50 and length(${table.videoId}) between 1 and 32 and length(${table.title}) between 1 and 240 and length(${table.channelId}) between 1 and 200 and length(${table.channelTitle}) between 1 and 200 and ${table.sourceUrl} = 'https://www.youtube.com/watch?v=' || ${table.videoId} and (${table.thumbnailUrl} is null or ${table.thumbnailUrl} ~ '^https://') and (${table.viewCount} is null or ${table.viewCount} ~ '^(0|[1-9][0-9]*)$') and (${table.likeCount} is null or ${table.likeCount} ~ '^(0|[1-9][0-9]*)$') and (${table.commentCount} is null or ${table.commentCount} ~ '^(0|[1-9][0-9]*)$') and ${table.publishedAt} <= ${table.observedAt} and ${table.expiresAt} > ${table.observedAt} and ${table.expiresAt} <= ${table.observedAt} + interval '30 days'`),
+  }),
+);
+
+export const youtubeTrendDiscoveryJobs = pgTable(
+  "youtube_trend_discovery_jobs",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceKey: text("source_key").notNull(),
+    state: text("state").default("queued").notNull(),
+    attempt: integer("attempt").default(0).notNull(),
+    maxAttempts: integer("max_attempts").default(4).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    leaseGeneration: integer("lease_generation").default(0).notNull(),
+    failureCode: text("failure_code"),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "youtube_trend_discovery_jobs_pk", columns: [table.workspaceId, table.id] }),
+    sourceKeyUnique: uniqueIndex("youtube_trend_discovery_jobs_source_key_unique").on(table.workspaceId, table.sourceId, table.sourceKey),
+    activeSourceUnique: uniqueIndex("youtube_trend_discovery_jobs_active_source_unique").on(table.workspaceId, table.sourceId).where(sql`${table.state} in ('queued','claimed')`),
+    sourceFk: foreignKey({ name: "youtube_trend_discovery_jobs_source_fk", columns: [table.workspaceId, table.sourceId], foreignColumns: [youtubeTrendDiscoverySources.workspaceId, youtubeTrendDiscoverySources.id] }).onDelete("cascade"),
+    dueIdx: index("youtube_trend_discovery_jobs_due_idx").on(table.nextAttemptAt, table.workspaceId, table.id).where(sql`${table.state} = 'queued'`),
+    valuesCheck: check("youtube_trend_discovery_jobs_values_check", sql`${table.state} in ('queued','claimed','succeeded','failed_known') and ${table.attempt} between 0 and ${table.maxAttempts} and ${table.maxAttempts} between 1 and 10 and ${table.leaseGeneration} >= 0 and length(${table.sourceKey}) between 1 and 200 and ((${table.state} = 'claimed' and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} <> 'claimed' and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null))`),
+  }),
+);
+
+export const productBlitzReplenishmentRuns = pgTable(
+  "product_blitz_replenishment_runs",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(), campaignId: text("campaign_id").notNull(), sourceKey: text("source_key").notNull(), invocation: text("invocation").notNull(), actorUserId: text("actor_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), state: text("state").notNull(),
+    leaseToken: text("lease_token"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }), leaseGeneration: integer("lease_generation").default(0).notNull(), policySnapshot: jsonb("policy_snapshot").$type<Record<string, unknown>>().notNull(), createdCount: integer("created_count").default(0).notNull(), stopReason: text("stop_reason"), failureCode: text("failure_code"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(), completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "product_blitz_replenishment_runs_pk", columns: [table.workspaceId, table.id] }),
+    sourceUnique: uniqueIndex("product_blitz_replenishment_runs_source_unique").on(table.workspaceId, table.campaignId, table.sourceKey),
+    campaignFk: foreignKey({ columns: [table.workspaceId, table.campaignId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id], name: "product_blitz_replenishment_runs_campaign_fk" }).onDelete("restrict"),
+    leaseIdx: index("product_blitz_replenishment_runs_lease_idx").on(table.state, table.leaseExpiresAt, table.id),
+    lifecycleCheck: check("product_blitz_replenishment_runs_lifecycle_check", sql`${table.invocation} in ('daily','manual') and ${table.state} in ('claimed','succeeded','failed_known') and ${table.createdCount} >= 0`),
+  }),
+);
+
+export const productBlitzReplenishmentItems = pgTable(
+  "product_blitz_replenishment_items",
+  {
+    workspaceId: text("workspace_id").notNull(), runId: text("run_id").notNull(), position: integer("position").notNull(), sourceRecordId: text("source_record_id").notNull(), blitzItemId: text("blitz_item_id").notNull(), rationaleDigest: text("rationale_digest").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "product_blitz_replenishment_items_pk", columns: [table.workspaceId, table.runId, table.position] }),
+    sourceUnique: uniqueIndex("product_blitz_replenishment_items_source_unique").on(table.workspaceId, table.runId, table.sourceRecordId),
+    blitzUnique: uniqueIndex("product_blitz_replenishment_items_blitz_unique").on(table.workspaceId, table.blitzItemId),
+    runFk: foreignKey({ columns: [table.workspaceId, table.runId], foreignColumns: [productBlitzReplenishmentRuns.workspaceId, productBlitzReplenishmentRuns.id], name: "product_blitz_replenishment_items_run_fk" }).onDelete("restrict"),
+    sourceFk: foreignKey({ columns: [table.workspaceId, table.sourceRecordId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id], name: "product_blitz_replenishment_items_source_fk" }).onDelete("restrict"),
+    blitzFk: foreignKey({ columns: [table.workspaceId, table.blitzItemId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id], name: "product_blitz_replenishment_items_blitz_fk" }).onDelete("restrict"),
+    positionCheck: check("product_blitz_replenishment_items_position_check", sql`${table.position} >= 0 and ${table.rationaleDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+  }),
+);
+
+/**
+ * Persistent Creator Personas are a separate safety-critical aggregate rather
+ * than an untyped product-record payload. Evidence and usage rows are
+ * append-only so an output can always resolve the exact consent, disclosure,
+ * provider acceptance, and Persona revision that admitted it.
+ */
+export const creatorPersonas = pgTable(
+  "creator_personas",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    id: text("id").notNull(),
+    kind: text("kind").notNull(),
+    state: text("state").notNull(),
+    name: text("name").notNull(),
+    contentLanguage: text("content_language").notNull(),
+    arabicVariety: text("arabic_variety"),
+    disclosure: text("disclosure").notNull(),
+    revision: integer("revision").default(1).notNull(),
+    reusableModelRef: text("reusable_model_ref"),
+    retentionUntil: timestamp("retention_until", { withTimezone: true }).notNull(),
+    suspendedReasonCode: text("suspended_reason_code"),
+    createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    updatedByUserId: text("updated_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "creator_personas_pk", columns: [table.workspaceId, table.id] }),
+    stateCursorIdx: index("creator_personas_workspace_state_cursor_idx").on(table.workspaceId, table.state, table.updatedAt, table.id),
+    retentionIdx: index("creator_personas_retention_idx").on(table.state, table.retentionUntil),
+    kindCheck: check("creator_personas_kind_check", sql`${table.kind} in ('synthetic','consented_likeness')`),
+    stateCheck: check("creator_personas_state_check", sql`${table.state} in ('draft','consent_review','ready_to_train','training','review','active','training_failed','suspended','consent_expired','deleted')`),
+    localeCheck: check("creator_personas_locale_check", sql`${table.contentLanguage} in ('ar','en') and (${table.arabicVariety} is null or ${table.arabicVariety} in ('msa','gulf','egyptian','levantine','maghrebi'))`),
+    revisionCheck: check("creator_personas_revision_check", sql`${table.revision} > 0`),
+  }),
+);
+
+export const creatorPersonaEvidence = pgTable(
+  "creator_persona_evidence",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    personaId: text("persona_id").notNull(),
+    personaRevision: integer("persona_revision").notNull(),
+    type: text("type").notNull(),
+    issuer: text("issuer").notNull(),
+    subjectDigest: text("subject_digest").notNull(),
+    scope: jsonb("scope").$type<Record<string, unknown>>().notNull(),
+    evidenceDigest: text("evidence_digest").notNull(),
+    provider: text("provider"),
+    providerPolicyVersion: text("provider_policy_version"),
+    effectiveAt: timestamp("effective_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    verifiedByUserId: text("verified_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "creator_persona_evidence_pk", columns: [table.workspaceId, table.id] }),
+    personaFk: foreignKey({ name: "creator_persona_evidence_persona_fk", columns: [table.workspaceId, table.personaId], foreignColumns: [creatorPersonas.workspaceId, creatorPersonas.id] }).onDelete("restrict"),
+    activeIdx: index("creator_persona_evidence_active_idx").on(table.workspaceId, table.personaId, table.type, table.expiresAt),
+    typeCheck: check("creator_persona_evidence_type_check", sql`${table.type} in ('likeness_consent','provider_acceptance','disclosure_review','abuse_review')`),
+    digestCheck: check("creator_persona_evidence_digest_check", sql`${table.subjectDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.evidenceDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+    windowCheck: check("creator_persona_evidence_window_check", sql`${table.expiresAt} > ${table.effectiveAt}`),
+  }),
+);
+
+export const creatorPersonaTrainingSources = pgTable(
+  "creator_persona_training_sources",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    personaId: text("persona_id").notNull(),
+    assetId: text("asset_id").notNull().references(() => assets.id, { onDelete: "restrict" }),
+    ordinal: integer("ordinal").notNull(),
+    assetChecksum: text("asset_checksum").notNull(),
+    consentEvidenceId: text("consent_evidence_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "creator_persona_training_sources_pk", columns: [table.workspaceId, table.personaId, table.assetId] }),
+    personaFk: foreignKey({ name: "creator_persona_training_sources_persona_fk", columns: [table.workspaceId, table.personaId], foreignColumns: [creatorPersonas.workspaceId, creatorPersonas.id] }).onDelete("restrict"),
+    evidenceFk: foreignKey({ name: "creator_persona_training_sources_evidence_fk", columns: [table.workspaceId, table.consentEvidenceId], foreignColumns: [creatorPersonaEvidence.workspaceId, creatorPersonaEvidence.id] }).onDelete("restrict"),
+    orderUnique: uniqueIndex("creator_persona_training_sources_order_unique").on(table.workspaceId, table.personaId, table.ordinal),
+    ordinalCheck: check("creator_persona_training_sources_ordinal_check", sql`${table.ordinal} >= 0`),
+    checksumCheck: check("creator_persona_training_sources_checksum_check", sql`${table.assetChecksum} ~ '^sha256:[a-f0-9]{64}$'`),
+  }),
+);
+
+export const creatorPersonaTrainingAdmissions = pgTable(
+  "creator_persona_training_admissions",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    personaId: text("persona_id").notNull(),
+    expectedRevision: integer("expected_revision").notNull(),
+    jobId: text("job_id").notNull(),
+    operationId: text("operation_id").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    admissionSnapshot: jsonb("admission_snapshot").$type<Record<string, unknown>>().notNull(),
+    retryOfJobId: text("retry_of_job_id"),
+    createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "creator_persona_training_admissions_pk", columns: [table.workspaceId, table.idempotencyKey] }),
+    jobUnique: uniqueIndex("creator_persona_training_admissions_job_unique").on(table.workspaceId, table.jobId),
+    personaFk: foreignKey({ name: "creator_persona_training_admissions_persona_fk", columns: [table.workspaceId, table.personaId], foreignColumns: [creatorPersonas.workspaceId, creatorPersonas.id] }).onDelete("restrict"),
+    digestCheck: check("creator_persona_training_admissions_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+    revisionCheck: check("creator_persona_training_admissions_revision_check", sql`${table.expectedRevision} > 0`),
+    windowCheck: check("creator_persona_training_admissions_window_check", sql`${table.expiresAt} > ${table.createdAt}`),
+  }),
+);
+
+export const creatorPersonaTrainingJobs = pgTable(
+  "creator_persona_training_jobs",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    personaId: text("persona_id").notNull(),
+    personaRevision: integer("persona_revision").notNull(),
+    state: text("state").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    modelVersion: text("model_version").notNull(),
+    qualificationDigest: text("qualification_digest").notNull(),
+    inputSchemaDigest: text("input_schema_digest"),
+    qualificationId: text("qualification_id"),
+    qualificationRevision: integer("qualification_revision"),
+    qualificationExpiresAt: timestamp("qualification_expires_at", { withTimezone: true }),
+    qualificationSnapshot: jsonb("qualification_snapshot").$type<Record<string, unknown>>(),
+    quoteAmountUsd: text("quote_amount_usd"),
+    quoteExpiresAt: timestamp("quote_expires_at", { withTimezone: true }),
+    reservationIds: jsonb("reservation_ids").$type<string[]>(),
+    regionPolicyId: text("region_policy_id"),
+    regionPolicyVersion: integer("region_policy_version"),
+    regionEvidenceDigest: text("region_evidence_digest"),
+    region: text("region"),
+    regionRouteId: text("region_route_id"),
+    regionEvidenceExpiresAt: timestamp("region_evidence_expires_at", { withTimezone: true }),
+    retryOfJobId: text("retry_of_job_id"),
+    providerAcceptanceEvidenceId: text("provider_acceptance_evidence_id").notNull(),
+    operationId: text("operation_id").notNull(),
+    providerJobRef: text("provider_job_ref"),
+    resultModelRef: text("result_model_ref"),
+    failureCode: text("failure_code"),
+    requestedByUserId: text("requested_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "creator_persona_training_jobs_pk", columns: [table.workspaceId, table.id] }),
+    personaFk: foreignKey({ name: "creator_persona_training_jobs_persona_fk", columns: [table.workspaceId, table.personaId], foreignColumns: [creatorPersonas.workspaceId, creatorPersonas.id] }).onDelete("restrict"),
+    acceptanceFk: foreignKey({ name: "creator_persona_training_jobs_acceptance_fk", columns: [table.workspaceId, table.providerAcceptanceEvidenceId], foreignColumns: [creatorPersonaEvidence.workspaceId, creatorPersonaEvidence.id] }).onDelete("restrict"),
+    retryFk: foreignKey({ name: "creator_persona_training_jobs_retry_fk", columns: [table.workspaceId, table.retryOfJobId], foreignColumns: [table.workspaceId, table.id] }).onDelete("restrict"),
+    operationUnique: uniqueIndex("creator_persona_training_jobs_operation_unique").on(table.workspaceId, table.operationId),
+    personaCursorIdx: index("creator_persona_training_jobs_persona_cursor_idx").on(table.workspaceId, table.personaId, table.createdAt, table.id),
+    stateCursorIdx: index("creator_persona_training_jobs_state_cursor_idx").on(table.workspaceId, table.state, table.updatedAt, table.id),
+    retryIdx: index("creator_persona_training_jobs_retry_idx").on(table.workspaceId, table.retryOfJobId),
+    stateCheck: check("creator_persona_training_jobs_state_check", sql`${table.state} in ('queued','admitted','running','waiting_provider','succeeded','failed_known','outcome_unknown','cancelled')`),
+    digestCheck: check("creator_persona_training_jobs_digest_check", sql`${table.qualificationDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+    admissionCompleteCheck: check("creator_persona_training_jobs_admission_complete_check", sql`(${table.inputSchemaDigest} is null and ${table.qualificationId} is null and ${table.qualificationRevision} is null and ${table.qualificationExpiresAt} is null and ${table.qualificationSnapshot} is null and ${table.quoteAmountUsd} is null and ${table.quoteExpiresAt} is null and ${table.reservationIds} is null and ${table.regionPolicyId} is null and ${table.regionPolicyVersion} is null and ${table.regionEvidenceDigest} is null and ${table.region} is null and ${table.regionRouteId} is null and ${table.regionEvidenceExpiresAt} is null) or (${table.inputSchemaDigest} is not null and ${table.qualificationId} is not null and ${table.qualificationRevision} is not null and ${table.qualificationExpiresAt} is not null and ${table.qualificationSnapshot} is not null and ${table.quoteAmountUsd} is not null and ${table.quoteExpiresAt} is not null and ${table.reservationIds} is not null and ${table.regionPolicyId} is not null and ${table.regionPolicyVersion} is not null and ${table.regionEvidenceDigest} is not null and ${table.region} is not null and ${table.regionRouteId} is not null and ${table.regionEvidenceExpiresAt} is not null)`),
+  }),
+);
+
+export const creatorPersonaUsages = pgTable(
+  "creator_persona_usages",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    id: text("id").notNull(),
+    personaId: text("persona_id").notNull(),
+    personaRevision: integer("persona_revision").notNull(),
+    purpose: text("purpose").notNull(),
+    resourceId: text("resource_id").notNull(),
+    consentEvidenceId: text("consent_evidence_id"),
+    providerAcceptanceEvidenceId: text("provider_acceptance_evidence_id").notNull(),
+    disclosureEvidenceId: text("disclosure_evidence_id").notNull(),
+    disclosure: text("disclosure").notNull(),
+    boundByUserId: text("bound_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "creator_persona_usages_pk", columns: [table.workspaceId, table.id] }),
+    personaFk: foreignKey({ name: "creator_persona_usages_persona_fk", columns: [table.workspaceId, table.personaId], foreignColumns: [creatorPersonas.workspaceId, creatorPersonas.id] }).onDelete("restrict"),
+    acceptanceFk: foreignKey({ name: "creator_persona_usages_acceptance_fk", columns: [table.workspaceId, table.providerAcceptanceEvidenceId], foreignColumns: [creatorPersonaEvidence.workspaceId, creatorPersonaEvidence.id] }).onDelete("restrict"),
+    disclosureFk: foreignKey({ name: "creator_persona_usages_disclosure_fk", columns: [table.workspaceId, table.disclosureEvidenceId], foreignColumns: [creatorPersonaEvidence.workspaceId, creatorPersonaEvidence.id] }).onDelete("restrict"),
+    consentFk: foreignKey({ name: "creator_persona_usages_consent_fk", columns: [table.workspaceId, table.consentEvidenceId], foreignColumns: [creatorPersonaEvidence.workspaceId, creatorPersonaEvidence.id] }).onDelete("restrict"),
+    resourceUnique: uniqueIndex("creator_persona_usages_resource_unique").on(table.workspaceId, table.personaId, table.purpose, table.resourceId),
+    resourceIdx: index("creator_persona_usages_resource_idx").on(table.workspaceId, table.purpose, table.resourceId),
+    personaCursorIdx: index("creator_persona_usages_persona_cursor_idx").on(table.workspaceId, table.personaId, table.createdAt, table.id),
+    purposeCheck: check("creator_persona_usages_purpose_check", sql`${table.purpose} in ('generation','content_set','channel','blitz')`),
+  }),
+);
+
+export const creatorPersonaEvents = pgTable(
+  "creator_persona_events",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    personaId: text("persona_id").notNull(),
+    revision: integer("revision").notNull(),
+    id: text("id").notNull(),
+    type: text("type").notNull(),
+    actorUserId: text("actor_user_id").references(() => user.id, { onDelete: "restrict" }),
+    facts: jsonb("facts").$type<Record<string, unknown>>().notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "creator_persona_events_pk", columns: [table.workspaceId, table.personaId, table.revision] }),
+    idUnique: uniqueIndex("creator_persona_events_id_unique").on(table.workspaceId, table.id),
+    personaFk: foreignKey({ name: "creator_persona_events_persona_fk", columns: [table.workspaceId, table.personaId], foreignColumns: [creatorPersonas.workspaceId, creatorPersonas.id] }).onDelete("restrict"),
+    revisionCheck: check("creator_persona_events_revision_check", sql`${table.revision} > 0`),
+  }),
+);
+
+export const creatorPersonaCommandReceipts = pgTable(
+  "creator_persona_command_receipts",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    personaId: text("persona_id").notNull(),
+    resultRevision: integer("result_revision").notNull(),
+    result: jsonb("result").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ name: "creator_persona_command_receipts_pk", columns: [table.workspaceId, table.idempotencyKey] }),
+    personaFk: foreignKey({ name: "creator_persona_command_receipts_persona_fk", columns: [table.workspaceId, table.personaId], foreignColumns: [creatorPersonas.workspaceId, creatorPersonas.id] }).onDelete("restrict"),
+    digestCheck: check("creator_persona_command_receipts_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.resultRevision} > 0`),
+  }),
+);
+
+/** Versioned commercial terms; historical subscriptions never point at mutable pricing. */
+export const billingPlanVersions = pgTable("billing_plan_versions", {
+  planId: text("plan_id").notNull(), version: integer("version").notNull(), status: text("status").notNull(),
+  authoredName: jsonb("authored_name").$type<{ ar: string; en: string }>().notNull(), currency: text("currency").notNull(), priceMinor: bigint("price_minor", { mode: "number" }).notNull(), billingInterval: text("billing_interval").notNull(), taxMode: text("tax_mode").notNull(),
+  trialDays: integer("trial_days").notNull(), trialCreditUnits: bigint("trial_credit_units", { mode: "number" }).notNull(), entitlements: jsonb("entitlements").$type<Record<string, number | boolean>>().notNull(), termsDigest: text("terms_digest").notNull(),
+  effectiveAt: timestamp("effective_at", { withTimezone: true }).notNull(), retiredAt: timestamp("retired_at", { withTimezone: true }), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({ pk: primaryKey({ name: "billing_plan_versions_pk", columns: [table.planId, table.version] }), activeIdx: index("billing_plan_versions_active_idx").on(table.status, table.effectiveAt), valuesCheck: check("billing_plan_versions_values_check", sql`${table.version} > 0 and ${table.status} in ('draft','active','retired') and ${table.currency} ~ '^[A-Z]{3}$' and ${table.priceMinor} >= 0 and ${table.billingInterval} in ('month','year','one_time') and ${table.taxMode} in ('inclusive','exclusive') and ${table.trialDays} between 0 and 90 and ${table.trialCreditUnits} >= 0 and ${table.termsDigest} ~ '^sha256:[a-f0-9]{64}$'`) }));
+
+export const billingTrialGrants = pgTable("billing_trial_grants", {
+  id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), beneficiaryIdentityDigest: text("beneficiary_identity_digest").notNull(), planId: text("plan_id").notNull(), planVersion: integer("plan_version").notNull(), status: text("status").notNull(), grantedAt: timestamp("granted_at", { withTimezone: true }).notNull(), expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(), consumedAt: timestamp("consumed_at", { withTimezone: true }),
+}, (table) => ({ beneficiaryUnique: uniqueIndex("billing_trial_grants_beneficiary_unique").on(table.beneficiaryIdentityDigest), workspaceIdx: index("billing_trial_grants_workspace_idx").on(table.workspaceId, table.status), planFk: foreignKey({ name: "billing_trial_grants_plan_fk", columns: [table.planId, table.planVersion], foreignColumns: [billingPlanVersions.planId, billingPlanVersions.version] }).onDelete("restrict"), digestCheck: check("billing_trial_grants_digest_check", sql`${table.beneficiaryIdentityDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.status} in ('active','consumed','expired','revoked') and ${table.expiresAt} > ${table.grantedAt}`) }));
+
+export const workspaceSubscriptions = pgTable("workspace_subscriptions", {
+  workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "restrict" }), state: text("state").notNull(), planId: text("plan_id").notNull(), planVersion: integer("plan_version").notNull(), trialGrantId: text("trial_grant_id").references(() => billingTrialGrants.id, { onDelete: "restrict" }), merchantCustomerRef: text("merchant_customer_ref"), merchantSubscriptionRef: text("merchant_subscription_ref"), merchantLastEventAt: timestamp("merchant_last_event_at", { withTimezone: true }), merchantLastEventId: text("merchant_last_event_id"), currentPeriodStartsAt: timestamp("current_period_starts_at", { withTimezone: true }).notNull(), currentPeriodEndsAt: timestamp("current_period_ends_at", { withTimezone: true }).notNull(), graceEndsAt: timestamp("grace_ends_at", { withTimezone: true }), revision: integer("revision").default(1).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({ planFk: foreignKey({ name: "workspace_subscriptions_plan_fk", columns: [table.planId, table.planVersion], foreignColumns: [billingPlanVersions.planId, billingPlanVersions.version] }).onDelete("restrict"), stateIdx: index("workspace_subscriptions_state_idx").on(table.state, table.currentPeriodEndsAt), stateCheck: check("workspace_subscriptions_state_check", sql`${table.state} in ('trialing','active','past_due','grace','cancel_at_period_end','cancelled','suspended') and ${table.revision} > 0 and ${table.currentPeriodEndsAt} > ${table.currentPeriodStartsAt} and (${table.graceEndsAt} is null or ${table.graceEndsAt} >= ${table.currentPeriodEndsAt})`) }));
+
+export const workspaceSubscriptionEvents = pgTable("workspace_subscription_events", {
+  workspaceId: text("workspace_id").notNull(), revision: integer("revision").notNull(), id: text("id").notNull(), fromState: text("from_state"), toState: text("to_state").notNull(), reasonCode: text("reason_code").notNull(), actorRef: text("actor_ref").notNull(), facts: jsonb("facts").$type<Record<string, unknown>>().notNull(), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "workspace_subscription_events_pk", columns: [table.workspaceId, table.revision] }), subscriptionFk: foreignKey({ name: "workspace_subscription_events_subscription_fk", columns: [table.workspaceId], foreignColumns: [workspaceSubscriptions.workspaceId] }).onDelete("restrict"), idUnique: uniqueIndex("workspace_subscription_events_id_unique").on(table.id), stateCheck: check("workspace_subscription_events_state_check", sql`${table.revision} > 0 and ${table.toState} in ('trialing','active','past_due','grace','cancel_at_period_end','cancelled','suspended')`) }));
+
+export const managedExecutionCommercialQuotes = pgTable("managed_execution_commercial_quotes", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), purposeRef: text("purpose_ref").notNull(), state: text("state").notNull(), maxCreditDebit: bigint("max_credit_debit", { mode: "number" }).notNull(), localPriceMinor: bigint("local_price_minor", { mode: "number" }), currency: text("currency"), taxMinor: bigint("tax_minor", { mode: "number" }), pricingSnapshotDigest: text("pricing_snapshot_digest").notNull(), issuedAt: timestamp("issued_at", { withTimezone: true }).notNull(), expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(), acceptedByUserId: text("accepted_by_user_id").references(() => user.id, { onDelete: "restrict" }), acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+}, (table) => ({ pk: primaryKey({ name: "managed_execution_commercial_quotes_pk", columns: [table.workspaceId, table.id] }), purposeUnique: uniqueIndex("managed_execution_commercial_quotes_purpose_unique").on(table.workspaceId, table.purposeRef), stateIdx: index("managed_execution_commercial_quotes_state_idx").on(table.workspaceId, table.state, table.expiresAt), valuesCheck: check("managed_execution_commercial_quotes_values_check", sql`${table.state} in ('offered','accepted','reserved','settled','released','outcome_unknown','expired') and ${table.maxCreditDebit} > 0 and ${table.pricingSnapshotDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.expiresAt} > ${table.issuedAt} and ((${table.currency} is null and ${table.localPriceMinor} is null and ${table.taxMinor} is null) or (${table.currency} ~ '^[A-Z]{3}$' and ${table.localPriceMinor} >= 0 and ${table.taxMinor} >= 0))`) }));
+
+export const generationCreditBuckets = pgTable("generation_credit_buckets", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), kind: text("kind").notNull(), sourceRef: text("source_ref").notNull(), grantedUnits: bigint("granted_units", { mode: "number" }).notNull(), availableUnits: bigint("available_units", { mode: "number" }).notNull(), expiresAt: timestamp("expires_at", { withTimezone: true }), revision: integer("revision").default(1).notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "generation_credit_buckets_pk", columns: [table.workspaceId, table.id] }), sourceUnique: uniqueIndex("generation_credit_buckets_source_unique").on(table.workspaceId, table.kind, table.sourceRef), spendOrderIdx: index("generation_credit_buckets_spend_order_idx").on(table.workspaceId, table.kind, table.expiresAt, table.createdAt, table.id), valuesCheck: check("generation_credit_buckets_values_check", sql`${table.kind} in ('allowance','purchased','referral') and ${table.grantedUnits} >= 0 and ${table.availableUnits} between 0 and ${table.grantedUnits} and ${table.revision} > 0 and ((${table.kind} = 'allowance' and ${table.expiresAt} is not null) or (${table.kind} <> 'allowance'))`) }));
+
+export const generationCreditReservations = pgTable("generation_credit_reservations", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), quoteId: text("quote_id").notNull(), state: text("state").notNull(), maxDebitUnits: bigint("max_debit_units", { mode: "number" }).notNull(), settledUnits: bigint("settled_units", { mode: "number" }), allocations: jsonb("allocations").$type<Array<{ bucketId: string; units: number }>>().notNull(), externalEffectRef: text("external_effect_ref"), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "generation_credit_reservations_pk", columns: [table.workspaceId, table.id] }), quoteFk: foreignKey({ name: "generation_credit_reservations_quote_fk", columns: [table.workspaceId, table.quoteId], foreignColumns: [managedExecutionCommercialQuotes.workspaceId, managedExecutionCommercialQuotes.id] }).onDelete("restrict"), quoteUnique: uniqueIndex("generation_credit_reservations_quote_unique").on(table.workspaceId, table.quoteId), effectUnique: uniqueIndex("generation_credit_reservations_effect_unique").on(table.workspaceId, table.externalEffectRef), stateIdx: index("generation_credit_reservations_state_idx").on(table.workspaceId, table.state, table.updatedAt), valuesCheck: check("generation_credit_reservations_values_check", sql`${table.state} in ('held','settled','released','outcome_unknown') and ${table.maxDebitUnits} > 0 and (${table.settledUnits} is null or ${table.settledUnits} between 0 and ${table.maxDebitUnits})`) }));
+
+export const generationCreditLedgerEntries = pgTable("generation_credit_ledger_entries", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), sequence: integer("sequence").notNull(), id: text("id").notNull(), bucketId: text("bucket_id").notNull(), reservationId: text("reservation_id"), entryType: text("entry_type").notNull(), deltaUnits: bigint("delta_units", { mode: "number" }).notNull(), balanceAfterUnits: bigint("balance_after_units", { mode: "number" }).notNull(), sourceRef: text("source_ref").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "generation_credit_ledger_entries_pk", columns: [table.workspaceId, table.sequence] }), idUnique: uniqueIndex("generation_credit_ledger_entries_id_unique").on(table.workspaceId, table.id), bucketFk: foreignKey({ name: "generation_credit_ledger_entries_bucket_fk", columns: [table.workspaceId, table.bucketId], foreignColumns: [generationCreditBuckets.workspaceId, generationCreditBuckets.id] }).onDelete("restrict"), reservationFk: foreignKey({ name: "generation_credit_ledger_entries_reservation_fk", columns: [table.workspaceId, table.reservationId], foreignColumns: [generationCreditReservations.workspaceId, generationCreditReservations.id] }).onDelete("restrict"), bucketCursorIdx: index("generation_credit_ledger_entries_bucket_cursor_idx").on(table.workspaceId, table.bucketId, table.sequence), valuesCheck: check("generation_credit_ledger_entries_values_check", sql`${table.sequence} > 0 and ${table.entryType} in ('grant','purchase','referral_reward','reserve','release','settle','refund','expire','clawback','clawback_reverse') and ${table.balanceAfterUnits} >= 0`) }));
+
+export const commercialCommandReceipts = pgTable("commercial_command_receipts", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  idempotencyKey: text("idempotency_key").notNull(),
+  requestDigest: text("request_digest").notNull(),
+  result: jsonb("result").$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "commercial_command_receipts_pk", columns: [table.workspaceId, table.idempotencyKey] }),
+  digestCheck: check("commercial_command_receipts_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+}));
+
+export const merchantCheckoutSessions = pgTable("merchant_checkout_sessions", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), purposeKind: text("purpose_kind").notNull(), purposeRef: text("purpose_ref").notNull(), state: text("state").notNull(), commercialSnapshot: jsonb("commercial_snapshot").$type<Record<string, unknown>>().notNull(), amountMinor: bigint("amount_minor", { mode: "number" }).notNull(), taxMinor: bigint("tax_minor", { mode: "number" }).notNull(), currency: text("currency").notNull(), termsDigest: text("terms_digest").notNull(), merchantCheckoutRef: text("merchant_checkout_ref"), merchantCustomerRef: text("merchant_customer_ref"), merchantEffectRef: text("merchant_effect_ref"), recoveryAttempts: integer("recovery_attempts").default(0).notNull(), nextRecoveryAt: timestamp("next_recovery_at", { withTimezone: true }).defaultNow().notNull(), recoveryLeaseOwner: text("recovery_lease_owner"), recoveryLeaseExpiresAt: timestamp("recovery_lease_expires_at", { withTimezone: true }), lastRecoveryStatus: text("last_recovery_status"), createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(), expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(), completedAt: timestamp("completed_at", { withTimezone: true }),
+}, (table) => ({ pk: primaryKey({ name: "merchant_checkout_sessions_pk", columns: [table.workspaceId, table.id] }), idUnique: uniqueIndex("merchant_checkout_sessions_id_unique").on(table.id), purposeUnique: uniqueIndex("merchant_checkout_sessions_purpose_unique").on(table.workspaceId, table.purposeKind, table.purposeRef), providerRefUnique: uniqueIndex("merchant_checkout_sessions_provider_ref_unique").on(table.merchantCheckoutRef), effectRefUnique: uniqueIndex("merchant_checkout_sessions_effect_ref_unique").on(table.merchantEffectRef), recoveryIdx: index("merchant_checkout_sessions_due_recovery_idx").on(table.state, table.nextRecoveryAt, table.id), valuesCheck: check("merchant_checkout_sessions_values_check", sql`${table.purposeKind} in ('subscription','credit_pack','channel_onboarding') and ${table.state} in ('creating','ready','completed','failed_known','expired','cancelled','outcome_unknown') and ${table.amountMinor} >= 0 and ${table.taxMinor} >= 0 and ${table.currency} ~ '^[A-Z]{3}$' and ${table.termsDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.expiresAt} > ${table.createdAt} and ${table.recoveryAttempts} >= 0`) }));
+
+export const merchantWebhookReceipts = pgTable("merchant_webhook_receipts", {
+  provider: text("provider").notNull(), eventId: text("event_id").notNull(), payloadDigest: text("payload_digest").notNull(), eventType: text("event_type").notNull(), checkoutId: text("checkout_id").notNull().references(() => merchantCheckoutSessions.id, { onDelete: "restrict" }), merchantEffectRef: text("merchant_effect_ref").notNull(), state: text("state").notNull(), failureCode: text("failure_code"), providerOccurredAt: timestamp("provider_occurred_at", { withTimezone: true }).notNull(), receivedAt: timestamp("received_at", { withTimezone: true }).notNull(), processedAt: timestamp("processed_at", { withTimezone: true }),
+}, (table) => ({ pk: primaryKey({ name: "merchant_webhook_receipts_pk", columns: [table.provider, table.eventId] }), effectUnique: uniqueIndex("merchant_webhook_receipts_effect_unique").on(table.provider, table.merchantEffectRef, table.eventType), stateIdx: index("merchant_webhook_receipts_state_idx").on(table.state, table.receivedAt, table.eventId), valuesCheck: check("merchant_webhook_receipts_values_check", sql`${table.payloadDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.eventType} in ('checkout.completed','checkout.failed','checkout.expired','checkout.cancelled') and ${table.state} in ('received','processing','applied','ignored','failed_known','outcome_unknown')`) }));
+
+export const merchantSubscriptionWebhookReceipts = pgTable("merchant_subscription_webhook_receipts", {
+  provider: text("provider").notNull(), eventId: text("event_id").notNull(), payloadDigest: text("payload_digest").notNull(), eventType: text("event_type").notNull(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), merchantSubscriptionRef: text("merchant_subscription_ref").notNull(), merchantTransactionRef: text("merchant_transaction_ref"), state: text("state").notNull(), failureCode: text("failure_code"), providerOccurredAt: timestamp("provider_occurred_at", { withTimezone: true }).notNull(), receivedAt: timestamp("received_at", { withTimezone: true }).notNull(), processedAt: timestamp("processed_at", { withTimezone: true }),
+}, (table) => ({ pk: primaryKey({ name: "merchant_subscription_webhook_receipts_pk", columns: [table.provider, table.eventId] }), workspaceIdx: index("merchant_subscription_webhook_receipts_workspace_idx").on(table.workspaceId, table.providerOccurredAt, table.eventId), stateIdx: index("merchant_subscription_webhook_receipts_state_idx").on(table.state, table.receivedAt, table.eventId), valuesCheck: check("merchant_subscription_webhook_receipts_values_check", sql`${table.payloadDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.eventType} in ('subscription.payment_completed','subscription.active','subscription.grace','subscription.cancel_at_period_end','subscription.cancelled','subscription.suspended') and ${table.state} in ('received','processing','applied','ignored','outcome_unknown')`) }));
+
+export const merchantBillingTransactions = pgTable("merchant_billing_transactions", {
+  provider: text("provider").notNull(), transactionRef: text("transaction_ref").notNull(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), checkoutId: text("checkout_id"), purposeKind: text("purpose_kind").notNull(), merchantCustomerRef: text("merchant_customer_ref").notNull(), merchantSubscriptionRef: text("merchant_subscription_ref"), merchantReceiptRef: text("merchant_receipt_ref").notNull(), amountMinor: bigint("amount_minor", { mode: "number" }).notNull(), refundedMinor: bigint("refunded_minor", { mode: "number" }).default(0).notNull(), currency: text("currency").notNull(), invoiceNumber: text("invoice_number"), periodStartsAt: timestamp("period_starts_at", { withTimezone: true }), periodEndsAt: timestamp("period_ends_at", { withTimezone: true }), status: text("status").notNull(), providerOccurredAt: timestamp("provider_occurred_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "merchant_billing_transactions_pk", columns: [table.provider, table.transactionRef] }), workspaceIdx: index("merchant_billing_transactions_workspace_idx").on(table.workspaceId, table.providerOccurredAt, table.transactionRef), subscriptionIdx: index("merchant_billing_transactions_subscription_idx").on(table.provider, table.merchantSubscriptionRef, table.providerOccurredAt), valuesCheck: check("merchant_billing_transactions_values_check", sql`${table.purposeKind} in ('subscription','credit_pack','channel_onboarding','subscription_renewal') and ${table.amountMinor} >= 0 and ${table.refundedMinor} between 0 and ${table.amountMinor} and ${table.currency} ~ '^[A-Z]{3}$' and ${table.status} in ('completed','partially_refunded','refunded','disputed','chargeback_reversed') and ((${table.periodStartsAt} is null and ${table.periodEndsAt} is null) or (${table.periodStartsAt} is not null and ${table.periodEndsAt} > ${table.periodStartsAt}))`) }));
+
+export const merchantBillingAdjustmentEvents = pgTable("merchant_billing_adjustment_events", {
+  provider: text("provider").notNull(), eventId: text("event_id").notNull(), adjustmentRef: text("adjustment_ref").notNull(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), transactionRef: text("transaction_ref").notNull(), merchantSubscriptionRef: text("merchant_subscription_ref"), merchantCustomerRef: text("merchant_customer_ref").notNull(), action: text("action").notNull(), status: text("status").notNull(), amountMinor: bigint("amount_minor", { mode: "number" }).notNull(), currency: text("currency").notNull(), reason: text("reason").notNull(), providerOccurredAt: timestamp("provider_occurred_at", { withTimezone: true }).notNull(), receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "merchant_billing_adjustment_events_pk", columns: [table.provider, table.eventId] }), adjustmentIdx: index("merchant_billing_adjustment_events_adjustment_idx").on(table.provider, table.adjustmentRef, table.providerOccurredAt, table.eventId), transactionIdx: index("merchant_billing_adjustment_events_transaction_idx").on(table.provider, table.transactionRef, table.providerOccurredAt, table.eventId), valuesCheck: check("merchant_billing_adjustment_events_values_check", sql`${table.action} in ('credit','refund','chargeback','chargeback_reverse','chargeback_warning','chargeback_warning_reverse','credit_reverse') and ${table.status} in ('pending_approval','approved','rejected','reversed') and ${table.amountMinor} >= 0 and ${table.currency} ~ '^[A-Z]{3}$'`) }));
+
+export const merchantAdjustmentWebhookReceipts = pgTable("merchant_adjustment_webhook_receipts", {
+  provider: text("provider").notNull(), eventId: text("event_id").notNull(), payloadDigest: text("payload_digest").notNull(), adjustmentRef: text("adjustment_ref").notNull(), transactionRef: text("transaction_ref").notNull(), merchantSubscriptionRef: text("merchant_subscription_ref"), merchantCustomerRef: text("merchant_customer_ref").notNull(), action: text("action").notNull(), status: text("status").notNull(), amountMinor: bigint("amount_minor", { mode: "number" }).notNull(), currency: text("currency").notNull(), reason: text("reason").notNull(), state: text("state").notNull(), attempt: integer("attempt").default(0).notNull(), maxAttempts: integer("max_attempts").default(12).notNull(), nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(), leaseOwner: text("lease_owner"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }), lastErrorCode: text("last_error_code"), providerOccurredAt: timestamp("provider_occurred_at", { withTimezone: true }).notNull(), receivedAt: timestamp("received_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(), processedAt: timestamp("processed_at", { withTimezone: true }),
+}, (table) => ({ pk: primaryKey({ name: "merchant_adjustment_webhook_receipts_pk", columns: [table.provider, table.eventId] }), transactionIdx: index("merchant_adjustment_webhook_receipts_transaction_idx").on(table.provider, table.transactionRef, table.state, table.nextAttemptAt), dueIdx: index("merchant_adjustment_webhook_receipts_due_idx").on(table.nextAttemptAt, table.provider, table.eventId).where(sql`${table.state} in ('received','pending_dependency','processing')`), valuesCheck: check("merchant_adjustment_webhook_receipts_values_check", sql`${table.payloadDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.action} in ('credit','refund','chargeback','chargeback_reverse','chargeback_warning','chargeback_warning_reverse','credit_reverse') and ${table.status} in ('pending_approval','approved','rejected','reversed') and ${table.amountMinor} >= 0 and ${table.currency} ~ '^[A-Z]{3}$' and octet_length(${table.reason}) between 1 and 4096 and ${table.state} in ('received','pending_dependency','processing','applied','failed_known','outcome_unknown') and ${table.maxAttempts} between 1 and 50 and ${table.attempt} between 0 and ${table.maxAttempts} and ((${table.state} = 'processing' and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} <> 'processing' and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null))`) }));
+
+export const merchantBillingAdjustments = pgTable("merchant_billing_adjustments", {
+  provider: text("provider").notNull(), adjustmentRef: text("adjustment_ref").notNull(), eventId: text("event_id").notNull(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), transactionRef: text("transaction_ref").notNull(), merchantSubscriptionRef: text("merchant_subscription_ref"), merchantCustomerRef: text("merchant_customer_ref").notNull(), action: text("action").notNull(), status: text("status").notNull(), amountMinor: bigint("amount_minor", { mode: "number" }).notNull(), currency: text("currency").notNull(), reason: text("reason").notNull(), providerOccurredAt: timestamp("provider_occurred_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "merchant_billing_adjustments_pk", columns: [table.provider, table.adjustmentRef] }), transactionIdx: index("merchant_billing_adjustments_transaction_idx").on(table.provider, table.transactionRef, table.providerOccurredAt), valuesCheck: check("merchant_billing_adjustments_values_check", sql`${table.action} in ('credit','refund','chargeback','chargeback_reverse','chargeback_warning','chargeback_warning_reverse','credit_reverse') and ${table.status} in ('pending_approval','approved','rejected','reversed') and ${table.amountMinor} >= 0 and ${table.currency} ~ '^[A-Z]{3}$'`) }));
+
+export const merchantCreditLiabilities = pgTable("merchant_credit_liabilities", {
+  provider: text("provider").notNull(), transactionRef: text("transaction_ref").notNull(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), bucketId: text("bucket_id").notNull(), targetClawbackUnits: bigint("target_clawback_units", { mode: "number" }).notNull(), appliedClawbackUnits: bigint("applied_clawback_units", { mode: "number" }).notNull(), outstandingUnits: bigint("outstanding_units", { mode: "number" }).notNull(), state: text("state").notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "merchant_credit_liabilities_pk", columns: [table.provider, table.transactionRef] }), transactionFk: foreignKey({ name: "merchant_credit_liabilities_transaction_fk", columns: [table.provider, table.transactionRef], foreignColumns: [merchantBillingTransactions.provider, merchantBillingTransactions.transactionRef] }).onDelete("restrict"), bucketFk: foreignKey({ name: "merchant_credit_liabilities_bucket_fk", columns: [table.workspaceId, table.bucketId], foreignColumns: [generationCreditBuckets.workspaceId, generationCreditBuckets.id] }).onDelete("restrict"), workspaceIdx: index("merchant_credit_liabilities_workspace_idx").on(table.workspaceId, table.state, table.updatedAt), valuesCheck: check("merchant_credit_liabilities_values_check", sql`${table.targetClawbackUnits} >= 0 and ${table.appliedClawbackUnits} >= 0 and ${table.outstandingUnits} >= 0 and ${table.targetClawbackUnits} = ${table.appliedClawbackUnits} + ${table.outstandingUnits} and ((${table.state} = 'open' and ${table.outstandingUnits} > 0) or (${table.state} = 'clear' and ${table.outstandingUnits} = 0))`) }));
+
+export const merchantExecutionHolds = pgTable("merchant_execution_holds", {
+  provider: text("provider").notNull(), transactionRef: text("transaction_ref").notNull(), workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), merchantSubscriptionRef: text("merchant_subscription_ref").notNull(), periodStartsAt: timestamp("period_starts_at", { withTimezone: true }).notNull(), periodEndsAt: timestamp("period_ends_at", { withTimezone: true }).notNull(), reason: text("reason").notNull(), state: text("state").notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "merchant_execution_holds_pk", columns: [table.provider, table.transactionRef] }), transactionFk: foreignKey({ name: "merchant_execution_holds_transaction_fk", columns: [table.provider, table.transactionRef], foreignColumns: [merchantBillingTransactions.provider, merchantBillingTransactions.transactionRef] }).onDelete("restrict"), workspaceIdx: index("merchant_execution_holds_workspace_idx").on(table.workspaceId, table.state, table.updatedAt), activePeriodIdx: index("merchant_execution_holds_active_period_idx").on(table.workspaceId, table.merchantSubscriptionRef, table.periodStartsAt, table.periodEndsAt).where(sql`${table.state} = 'active'`), valuesCheck: check("merchant_execution_holds_values_check", sql`${table.periodEndsAt} > ${table.periodStartsAt} and ${table.reason} in ('refunded','disputed') and ${table.state} in ('active','released')`) }));
+
+export const workspaceNotificationPreferences = pgTable("workspace_notification_preferences", {
+  workspaceId: text("workspace_id").notNull(), userId: text("user_id").notNull(), deliveryLocale: text("delivery_locale"), billingEmailEnabled: boolean("billing_email_enabled").default(true).notNull(), channelEmailEnabled: boolean("channel_email_enabled").default(true).notNull(), publishingEmailEnabled: boolean("publishing_email_enabled").default(true).notNull(), creditEmailEnabled: boolean("credit_email_enabled").default(true).notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "workspace_notification_preferences_pk", columns: [table.workspaceId, table.userId] }), membershipFk: foreignKey({ name: "workspace_notification_preferences_membership_fk", columns: [table.workspaceId, table.userId], foreignColumns: [workspaceMembers.workspaceId, workspaceMembers.userId] }).onDelete("cascade"), userIdx: index("workspace_notification_preferences_user_idx").on(table.userId, table.workspaceId), localeCheck: check("workspace_notification_preferences_locale_check", sql`${table.deliveryLocale} is null or ${table.deliveryLocale} in ('ar','en')`) }));
+
+export const workspaceNotificationEvents = pgTable("workspace_notification_events", {
+  workspaceId: text("workspace_id").notNull(), id: text("id").notNull(), eventType: text("event_type").notNull(), sourceRef: text("source_ref").notNull(), requiredPermission: text("required_permission").notNull(), severity: text("severity").notNull(), facts: jsonb("facts").$type<Record<string, string | number | boolean | null>>().notNull(), actionPath: text("action_path").notNull(), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "workspace_notification_events_pk", columns: [table.workspaceId, table.id] }), sourceUnique: uniqueIndex("workspace_notification_events_source_unique").on(table.workspaceId, table.sourceRef), workspaceFk: foreignKey({ name: "workspace_notification_events_workspace_fk", columns: [table.workspaceId], foreignColumns: [workspaces.id] }).onDelete("restrict"), cursorIdx: index("workspace_notification_events_cursor_idx").on(table.workspaceId, table.occurredAt.desc(), table.id.desc()), permissionCursorIdx: index("workspace_notification_events_permission_cursor_idx").on(table.workspaceId, table.requiredPermission, table.occurredAt.desc(), table.id.desc()), valuesCheck: check("workspace_notification_events_values_check", sql`${table.eventType} in ('billing.refund_applied','billing.refund_reversed','billing.dispute_opened','billing.dispute_resolved','security.credential_created','security.credential_rotated','security.credential_revoked','security.credential_status_changed','security.spend_authority_changed','channel.consent_expiring','channel.reconnect_required','publishing.approval_requested','publishing.approval_approved','publishing.approval_denied','publishing.delivery_failed','publishing.delivery_outcome_unknown','publishing.social_failed','credits.low','credits.exhausted') and ${table.requiredPermission} in ('workspaces:write','social:view','social:manage','product:billing:read') and ((${table.eventType} like 'billing.%' and ${table.requiredPermission} = 'product:billing:read') or (${table.eventType} like 'credits.%' and ${table.requiredPermission} = 'product:billing:read') or (${table.eventType} like 'security.%' and ${table.requiredPermission} = 'workspaces:write') or (${table.eventType} like 'channel.%' and ${table.requiredPermission} = 'social:manage') or (${table.eventType} = 'publishing.approval_requested' and ${table.requiredPermission} = 'social:manage') or (${table.eventType} in ('publishing.approval_approved','publishing.approval_denied','publishing.delivery_failed','publishing.delivery_outcome_unknown','publishing.social_failed') and ${table.requiredPermission} = 'social:view')) and ${table.severity} in ('info','warning','critical') and octet_length(${table.sourceRef}) between 1 and 500 and octet_length(${table.facts}::text) between 2 and 8192 and octet_length(${table.actionPath}) between 1 and 501 and ${table.actionPath} ~ '^/[A-Za-z0-9/_?=&.-]*$'`) }));
+
+export const workspaceNotificationRecipients = pgTable("workspace_notification_recipients", {
+  workspaceId: text("workspace_id").notNull(), eventId: text("event_id").notNull(), userId: text("user_id").notNull(), deliveryLocale: text("delivery_locale").notNull(), inAppState: text("in_app_state").default("unread").notNull(), emailState: text("email_state").notNull(), attempt: integer("attempt").default(0).notNull(), maxAttempts: integer("max_attempts").default(8).notNull(), nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(), leaseOwner: text("lease_owner"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }), lastErrorCode: text("last_error_code"), catalogVersion: text("catalog_version"), renderedTitle: text("rendered_title"), renderedBody: text("rendered_body"), renderedActionLabel: text("rendered_action_label"), emailActionUrl: text("email_action_url"), emailPayloadDigest: text("email_payload_digest"), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(), readAt: timestamp("read_at", { withTimezone: true }), emailDeliveredAt: timestamp("email_delivered_at", { withTimezone: true }),
+}, (table) => ({ pk: primaryKey({ name: "workspace_notification_recipients_pk", columns: [table.workspaceId, table.eventId, table.userId] }), eventFk: foreignKey({ name: "workspace_notification_recipients_event_fk", columns: [table.workspaceId, table.eventId], foreignColumns: [workspaceNotificationEvents.workspaceId, workspaceNotificationEvents.id] }).onDelete("cascade"), membershipFk: foreignKey({ name: "workspace_notification_recipients_membership_fk", columns: [table.workspaceId, table.userId], foreignColumns: [workspaceMembers.workspaceId, workspaceMembers.userId] }).onDelete("cascade"), userCursorIdx: index("workspace_notification_recipients_user_cursor_idx").on(table.workspaceId, table.userId, table.createdAt.desc(), table.eventId.desc()), emailDueIdx: index("workspace_notification_recipients_email_due_idx").on(table.nextAttemptAt, table.workspaceId, table.eventId, table.userId).where(sql`${table.emailState} in ('pending','processing')`), valuesCheck: check("workspace_notification_recipients_values_check", sql`${table.deliveryLocale} in ('ar','en') and ${table.inAppState} in ('unread','read') and ${table.emailState} in ('pending','processing','delivered','suppressed','failed_known','outcome_unknown') and ${table.maxAttempts} between 1 and 20 and ${table.attempt} between 0 and ${table.maxAttempts} and ((${table.inAppState} = 'unread' and ${table.readAt} is null) or (${table.inAppState} = 'read' and ${table.readAt} is not null)) and ((${table.emailState} = 'processing' and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.emailState} <> 'processing' and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null)) and ((${table.emailState} = 'delivered' and ${table.emailDeliveredAt} is not null) or (${table.emailState} <> 'delivered' and ${table.emailDeliveredAt} is null))`), snapshotCheck: check("workspace_notification_recipients_snapshot_check", sql`((${table.catalogVersion} is null and ${table.renderedTitle} is null and ${table.renderedBody} is null and ${table.renderedActionLabel} is null and ${table.emailActionUrl} is null and ${table.emailPayloadDigest} is null) or (octet_length(${table.catalogVersion}) between 1 and 80 and octet_length(${table.renderedTitle}) between 1 and 500 and octet_length(${table.renderedBody}) between 1 and 4096 and octet_length(${table.renderedActionLabel}) between 1 and 200 and octet_length(${table.emailActionUrl}) between 9 and 2048 and ${table.emailActionUrl} ~ '^https?://[^[:space:]]+$' and ${table.emailPayloadDigest} ~ '^sha256:[a-f0-9]{64}$'))`) }));
+
+export const workspaceNotificationCreditStates = pgTable("workspace_notification_credit_states", {
+  workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "restrict" }), balanceState: text("balance_state").notNull(), availableUnits: bigint("available_units", { mode: "number" }).notNull(), warningThreshold: bigint("warning_threshold", { mode: "number" }).default(10).notNull(), episode: integer("episode").default(0).notNull(), lastLedgerSequence: integer("last_ledger_sequence").default(0).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({ valuesCheck: check("workspace_notification_credit_states_values_check", sql`${table.balanceState} in ('healthy','low','exhausted') and ${table.availableUnits} >= 0 and ${table.warningThreshold} between 1 and 1000000 and ${table.episode} >= 0 and ${table.lastLedgerSequence} >= 0`) }));
+
+export const generationCreditPackVersions = pgTable("generation_credit_pack_versions", {
+  packId: text("pack_id").notNull(), version: integer("version").notNull(), status: text("status").notNull(), authoredName: jsonb("authored_name").$type<{ ar: string; en: string }>().notNull(), creditUnits: bigint("credit_units", { mode: "number" }).notNull(), priceMinor: bigint("price_minor", { mode: "number" }).notNull(), taxMinor: bigint("tax_minor", { mode: "number" }).notNull(), currency: text("currency").notNull(), termsDigest: text("terms_digest").notNull(), effectiveAt: timestamp("effective_at", { withTimezone: true }).notNull(), retiredAt: timestamp("retired_at", { withTimezone: true }), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({ pk: primaryKey({ name: "generation_credit_pack_versions_pk", columns: [table.packId, table.version] }), activeIdx: index("generation_credit_pack_versions_active_idx").on(table.status, table.effectiveAt, table.retiredAt), valuesCheck: check("generation_credit_pack_versions_values_check", sql`${table.version}>0 and ${table.status} in ('draft','active','retired') and ${table.creditUnits}>0 and ${table.priceMinor}>0 and ${table.taxMinor}>=0 and ${table.currency} ~ '^[A-Z]{3}$' and ${table.termsDigest} ~ '^sha256:[a-f0-9]{64}$'`) }));
+
+export const workspaceReferralCodes = pgTable("workspace_referral_codes", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), code: text("code").notNull(), rewardMode: text("reward_mode").notNull(), status: text("status").notNull(), recipientUserId: text("recipient_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "workspace_referral_codes_pk", columns: [table.workspaceId, table.id] }), codeUnique: uniqueIndex("workspace_referral_codes_code_unique").on(table.code), valuesCheck: check("workspace_referral_codes_values_check", sql`${table.rewardMode} in ('generation_credit','cash') and ${table.status} in ('active','paused','closed') and ${table.code} ~ '^[A-Z0-9-]{6,32}$'`) }));
+
+export const referralRecipientProfiles = pgTable("referral_recipient_profiles", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), userId: text("user_id").notNull().references(() => user.id, { onDelete: "restrict" }), rewardPreference: text("reward_preference").notNull(), verificationState: text("verification_state").notNull(), legalCountry: text("legal_country"), payoutCurrency: text("payout_currency"), payoutProvider: text("payout_provider"), providerRecipientRef: text("provider_recipient_ref"), taxEvidenceRef: text("tax_evidence_ref"), termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }), revision: integer("revision").default(1).notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "referral_recipient_profiles_pk", columns: [table.workspaceId, table.userId] }), providerRefUnique: uniqueIndex("referral_recipient_profiles_provider_ref_unique").on(table.payoutProvider, table.providerRecipientRef), stateIdx: index("referral_recipient_profiles_state_idx").on(table.verificationState, table.updatedAt), valuesCheck: check("referral_recipient_profiles_values_check", sql`${table.rewardPreference} in ('generation_credit','cash') and ${table.verificationState} in ('unconfigured','pending','verified','rejected','suspended') and ${table.revision} > 0 and (${table.legalCountry} is null or ${table.legalCountry} ~ '^[A-Z]{2}$') and (${table.payoutCurrency} is null or ${table.payoutCurrency} ~ '^[A-Z]{3}$') and ((${table.verificationState} = 'verified' and ${table.legalCountry} is not null and ${table.payoutCurrency} is not null and ${table.payoutProvider} is not null and ${table.providerRecipientRef} is not null and ${table.taxEvidenceRef} is not null and ${table.termsAcceptedAt} is not null) or ${table.verificationState} <> 'verified')`) }));
+
+export const referralRecipientProfileRevisions = pgTable("referral_recipient_profile_revisions", {
+  workspaceId: text("workspace_id").notNull(), userId: text("user_id").notNull(), revision: integer("revision").notNull(), rewardPreference: text("reward_preference").notNull(), verificationState: text("verification_state").notNull(), legalCountry: text("legal_country"), payoutCurrency: text("payout_currency"), payoutProvider: text("payout_provider"), providerRecipientRef: text("provider_recipient_ref"), taxEvidenceRef: text("tax_evidence_ref"), termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }), evidenceDigest: text("evidence_digest").notNull(), actorRef: text("actor_ref").notNull(), recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "referral_recipient_profile_revisions_pk", columns: [table.workspaceId, table.userId, table.revision] }), profileFk: foreignKey({ name: "referral_recipient_profile_revisions_profile_fk", columns: [table.workspaceId, table.userId], foreignColumns: [referralRecipientProfiles.workspaceId, referralRecipientProfiles.userId] }).onDelete("restrict"), valuesCheck: check("referral_recipient_profile_revisions_values_check", sql`${table.revision} > 0 and ${table.rewardPreference} in ('generation_credit','cash') and ${table.verificationState} in ('unconfigured','pending','verified','rejected','suspended') and ${table.evidenceDigest} ~ '^sha256:[a-f0-9]{64}$'`) }));
+
+export const referralCaptureReceipts = pgTable("referral_capture_receipts", {
+  id: text("id").primaryKey(),
+  referralCodeId: text("referral_code_id").notNull(),
+  referrerWorkspaceId: text("referrer_workspace_id").notNull(),
+  visitorTokenDigest: text("visitor_token_digest").notNull(),
+  state: text("state").notNull(),
+  capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  attributedAt: timestamp("attributed_at", { withTimezone: true }),
+}, (table) => ({
+  codeFk: foreignKey({ name: "referral_capture_receipts_code_fk", columns: [table.referrerWorkspaceId, table.referralCodeId], foreignColumns: [workspaceReferralCodes.workspaceId, workspaceReferralCodes.id] }).onDelete("restrict"),
+  visitorUnique: uniqueIndex("referral_capture_receipts_visitor_unique").on(table.visitorTokenDigest),
+  referrerCursorIdx: index("referral_capture_receipts_referrer_cursor_idx").on(table.referrerWorkspaceId, table.capturedAt, table.id),
+  expiryIdx: index("referral_capture_receipts_expiry_idx").on(table.state, table.expiresAt),
+  valuesCheck: check("referral_capture_receipts_values_check", sql`${table.visitorTokenDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.state} in ('captured','attributed','expired','superseded') and ${table.expiresAt} > ${table.capturedAt} and ((${table.state} = 'attributed' and ${table.attributedAt} is not null) or (${table.state} <> 'attributed' and ${table.attributedAt} is null))`),
+}));
+
+export const referralAttributions = pgTable("referral_attributions", {
+  id: text("id").primaryKey(), captureId: text("capture_id"), referralCodeId: text("referral_code_id").notNull(), referrerWorkspaceId: text("referrer_workspace_id").notNull(), referredIdentityDigest: text("referred_identity_digest").notNull(), referredWorkspaceId: text("referred_workspace_id").references(() => workspaces.id, { onDelete: "restrict" }), state: text("state").notNull(), attributionDigest: text("attribution_digest").notNull(), attributedAt: timestamp("attributed_at", { withTimezone: true }).notNull(), qualifiedAt: timestamp("qualified_at", { withTimezone: true }),
+}, (table) => ({ captureFk: foreignKey({ name: "referral_attributions_capture_fk", columns: [table.captureId], foreignColumns: [referralCaptureReceipts.id] }).onDelete("restrict"), codeFk: foreignKey({ name: "referral_attributions_code_fk", columns: [table.referrerWorkspaceId, table.referralCodeId], foreignColumns: [workspaceReferralCodes.workspaceId, workspaceReferralCodes.id] }).onDelete("restrict"), captureUnique: uniqueIndex("referral_attributions_capture_unique").on(table.captureId), recipientUnique: uniqueIndex("referral_attributions_recipient_unique").on(table.referredIdentityDigest), referrerIdx: index("referral_attributions_referrer_idx").on(table.referrerWorkspaceId, table.state, table.attributedAt), valuesCheck: check("referral_attributions_values_check", sql`${table.state} in ('attributed','qualified','rewarded','fraud_hold','refunded','clawed_back','rejected') and ${table.referredIdentityDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.attributionDigest} ~ '^sha256:[a-f0-9]{64}$'`) }));
+
+export const referralRewards = pgTable("referral_rewards", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), attributionId: text("attribution_id").notNull().references(() => referralAttributions.id, { onDelete: "restrict" }), mode: text("mode").notNull(), state: text("state").notNull(), creditUnits: bigint("credit_units", { mode: "number" }), cashMinor: bigint("cash_minor", { mode: "number" }), currency: text("currency"), thresholdMinor: bigint("threshold_minor", { mode: "number" }), taxEvidenceRef: text("tax_evidence_ref"), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "referral_rewards_pk", columns: [table.workspaceId, table.id] }), attributionUnique: uniqueIndex("referral_rewards_attribution_unique").on(table.attributionId), stateIdx: index("referral_rewards_state_idx").on(table.workspaceId, table.state, table.updatedAt), valuesCheck: check("referral_rewards_values_check", sql`${table.mode} in ('generation_credit','cash') and ${table.state} in ('pending','available','payout_pending','paid','fraud_hold','refunded','clawed_back') and ((${table.mode} = 'generation_credit' and ${table.creditUnits} > 0 and ${table.cashMinor} is null and ${table.currency} is null) or (${table.mode} = 'cash' and ${table.cashMinor} > 0 and ${table.currency} ~ '^[A-Z]{3}$' and ${table.creditUnits} is null))`) }));
+
+export const referralPayoutLedgerEntries = pgTable("referral_payout_ledger_entries", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), sequence: integer("sequence").notNull(), id: text("id").notNull(), rewardId: text("reward_id").notNull(), entryType: text("entry_type").notNull(), amountMinor: bigint("amount_minor", { mode: "number" }).notNull(), currency: text("currency").notNull(), merchantPayoutRef: text("merchant_payout_ref"), taxEvidenceRef: text("tax_evidence_ref"), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "referral_payout_ledger_entries_pk", columns: [table.workspaceId, table.sequence] }), rewardFk: foreignKey({ name: "referral_payout_ledger_entries_reward_fk", columns: [table.workspaceId, table.rewardId], foreignColumns: [referralRewards.workspaceId, referralRewards.id] }).onDelete("restrict"), idUnique: uniqueIndex("referral_payout_ledger_entries_id_unique").on(table.workspaceId, table.id), rewardIdx: index("referral_payout_ledger_entries_reward_idx").on(table.workspaceId, table.rewardId, table.sequence), valuesCheck: check("referral_payout_ledger_entries_values_check", sql`${table.sequence} > 0 and ${table.entryType} in ('earned','hold','release','paid','refund','clawback') and ${table.amountMinor} <> 0 and ${table.currency} ~ '^[A-Z]{3}$'`) }));
+
+export const referralPayoutRequests = pgTable("referral_payout_requests", {
+  workspaceId: text("workspace_id").notNull(), id: text("id").notNull(), recipientUserId: text("recipient_user_id").notNull(), profileRevision: integer("profile_revision").notNull(), state: text("state").notNull(), currency: text("currency").notNull(), totalMinor: bigint("total_minor", { mode: "number" }).notNull(), merchantPayoutRef: text("merchant_payout_ref"), evidenceDigest: text("evidence_digest").notNull(), providerIdempotencyKey: text("provider_idempotency_key").notNull(), dispatchAttempts: integer("dispatch_attempts").default(0).notNull(), maxDispatchAttempts: integer("max_dispatch_attempts").default(12).notNull(), nextDispatchAt: timestamp("next_dispatch_at", { withTimezone: true }).defaultNow().notNull(), dispatchLeaseOwner: text("dispatch_lease_owner"), dispatchLeaseExpiresAt: timestamp("dispatch_lease_expires_at", { withTimezone: true }), lastDispatchErrorCode: text("last_dispatch_error_code"), submittedAt: timestamp("submitted_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(), paidAt: timestamp("paid_at", { withTimezone: true }),
+}, (table) => ({ pk: primaryKey({ name: "referral_payout_requests_pk", columns: [table.workspaceId, table.id] }), profileRevisionFk: foreignKey({ name: "referral_payout_requests_profile_revision_fk", columns: [table.workspaceId, table.recipientUserId, table.profileRevision], foreignColumns: [referralRecipientProfileRevisions.workspaceId, referralRecipientProfileRevisions.userId, referralRecipientProfileRevisions.revision] }).onDelete("restrict"), stateIdx: index("referral_payout_requests_state_idx").on(table.workspaceId, table.recipientUserId, table.state, table.updatedAt), merchantRefUnique: uniqueIndex("referral_payout_requests_merchant_ref_unique").on(table.merchantPayoutRef), providerIdempotencyUnique: uniqueIndex("referral_payout_requests_provider_idempotency_unique").on(table.providerIdempotencyKey), dispatchDueIdx: index("referral_payout_requests_dispatch_due_idx").on(table.state, table.nextDispatchAt, table.dispatchLeaseExpiresAt, table.submittedAt), valuesCheck: check("referral_payout_requests_values_check", sql`${table.profileRevision} > 0 and ${table.state} in ('submitted','processing','action_required','paid','failed_known','outcome_unknown','cancelled') and ${table.currency} ~ '^[A-Z]{3}$' and ${table.totalMinor} > 0 and ${table.evidenceDigest} ~ '^sha256:[a-f0-9]{64}$' and ((${table.state} = 'paid' and ${table.merchantPayoutRef} is not null and ${table.paidAt} is not null) or (${table.state} <> 'paid' and ${table.paidAt} is null))`), dispatchCheck: check("referral_payout_requests_dispatch_check", sql`${table.providerIdempotencyKey} ~ '^referral-payout:[^:]+:[^:]+$' and ${table.dispatchAttempts} >= 0 and ${table.maxDispatchAttempts} between 1 and 100 and ${table.dispatchAttempts} <= ${table.maxDispatchAttempts} and ((${table.dispatchLeaseOwner} is null and ${table.dispatchLeaseExpiresAt} is null) or (${table.dispatchLeaseOwner} is not null and ${table.dispatchLeaseExpiresAt} is not null)) and (${table.lastDispatchErrorCode} is null or length(${table.lastDispatchErrorCode}) between 1 and 200)`) }));
+
+export const referralPayoutRequestRewards = pgTable("referral_payout_request_rewards", {
+  workspaceId: text("workspace_id").notNull(), payoutRequestId: text("payout_request_id").notNull(), rewardId: text("reward_id").notNull(), amountMinor: bigint("amount_minor", { mode: "number" }).notNull(), currency: text("currency").notNull(),
+}, (table) => ({ pk: primaryKey({ name: "referral_payout_request_rewards_pk", columns: [table.workspaceId, table.payoutRequestId, table.rewardId] }), requestFk: foreignKey({ name: "referral_payout_request_rewards_request_fk", columns: [table.workspaceId, table.payoutRequestId], foreignColumns: [referralPayoutRequests.workspaceId, referralPayoutRequests.id] }).onDelete("restrict"), rewardFk: foreignKey({ name: "referral_payout_request_rewards_reward_fk", columns: [table.workspaceId, table.rewardId], foreignColumns: [referralRewards.workspaceId, referralRewards.id] }).onDelete("restrict"), rewardUnique: uniqueIndex("referral_payout_request_rewards_reward_unique").on(table.workspaceId, table.rewardId), valuesCheck: check("referral_payout_request_rewards_values_check", sql`${table.amountMinor} > 0 and ${table.currency} ~ '^[A-Z]{3}$'`) }));
+
+export const referralPayoutEvents = pgTable("referral_payout_events", {
+  workspaceId: text("workspace_id").notNull(), payoutRequestId: text("payout_request_id").notNull(), sequence: integer("sequence").notNull(), id: text("id").notNull(), fromState: text("from_state"), toState: text("to_state").notNull(), eventType: text("event_type").notNull(), providerEventRef: text("provider_event_ref"), evidenceDigest: text("evidence_digest").notNull(), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(), receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "referral_payout_events_pk", columns: [table.workspaceId, table.payoutRequestId, table.sequence] }), requestFk: foreignKey({ name: "referral_payout_events_request_fk", columns: [table.workspaceId, table.payoutRequestId], foreignColumns: [referralPayoutRequests.workspaceId, referralPayoutRequests.id] }).onDelete("restrict"), idUnique: uniqueIndex("referral_payout_events_id_unique").on(table.id), providerRefUnique: uniqueIndex("referral_payout_events_provider_ref_unique").on(table.providerEventRef), valuesCheck: check("referral_payout_events_values_check", sql`${table.sequence} > 0 and ${table.toState} in ('submitted','processing','action_required','paid','failed_known','outcome_unknown','cancelled') and ${table.eventType} in ('submitted','processing','action_required','paid','failed_known','outcome_unknown','cancelled') and ${table.evidenceDigest} ~ '^sha256:[a-f0-9]{64}$'`) }));
+
+export const referralFraudEvidence = pgTable("referral_fraud_evidence", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), attributionId: text("attribution_id").notNull().references(() => referralAttributions.id, { onDelete: "restrict" }), decision: text("decision").notNull(), policyVersion: text("policy_version").notNull(), evidenceDigest: text("evidence_digest").notNull(), reviewerRef: text("reviewer_ref").notNull(), decidedAt: timestamp("decided_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "referral_fraud_evidence_pk", columns: [table.workspaceId, table.id] }), attributionIdx: index("referral_fraud_evidence_attribution_idx").on(table.workspaceId, table.attributionId, table.decidedAt), valuesCheck: check("referral_fraud_evidence_values_check", sql`${table.decision} in ('clear','hold','reject') and ${table.evidenceDigest} ~ '^sha256:[a-f0-9]{64}$'`) }));
+
+export const channelOnboardingOfferVersions = pgTable("channel_onboarding_offer_versions", {
+  offerId: text("offer_id").notNull(), version: integer("version").notNull(), platform: socialPlatformEnum("platform").notNull(), status: text("status").notNull(), authoredName: jsonb("authored_name").$type<{ ar: string; en: string }>().notNull(), authoredDescription: jsonb("authored_description").$type<{ ar: string; en: string }>().notNull(), supportedRegions: jsonb("supported_regions").$type<string[]>().notNull(), customerRequirements: jsonb("customer_requirements").$type<Array<{ key: string; label: { ar: string; en: string }; instructions: { ar: string; en: string }; required: boolean }>>().notNull(), maxPartnerHours: integer("max_partner_hours").notNull(), localPriceMinor: bigint("local_price_minor", { mode: "number" }).notNull(), currency: text("currency").notNull(), taxMode: text("tax_mode").notNull(), termsDigest: text("terms_digest").notNull(), compliancePolicyVersion: text("compliance_policy_version").notNull(), effectiveAt: timestamp("effective_at", { withTimezone: true }).notNull(), retiredAt: timestamp("retired_at", { withTimezone: true }), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({ pk: primaryKey({ name: "channel_onboarding_offer_versions_pk", columns: [table.offerId, table.version] }), activeIdx: index("channel_onboarding_offer_versions_active_idx").on(table.status, table.platform, table.effectiveAt), valuesCheck: check("channel_onboarding_offer_versions_values_check", sql`${table.version} > 0 and ${table.status} in ('draft','active','retired') and ${table.maxPartnerHours} between 0 and 100 and ${table.localPriceMinor} >= 0 and ${table.currency} ~ '^[A-Z]{3}$' and ${table.taxMode} = 'inclusive' and ${table.termsDigest} ~ '^sha256:[a-f0-9]{64}$' and jsonb_array_length(${table.supportedRegions}) > 0`) }));
+
+export const channelOnboardingPartners = pgTable("channel_onboarding_partners", {
+  id: text("id").primaryKey(), legalName: text("legal_name").notNull(), status: text("status").notNull(), supportedPlatforms: jsonb("supported_platforms").$type<string[]>().notNull(), supportedRegions: jsonb("supported_regions").$type<string[]>().notNull(), vettingDigest: text("vetting_digest").notNull(), policyVersion: text("policy_version").notNull(), effectiveAt: timestamp("effective_at", { withTimezone: true }).notNull(), expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(), revokedAt: timestamp("revoked_at", { withTimezone: true }), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({ eligibilityIdx: index("channel_onboarding_partners_eligibility_idx").on(table.status, table.expiresAt), valuesCheck: check("channel_onboarding_partners_values_check", sql`${table.status} in ('vetted','suspended','revoked') and ${table.vettingDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.expiresAt} > ${table.effectiveAt} and jsonb_array_length(${table.supportedPlatforms}) > 0 and jsonb_array_length(${table.supportedRegions}) > 0`) }));
+
+export const channelOnboardingCommercialQuotes = pgTable("channel_onboarding_commercial_quotes", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), purposeRef: text("purpose_ref").notNull(), offerId: text("offer_id").notNull(), offerVersion: integer("offer_version").notNull(), state: text("state").notNull(), subtotalMinor: bigint("subtotal_minor", { mode: "number" }).notNull(), taxMinor: bigint("tax_minor", { mode: "number" }).notNull(), totalMinor: bigint("total_minor", { mode: "number" }).notNull(), currency: text("currency").notNull(), termsDigest: text("terms_digest").notNull(), issuedAt: timestamp("issued_at", { withTimezone: true }).notNull(), expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(), acceptedByUserId: text("accepted_by_user_id").references(() => user.id, { onDelete: "restrict" }), acceptedAt: timestamp("accepted_at", { withTimezone: true }), merchantPaymentRef: text("merchant_payment_ref"), merchantRefundRef: text("merchant_refund_ref"),
+}, (table) => ({ pk: primaryKey({ name: "channel_onboarding_commercial_quotes_pk", columns: [table.workspaceId, table.id] }), offerFk: foreignKey({ name: "channel_onboarding_commercial_quotes_offer_fk", columns: [table.offerId, table.offerVersion], foreignColumns: [channelOnboardingOfferVersions.offerId, channelOnboardingOfferVersions.version] }).onDelete("restrict"), purposeUnique: uniqueIndex("channel_onboarding_commercial_quotes_purpose_unique").on(table.workspaceId, table.purposeRef), stateIdx: index("channel_onboarding_commercial_quotes_state_idx").on(table.workspaceId, table.state, table.expiresAt), valuesCheck: check("channel_onboarding_commercial_quotes_values_check", sql`${table.state} in ('offered','accepted','payment_pending','paid','refunded','cancelled','failed','expired') and ${table.subtotalMinor} >= 0 and ${table.taxMinor} >= 0 and ${table.totalMinor} = ${table.subtotalMinor} + ${table.taxMinor} and ${table.currency} ~ '^[A-Z]{3}$' and ${table.termsDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.expiresAt} > ${table.issuedAt}`) }));
+
+export const channelOnboardingOrders = pgTable("channel_onboarding_orders", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), id: text("id").notNull(), offerId: text("offer_id").notNull(), offerVersion: integer("offer_version").notNull(), platform: socialPlatformEnum("platform").notNull(), region: text("region").notNull(), state: text("state").notNull(), revision: integer("revision").default(1).notNull(), quoteId: text("quote_id"), credentialProfileId: text("credential_profile_id").references(() => credentialProfiles.id, { onDelete: "restrict" }), connectedSocialAccountId: text("connected_social_account_id").references(() => socialAccounts.id, { onDelete: "restrict" }), complianceEvidenceDigest: text("compliance_evidence_digest").notNull(), blockedReasonCode: text("blocked_reason_code"), createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), createdAt: timestamp("created_at", { withTimezone: true }).notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "channel_onboarding_orders_pk", columns: [table.workspaceId, table.id] }), offerFk: foreignKey({ name: "channel_onboarding_orders_offer_fk", columns: [table.offerId, table.offerVersion], foreignColumns: [channelOnboardingOfferVersions.offerId, channelOnboardingOfferVersions.version] }).onDelete("restrict"), quoteFk: foreignKey({ name: "channel_onboarding_orders_quote_fk", columns: [table.workspaceId, table.quoteId], foreignColumns: [channelOnboardingCommercialQuotes.workspaceId, channelOnboardingCommercialQuotes.id] }).onDelete("restrict"), stateCursorIdx: index("channel_onboarding_orders_state_cursor_idx").on(table.workspaceId, table.state, table.updatedAt, table.id), stateCheck: check("channel_onboarding_orders_state_check", sql`${table.state} in ('draft','quoted','payment_pending','accepted','customer_action','partner_action','readiness_review','ready_to_connect','connected','blocked','cancelled','refunded','failed') and ${table.revision} > 0 and ${table.complianceEvidenceDigest} ~ '^sha256:[a-f0-9]{64}$'`) }));
+
+export const channelOnboardingPartnerAssignments = pgTable("channel_onboarding_partner_assignments", {
+  workspaceId: text("workspace_id").notNull(), id: text("id").notNull(), orderId: text("order_id").notNull(), partnerId: text("partner_id").notNull().references(() => channelOnboardingPartners.id, { onDelete: "restrict" }), purpose: text("purpose").notNull(), scope: jsonb("scope").$type<{ permittedActions: string[]; orderId: string; platform: string; region: string }>().notNull(), startsAt: timestamp("starts_at", { withTimezone: true }).notNull(), expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(), revokedAt: timestamp("revoked_at", { withTimezone: true }), assignedByUserId: text("assigned_by_user_id").references(() => user.id, { onDelete: "restrict" }), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "channel_onboarding_partner_assignments_pk", columns: [table.workspaceId, table.id] }), orderFk: foreignKey({ name: "channel_onboarding_partner_assignments_order_fk", columns: [table.workspaceId, table.orderId], foreignColumns: [channelOnboardingOrders.workspaceId, channelOnboardingOrders.id] }).onDelete("restrict"), activeIdx: index("channel_onboarding_partner_assignments_active_idx").on(table.workspaceId, table.orderId, table.expiresAt), valuesCheck: check("channel_onboarding_partner_assignments_values_check", sql`${table.purpose} in ('guided_setup','readiness_review','support') and ${table.expiresAt} > ${table.startsAt} and (${table.expiresAt}-${table.startsAt}) <= interval '14 days' and ${table.scope} ?& array['permittedActions','orderId','platform','region'] and not (${table.scope}->'permittedActions' ?| array['credential.read','credential.write','publish','impersonate'])`) }));
+
+export const channelOnboardingTasks = pgTable("channel_onboarding_tasks", {
+  workspaceId: text("workspace_id").notNull(), id: text("id").notNull(), orderId: text("order_id").notNull(), assignmentId: text("assignment_id"), actorKind: text("actor_kind").notNull(), kind: text("kind").notNull(), status: text("status").notNull(), instructions: jsonb("instructions").$type<{ ar: string; en: string }>().notNull(), evidenceDigest: text("evidence_digest"), dueAt: timestamp("due_at", { withTimezone: true }), completedAt: timestamp("completed_at", { withTimezone: true }), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "channel_onboarding_tasks_pk", columns: [table.workspaceId, table.id] }), orderFk: foreignKey({ name: "channel_onboarding_tasks_order_fk", columns: [table.workspaceId, table.orderId], foreignColumns: [channelOnboardingOrders.workspaceId, channelOnboardingOrders.id] }).onDelete("restrict"), assignmentFk: foreignKey({ name: "channel_onboarding_tasks_assignment_fk", columns: [table.workspaceId, table.assignmentId], foreignColumns: [channelOnboardingPartnerAssignments.workspaceId, channelOnboardingPartnerAssignments.id] }).onDelete("restrict"), orderIdx: index("channel_onboarding_tasks_order_idx").on(table.workspaceId, table.orderId, table.status, table.createdAt), valuesCheck: check("channel_onboarding_tasks_values_check", sql`${table.actorKind} in ('customer','partner','system') and ${table.status} in ('open','completed','cancelled') and (${table.evidenceDigest} is null or ${table.evidenceDigest} ~ '^sha256:[a-f0-9]{64}$')`) }));
+
+export const channelOnboardingReadinessReviews = pgTable("channel_onboarding_readiness_reviews", {
+  workspaceId: text("workspace_id").notNull(), id: text("id").notNull(), orderId: text("order_id").notNull(), decision: text("decision").notNull(), checklist: jsonb("checklist").$type<Record<string, boolean>>().notNull(), evidenceDigest: text("evidence_digest").notNull(), reviewerRef: text("reviewer_ref").notNull(), reviewedAt: timestamp("reviewed_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "channel_onboarding_readiness_reviews_pk", columns: [table.workspaceId, table.id] }), orderFk: foreignKey({ name: "channel_onboarding_readiness_reviews_order_fk", columns: [table.workspaceId, table.orderId], foreignColumns: [channelOnboardingOrders.workspaceId, channelOnboardingOrders.id] }).onDelete("restrict"), orderIdx: index("channel_onboarding_readiness_reviews_order_idx").on(table.workspaceId, table.orderId, table.reviewedAt), valuesCheck: check("channel_onboarding_readiness_reviews_values_check", sql`${table.decision} in ('ready','customer_action','partner_action','blocked') and ${table.evidenceDigest} ~ '^sha256:[a-f0-9]{64}$'`) }));
+
+export const channelOnboardingCredentialHandoffs = pgTable("channel_onboarding_credential_handoffs", {
+  workspaceId: text("workspace_id").notNull(), id: text("id").notNull(), orderId: text("order_id").notNull(), credentialProfileId: text("credential_profile_id").notNull().references(() => credentialProfiles.id, { onDelete: "restrict" }), profileVersion: integer("profile_version").notNull(), provider: text("provider").notNull(), handedOffByUserId: text("handed_off_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }), handedOffAt: timestamp("handed_off_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "channel_onboarding_credential_handoffs_pk", columns: [table.workspaceId, table.id] }), orderFk: foreignKey({ name: "channel_onboarding_credential_handoffs_order_fk", columns: [table.workspaceId, table.orderId], foreignColumns: [channelOnboardingOrders.workspaceId, channelOnboardingOrders.id] }).onDelete("restrict"), orderVersionUnique: uniqueIndex("channel_onboarding_credential_handoffs_order_version_unique").on(table.workspaceId, table.orderId, table.profileVersion), versionCheck: check("channel_onboarding_credential_handoffs_version_check", sql`${table.profileVersion} > 0`) }));
+
+export const channelOnboardingEvents = pgTable("channel_onboarding_events", {
+  workspaceId: text("workspace_id").notNull(), orderId: text("order_id").notNull(), revision: integer("revision").notNull(), id: text("id").notNull(), fromState: text("from_state"), toState: text("to_state").notNull(), actorRef: text("actor_ref").notNull(), reasonCode: text("reason_code").notNull(), facts: jsonb("facts").$type<Record<string, unknown>>().notNull(), occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+}, (table) => ({ pk: primaryKey({ name: "channel_onboarding_events_pk", columns: [table.workspaceId, table.orderId, table.revision] }), orderFk: foreignKey({ name: "channel_onboarding_events_order_fk", columns: [table.workspaceId, table.orderId], foreignColumns: [channelOnboardingOrders.workspaceId, channelOnboardingOrders.id] }).onDelete("restrict"), idUnique: uniqueIndex("channel_onboarding_events_id_unique").on(table.workspaceId, table.id), revisionCheck: check("channel_onboarding_events_revision_check", sql`${table.revision} > 0`) }));
+
+export const channelOnboardingCommandReceipts = pgTable("channel_onboarding_command_receipts", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }), idempotencyKey: text("idempotency_key").notNull(), requestDigest: text("request_digest").notNull(), result: jsonb("result").$type<Record<string, unknown>>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({ pk: primaryKey({ name: "channel_onboarding_command_receipts_pk", columns: [table.workspaceId, table.idempotencyKey] }), digestCheck: check("channel_onboarding_command_receipts_digest_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$'`) }));
+
+/** Immutable, deploy-seeded revisions that govern every Content draft and render. */
+export const contentFormatDefinitionRevisions = pgTable("content_format_definition_revisions", {
+  definitionId: text("definition_id").notNull(),
+  revision: integer("revision").notNull(),
+  format: text("format").notNull(),
+  status: text("status").notNull(),
+  document: jsonb("document").$type<Record<string, unknown>>().notNull(),
+  documentDigest: text("document_digest").notNull(),
+  activatedAt: timestamp("activated_at", { withTimezone: true }),
+  retiredAt: timestamp("retired_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "content_format_definition_revisions_pk", columns: [table.definitionId, table.revision] }),
+  formatStatusIdx: index("content_format_definition_revisions_format_status_idx").on(table.format, table.status, table.revision),
+  valuesCheck: check("content_format_definition_revisions_values_check", sql`${table.definitionId} = 'content-format:' || ${table.format} and ${table.revision} > 0 and ${table.status} in ('draft','active','retired') and ${table.documentDigest} ~ '^sha256:[a-f0-9]{64}$' and ((${table.status} = 'active' and ${table.activatedAt} is not null and ${table.retiredAt} is null) or ${table.status} <> 'active')`),
+}));
+
+/** Workspace-owned licensed themes. Revisions are immutable and drafts pin an exact revision. */
+export const contentThemes = pgTable("content_themes", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  id: text("id").notNull(),
+  title: text("title").notNull(),
+  state: text("state").notNull(),
+  activeRevision: integer("active_revision"),
+  createdByUserId: text("created_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+}, (table) => ({
+  pk: primaryKey({ name: "content_themes_pk", columns: [table.workspaceId, table.id] }),
+  stateIdx: index("content_themes_state_idx").on(table.workspaceId, table.state, table.updatedAt),
+  valuesCheck: check("content_themes_values_check", sql`${table.state} in ('draft','active','archived') and (${table.activeRevision} is null or ${table.activeRevision} > 0)`),
+}));
+
+export const contentThemeRevisions = pgTable("content_theme_revisions", {
+  workspaceId: text("workspace_id").notNull(),
+  themeId: text("theme_id").notNull(),
+  revision: integer("revision").notNull(),
+  document: jsonb("document").$type<Record<string, unknown>>().notNull(),
+  documentDigest: text("document_digest").notNull(),
+  licenseEvidenceIds: jsonb("license_evidence_ids").$type<string[]>().notNull(),
+  licenseExpiresAt: timestamp("license_expires_at", { withTimezone: true }),
+  authoredByUserId: text("authored_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "content_theme_revisions_pk", columns: [table.workspaceId, table.themeId, table.revision] }),
+  themeFk: foreignKey({ name: "content_theme_revisions_theme_fk", columns: [table.workspaceId, table.themeId], foreignColumns: [contentThemes.workspaceId, contentThemes.id] }).onDelete("restrict"),
+  digestUnique: uniqueIndex("content_theme_revisions_digest_unique").on(table.workspaceId, table.themeId, table.documentDigest),
+  valuesCheck: check("content_theme_revisions_values_check", sql`${table.revision} > 0 and ${table.documentDigest} ~ '^sha256:[a-f0-9]{64}$' and jsonb_array_length(${table.licenseEvidenceIds}) > 0`),
+}));
+
+/** Pinned output-similarity decisions; rows are append-only audit evidence. */
+export const blitzSimilarityEvidence = pgTable("blitz_similarity_evidence", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  id: text("id").notNull(),
+  blitzItemId: text("blitz_item_id").notNull(),
+  blitzItemRevision: integer("blitz_item_revision").notNull(),
+  sourceAssetId: text("source_asset_id").notNull().references(() => assets.id, { onDelete: "restrict" }),
+  candidateAssetId: text("candidate_asset_id").notNull().references(() => assets.id, { onDelete: "restrict" }),
+  status: text("status").notNull(),
+  evaluatorId: text("evaluator_id").notNull(),
+  evaluatorVersion: text("evaluator_version").notNull(),
+  evidence: jsonb("evidence").$type<Record<string, unknown>>().notNull(),
+  evidenceDigest: text("evidence_digest").notNull(),
+  evaluatedAt: timestamp("evaluated_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "blitz_similarity_evidence_pk", columns: [table.workspaceId, table.id] }),
+  itemFk: foreignKey({ name: "blitz_similarity_evidence_item_fk", columns: [table.workspaceId, table.blitzItemId], foreignColumns: [workspaceProductRecords.workspaceId, workspaceProductRecords.id] }).onDelete("restrict"),
+  candidateUnique: uniqueIndex("blitz_similarity_evidence_candidate_unique").on(table.workspaceId, table.blitzItemId, table.blitzItemRevision, table.candidateAssetId),
+  statusIdx: index("blitz_similarity_evidence_status_idx").on(table.workspaceId, table.status, table.evaluatedAt),
+  valuesCheck: check("blitz_similarity_evidence_values_check", sql`${table.blitzItemRevision} > 0 and ${table.status} in ('passed','blocked') and ${table.evidenceDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+}));
+
+/** Durable human-attribution and replay receipt for canonical Calendar reschedules. */
+export const calendarRescheduleCommands = pgTable("calendar_reschedule_commands", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  idempotencyKey: text("idempotency_key").notNull(),
+  requestDigest: text("request_digest").notNull(),
+  state: text("state").notNull(),
+  initiatingUserId: text("initiating_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+  initiatingPrincipalId: text("initiating_principal_id").notNull(),
+  initiatingKeyId: text("initiating_key_id").notNull(),
+  authorizationEvidenceRef: text("authorization_evidence_ref").notNull(),
+  servicePrincipalId: text("service_principal_id").notNull(),
+  serviceKeyId: text("service_key_id").notNull(),
+  sourceRevisionId: text("source_revision_id").notNull(),
+  sourceRevision: integer("source_revision").notNull(),
+  targetId: text("target_id").notNull(),
+  result: jsonb("result").$type<Record<string, unknown>>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+}, (table) => ({
+  pk: primaryKey({ name: "calendar_reschedule_commands_pk", columns: [table.workspaceId, table.idempotencyKey] }),
+  sourceIdx: index("calendar_reschedule_commands_source_idx").on(table.workspaceId, table.sourceRevisionId, table.targetId, table.createdAt),
+  valuesCheck: check("calendar_reschedule_commands_values_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.state} in ('pending','completed') and ${table.sourceRevision} > 0 and length(${table.idempotencyKey}) between 8 and 200 and ((${table.state} = 'pending' and ${table.result} is null and ${table.completedAt} is null) or (${table.state} = 'completed' and ${table.result} is not null and ${table.completedAt} is not null))`),
+}));
+
+/** Append-only personal consent revisions for third-party advertising measurement. */
+export const marketingAttributionConsents = pgTable("marketing_attribution_consents", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+  provider: text("provider").notNull(),
+  revision: integer("revision").notNull(),
+  purpose: text("purpose").notNull(),
+  status: text("status").notNull(),
+  noticeVersion: text("notice_version").notNull(),
+  regionReviewVersion: text("region_review_version").notNull(),
+  issuedAt: timestamp("issued_at", { withTimezone: true }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "marketing_attribution_consents_pk", columns: [table.workspaceId, table.userId, table.provider, table.revision] }),
+  currentIdx: index("marketing_attribution_consents_current_idx").on(table.workspaceId, table.userId, table.provider, table.revision),
+  valuesCheck: check("marketing_attribution_consents_values_check", sql`${table.provider} = 'x_ads' and ${table.purpose} = 'advertising_attribution' and ${table.status} in ('active','revoked') and ${table.revision} > 0 and length(${table.noticeVersion}) between 1 and 100 and length(${table.regionReviewVersion}) between 1 and 100 and ${table.expiresAt} > ${table.issuedAt}`),
+}));
+
+/** Privacy-minimised server-side conversion outbox; payloads are scrubbed at terminal state. */
+export const marketingAttributionEvents = pgTable("marketing_attribution_events", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  id: text("id").notNull(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+  provider: text("provider").notNull(),
+  eventName: text("event_name").notNull(),
+  conversionId: text("conversion_id").notNull(),
+  consentRevision: integer("consent_revision").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+  state: text("state").notNull(),
+  attempt: integer("attempt").default(0).notNull(),
+  maxAttempts: integer("max_attempts").default(6).notNull(),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull(),
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  failureCode: text("failure_code"),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "marketing_attribution_events_pk", columns: [table.workspaceId, table.id] }),
+  conversionUnique: uniqueIndex("marketing_attribution_events_conversion_unique").on(table.provider, table.conversionId),
+  dueIdx: index("marketing_attribution_events_due_idx").on(table.state, table.nextAttemptAt, table.leaseExpiresAt, table.id),
+  subjectIdx: index("marketing_attribution_events_subject_idx").on(table.workspaceId, table.userId, table.provider, table.state),
+  consentFk: foreignKey({ name: "marketing_attribution_events_consent_fk", columns: [table.workspaceId, table.userId, table.provider, table.consentRevision], foreignColumns: [marketingAttributionConsents.workspaceId, marketingAttributionConsents.userId, marketingAttributionConsents.provider, marketingAttributionConsents.revision] }).onDelete("restrict"),
+  valuesCheck: check("marketing_attribution_events_values_check", sql`${table.provider} = 'x_ads' and ${table.eventName} in ('sign_up','trial_started','purchase') and ${table.id} ~ '^mae_[a-f0-9]{32}$' and ${table.conversionId} ~ '^mac_[a-f0-9]{64}$' and ${table.consentRevision} > 0 and ${table.state} in ('queued','delivering','delivered','cancelled','failed_known','outcome_unknown') and ${table.attempt} >= 0 and ${table.maxAttempts} between 1 and 12 and ${table.attempt} <= ${table.maxAttempts} and octet_length(${table.payload}::text) <= 4096 and ${table.expiresAt} > ${table.createdAt}`),
+}));
+
+/** Minimal immutable evidence for data already disclosed to an advertising provider. */
+export const marketingAttributionDeliveryReceipts = pgTable("marketing_attribution_delivery_receipts", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  eventId: text("event_id").notNull(),
+  provider: text("provider").notNull(),
+  conversionId: text("conversion_id").notNull(),
+  eventName: text("event_name").notNull(),
+  outcome: text("outcome").notNull(),
+  requestDigest: text("request_digest").notNull(),
+  providerDebugId: text("provider_debug_id"),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "marketing_attribution_delivery_receipts_pk", columns: [table.workspaceId, table.eventId] }),
+  eventFk: foreignKey({ name: "marketing_attribution_delivery_receipts_event_fk", columns: [table.workspaceId, table.eventId], foreignColumns: [marketingAttributionEvents.workspaceId, marketingAttributionEvents.id] }).onDelete("restrict"),
+  expiryIdx: index("marketing_attribution_delivery_receipts_expiry_idx").on(table.expiresAt),
+  valuesCheck: check("marketing_attribution_delivery_receipts_values_check", sql`${table.provider} = 'x_ads' and ${table.eventName} in ('sign_up','trial_started','purchase') and ${table.outcome} in ('accepted','outcome_unknown') and ${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and ${table.expiresAt} > ${table.deliveredAt}`),
+}));
+
+/** Replay-safe commands for consent changes and conversion admission. */
+export const marketingAttributionMutationReceipts = pgTable("marketing_attribution_mutation_receipts", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  idempotencyKey: text("idempotency_key").notNull(),
+  requestDigest: text("request_digest").notNull(),
+  response: jsonb("response").$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ name: "marketing_attribution_mutation_receipts_pk", columns: [table.workspaceId, table.idempotencyKey] }),
+  expiryIdx: index("marketing_attribution_mutation_receipts_expiry_idx").on(table.expiresAt),
+  valuesCheck: check("marketing_attribution_mutation_receipts_values_check", sql`${table.requestDigest} ~ '^sha256:[a-f0-9]{64}$' and length(${table.idempotencyKey}) between 8 and 200 and ${table.expiresAt} > ${table.createdAt}`),
+}));
 
 export type WorkspaceRole = typeof workspaceRoleEnum.enumValues[number];
 export type ProjectStatus = typeof projectStatusEnum.enumValues[number];

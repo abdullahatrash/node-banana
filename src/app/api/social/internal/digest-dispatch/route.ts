@@ -8,6 +8,14 @@ import {
   markSocialEventReadForUser,
   SocialNotificationPreferencesNotFoundError,
 } from "@/lib/social/repository";
+import {
+  isCriticalSocialNotification,
+  isEmailDigestDue,
+  isOptionalSocialNotificationEnabled,
+  readSocialNotificationPreferencesDocument,
+  type SocialNotificationDigestCadence,
+} from "@/lib/social/notification-preferences";
+import type { AppLocale } from "@/i18n/config";
 
 interface DigestDispatchResponse {
   success: boolean;
@@ -27,6 +35,8 @@ interface DigestDispatchResponse {
     eventIds: string[];
     eventTypes: string[];
     messages: string[];
+    deliveryLocale: AppLocale;
+    digestCadence: SocialNotificationDigestCadence;
   }>;
   error?: string;
 }
@@ -96,6 +106,8 @@ async function buildDigestDispatch(
         eventIds: string[];
         eventTypes: string[];
         messages: string[];
+        deliveryLocale: AppLocale;
+        digestCadence: SocialNotificationDigestCadence;
       }
     >();
     const seenDigestKeys = new Set<string>();
@@ -105,8 +117,11 @@ async function buildDigestDispatch(
         muteAll: boolean;
         inAppEnabled: boolean;
         emailEnabled: boolean;
+        document: ReturnType<typeof readSocialNotificationPreferencesDocument>;
       }
     >();
+    const recipientScopes = new Set<string>();
+    let deduplicated = 0;
 
     for (const event of events) {
       if (!event.createdByUserId) {
@@ -114,7 +129,8 @@ async function buildDigestDispatch(
       }
 
       const recipientKey = getRecipientKey(event.createdByUserId);
-      let preferences = preferenceCache.get(recipientKey);
+      const recipientScope = `${event.workspaceId}:${recipientKey}`;
+      let preferences = preferenceCache.get(recipientScope);
       if (!preferences) {
         try {
           const row = await getSocialNotificationPreferences(
@@ -125,6 +141,7 @@ async function buildDigestDispatch(
             muteAll: row.muteAll,
             inAppEnabled: row.inAppEnabled,
             emailEnabled: row.emailEnabled,
+            document: readSocialNotificationPreferencesDocument(row.preferences),
           };
         } catch (error) {
           if (!(error instanceof SocialNotificationPreferencesNotFoundError)) {
@@ -135,33 +152,44 @@ async function buildDigestDispatch(
             muteAll: false,
             inAppEnabled: true,
             emailEnabled: false,
+            document: readSocialNotificationPreferencesDocument(null),
           };
         }
-        preferenceCache.set(recipientKey, preferences);
+        preferenceCache.set(recipientScope, preferences);
       }
 
-      if (preferences.muteAll) {
+      const critical = isCriticalSocialNotification(event.eventType);
+      if (!critical && (preferences.muteAll || !isOptionalSocialNotificationEnabled(event.eventType, preferences.document))) {
         continue;
       }
 
       const channels: Array<"in_app" | "email"> = [];
-      if (preferences.inAppEnabled) {
+      const optionalEmailDue = preferences.emailEnabled && isEmailDigestDue(preferences.document);
+      if (!critical && preferences.emailEnabled && !optionalEmailDue) {
+        // Keep the event unread so a later daily/weekly tick can deliver the
+        // selected email digest. The Events surface remains independently readable.
+        continue;
+      }
+      if (critical || preferences.inAppEnabled) {
         channels.push("in_app");
       }
-      if (preferences.emailEnabled) {
+      if (critical || optionalEmailDue) {
         channels.push("email");
       }
       if (channels.length === 0) {
         continue;
       }
 
-      const dedupeKey = `${recipientKey}:${event.dispatchKey ?? event.id}:${event.eventType}:${event.message}`;
+      const dedupeKey = `${recipientScope}:${event.dispatchKey ?? event.id}:${event.eventType}:${event.message}`;
       if (seenDigestKeys.has(dedupeKey)) {
+        deduplicated += 1;
         continue;
       }
       seenDigestKeys.add(dedupeKey);
 
-      const existing = grouped.get(recipientKey);
+      const groupKey = `${recipientScope}:${channels.join("+")}:${preferences.document.deliveryLocale}`;
+      recipientScopes.add(recipientScope);
+      const existing = grouped.get(groupKey);
       if (existing) {
         for (const channel of channels) {
           if (!existing.channels.includes(channel)) {
@@ -173,7 +201,7 @@ async function buildDigestDispatch(
         existing.eventTypes.push(event.eventType);
         existing.messages.push(event.message);
       } else {
-        grouped.set(recipientKey, {
+        grouped.set(groupKey, {
           recipientKey,
           userId: event.createdByUserId,
           workspaceId: event.workspaceId,
@@ -182,6 +210,8 @@ async function buildDigestDispatch(
           eventIds: [event.id],
           eventTypes: [event.eventType],
           messages: [event.message],
+          deliveryLocale: preferences.document.deliveryLocale,
+          digestCadence: preferences.document.digestCadence,
         });
       }
     }
@@ -206,8 +236,8 @@ async function buildDigestDispatch(
       summary: {
         scanned: events.length,
         digests: digests.length,
-        recipients: grouped.size,
-        deduplicated: events.length - digests.reduce((sum, digest) => sum + digest.eventIds.length, 0),
+        recipients: recipientScopes.size,
+        deduplicated,
         consumed,
       },
       digests,

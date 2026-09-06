@@ -6,6 +6,9 @@ const mockGetProject = vi.fn();
 const mockRecordPendingS3AssetWithQuota = vi.fn();
 const mockBuildAssetObjectKey = vi.fn();
 const mockCreatePresignedUpload = vi.fn();
+const mockRequireRegion = vi.fn(async (_input?: unknown) => undefined);
+
+vi.mock("@/lib/governance/region-enforcement", () => ({ GOVERNANCE_REGION_ROUTES: { assetStorage: { kind: "primary_storage", routeId: "storage:workspace-assets" } }, requireGovernanceRegionRoute: (...args: unknown[]) => mockRequireRegion(args[0]) }));
 
 const { MockStudioAssetQuotaExceededError } = vi.hoisted(() => {
   class StudioAssetQuotaExceededError extends Error {
@@ -182,6 +185,7 @@ describe("/api/studio/assets/presign auth hardening", () => {
       {
         route: "/api/studio/assets/presign",
         action: "write",
+        permission: "assets:write",
       },
     );
   });

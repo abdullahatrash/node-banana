@@ -99,4 +99,15 @@ describe("attachMedia", () => {
 
     expect(mockUpdateSocialPost).not.toHaveBeenCalled();
   });
+
+  it("attaches the first asset when both optional media arrays are absent", async () => {
+    mockGetSocialPost.mockResolvedValue({ id: "spost_legacy" });
+    mockGetAsset.mockResolvedValue({ id: "asset_1", type: "image", storageKey: "ws_1/asset_1.png" });
+    mockUpdateSocialPost.mockResolvedValue({ id: "spost_legacy" });
+    await expect(attachMedia({ workspaceId: "ws_1", userId: "u_1" }, "spost_legacy", ["asset_1"])).resolves.toMatchObject({ media: [{ url: "ws_1/asset_1.png" }] });
+    expect(mockUpdateSocialPost).toHaveBeenCalledWith("ws_1", "spost_legacy", {
+      mediaUrls: [{ type: "image", url: "ws_1/asset_1.png" }],
+      mediaReferences: [{ resourceKind: "studio_asset", id: "asset_1" }],
+    });
+  });
 });

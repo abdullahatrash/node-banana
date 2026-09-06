@@ -7,14 +7,18 @@ import { useSocialComposerStore } from "@/store/socialComposerStore"
 import { ComposeView } from "./ComposeView"
 import { getSocialPost } from "@/lib/social/client"
 import { useToast } from "@/components/Toast"
+import { useTranslations } from "next-intl"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 interface EditDraftClientProps {
   postId: string
 }
 
 export function EditDraftClient({ postId }: EditDraftClientProps) {
+  const t = useTranslations("social.editDraft")
   const router = useRouter()
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const { loadDraft, reset } = useSocialComposerStore()
   const [isLoading, setIsLoading] = useState(true)
   const initialized = useRef(false)
@@ -26,7 +30,7 @@ export function EditDraftClient({ postId }: EditDraftClientProps) {
     getSocialPost(postId)
       .then((post) => {
         if (post.status !== "draft") {
-          showToast("Only drafts can be edited", "warning")
+          showToast(t("onlyDrafts"), "warning")
           router.push("/social/posts")
           return
         }
@@ -34,6 +38,7 @@ export function EditDraftClient({ postId }: EditDraftClientProps) {
           postId: post.id,
           content: post.content,
           mediaUrls: post.mediaUrls as any,
+          stableMediaRefs: post.stableMediaRefs,
           platformSettings: post.platformSettings,
           scheduledAt: post.scheduledAt,
           socialAccountId: post.socialAccountId,
@@ -41,10 +46,7 @@ export function EditDraftClient({ postId }: EditDraftClientProps) {
         setIsLoading(false)
       })
       .catch((error) => {
-        showToast(
-          error instanceof Error ? error.message : "Failed to load draft",
-          "error",
-        )
+        showClientError(showToast, error, t("loadFailed"))
         router.push("/social/posts")
       })
   }

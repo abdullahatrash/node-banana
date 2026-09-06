@@ -11,6 +11,7 @@ import {
   requireAgentMutationRequest,
 } from "@/lib/agent-auth/http-request";
 import { z } from "zod";
+import { requireGovernanceStepUp } from "@/lib/governance/step-up-http";
 
 type PrincipalContext = { params: Promise<{ principalId: string }> };
 const rotateKeySchema = z
@@ -54,7 +55,7 @@ const rotateKeySchema = z
   .strict();
 
 export const POST = withStudioAuth<PrincipalContext>(
-  { route: "/api/agents/[principalId]/keys", action: "write" },
+  { route: "/api/agents/[principalId]/keys", action: "write", permission: "workspaces:write" },
   async (request: NextRequest, authz, context) => {
     const denied = requireAgentManagerRole(authz.role);
     if (denied) return denied;
@@ -70,6 +71,8 @@ export const POST = withStudioAuth<PrincipalContext>(
       const expiresAt =
         body.expiresAt === undefined ? undefined : new Date(body.expiresAt);
       const { principalId } = await context.params;
+      const stepUpDenied = await requireGovernanceStepUp({ request, workspaceId: authz.workspaceId, userId: authz.userId, purpose: "agent.key.create", resourceId: principalId });
+      if (stepUpDenied) return stepUpDenied;
       const result = await AGENT_AUTH_SERVICE.rotateKey({
         principalId,
         workspaceId: authz.workspaceId,

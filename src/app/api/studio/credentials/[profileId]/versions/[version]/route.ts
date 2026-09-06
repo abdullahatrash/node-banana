@@ -13,6 +13,7 @@ export const DELETE = withStudioAuth<Context>(
   {
     route: "/api/studio/credentials/[profileId]/versions/[version]",
     action: "delete",
+    permission: "workspaces:delete",
   },
   async (request: NextRequest, authz, context) => {
     const human = credentialHumanContext(request, authz);

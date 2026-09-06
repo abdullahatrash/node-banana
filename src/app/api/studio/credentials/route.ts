@@ -8,6 +8,7 @@ import { credentialHumanContext } from "@/lib/credential-vault/http";
 import { noStoreJson } from "@/lib/agent-auth/http-request";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 import { CREDENTIAL_SLOT_PROVIDERS } from "@/types";
+import { requireGovernanceStepUp } from "@/lib/governance/step-up-http";
 
 const createSchema = z
   .object({
@@ -39,7 +40,7 @@ function errorResponse(error: unknown): NextResponse {
 }
 
 export const GET = withStudioAuth<undefined>(
-  { route: "/api/studio/credentials", action: "read" },
+  { route: "/api/studio/credentials", action: "read", permission: "workspaces:read" },
   async (request, authz) => {
     const human = credentialHumanContext(request, authz);
     if (!human) return manager("member")!;
@@ -60,7 +61,7 @@ export const GET = withStudioAuth<undefined>(
 );
 
 export const POST = withStudioAuth<undefined>(
-  { route: "/api/studio/credentials", action: "write" },
+  { route: "/api/studio/credentials", action: "write", permission: "workspaces:write" },
   async (request: NextRequest, authz) => {
     const human = credentialHumanContext(request, authz);
     if (!human) return manager("member")!;
@@ -71,6 +72,8 @@ export const POST = withStudioAuth<undefined>(
         { status: 400 },
       );
     }
+    const stepUpDenied = await requireGovernanceStepUp({ request, workspaceId: authz.workspaceId, userId: authz.userId, purpose: "credential.create", resourceId: parsed.data.provider });
+    if (stepUpDenied) return stepUpDenied;
     try {
       const profile = await CREDENTIAL_HUMAN_CAPABILITIES.invoke(
         "credentials.profiles.create@1",

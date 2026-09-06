@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
+import { render as testingRender, screen, fireEvent, act } from "@testing-library/react";
 import { Toast, useToast } from "@/components/Toast";
+import { I18nTestProvider } from "@/test/i18n";
+
+function render(ui: React.ReactNode) {
+  return testingRender(<I18nTestProvider locale="en">{ui}</I18nTestProvider>);
+}
 
 describe("Toast", () => {
   beforeEach(() => {
@@ -256,6 +261,17 @@ describe("Toast", () => {
       expect(screen.getByText("Error details")).toBeInTheDocument();
     });
 
+    it("isolates technical details as an LTR block", () => {
+      act(() => {
+        useToast.getState().show("رسالة آمنة", "error", false, "TRACE:trace_123");
+      });
+
+      render(<Toast />);
+      fireEvent.click(screen.getByText("Show details"));
+
+      expect(screen.getByText("TRACE:trace_123")).toHaveAttribute("dir", "ltr");
+    });
+
     it("should collapse when 'Hide details' is clicked", () => {
       act(() => {
         useToast.getState().show("Message", "error", false, "Error details");
@@ -288,7 +304,7 @@ describe("Toast", () => {
         useToast.getState().show("Second message", "error", false, "Second details");
       });
 
-      rerender(<Toast />);
+      rerender(<I18nTestProvider locale="en"><Toast /></I18nTestProvider>);
 
       // Should be collapsed again (we see Show details, not Hide details)
       expect(screen.getByText("Show details")).toBeInTheDocument();

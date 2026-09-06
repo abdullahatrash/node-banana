@@ -10,7 +10,7 @@ import {
 } from "@/lib/auth/session";
 import { getDb, isDatabaseConfigured } from "@/lib/db";
 import { workspaceMembers, workspaces } from "@/lib/db/schema";
-import { ensurePersonalWorkspaceForUser, ensureWorkspaceUser } from "@/lib/studio/repository";
+import { ensureWorkspaceUser } from "@/lib/studio/repository";
 
 interface WorkspaceItem {
   id: string;
@@ -86,7 +86,7 @@ export async function GET(
   try {
     const db = getDb();
 
-    let rows = await db
+    const rows = await db
       .select({
         id: workspaces.id,
         name: workspaces.name,
@@ -102,30 +102,6 @@ export async function GET(
         ),
       );
 
-    if (rows.length === 0 && !bypassEnabled) {
-      await ensurePersonalWorkspaceForUser({
-        userId,
-        userName: sessionUser.userName,
-        userEmail: sessionUser.userEmail,
-      });
-
-      rows = await db
-        .select({
-          id: workspaces.id,
-          name: workspaces.name,
-          slug: workspaces.slug,
-          role: workspaceMembers.role,
-        })
-        .from(workspaceMembers)
-        .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
-        .where(
-          and(
-            eq(workspaceMembers.userId, userId),
-            isNull(workspaces.deletedAt),
-          ),
-        );
-    }
-
     return NextResponse.json({
       success: true,
       workspaces: rows.map((row) => ({
@@ -135,7 +111,7 @@ export async function GET(
         role: row.role,
       })),
     });
-  } catch (error) {
+  } catch {
     return noStoreJson(
       {
         success: false,

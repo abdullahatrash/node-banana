@@ -10,6 +10,8 @@ import {
 } from "./cursor";
 import { ProductionPublishingApprovalPresentation } from "./production-presentation";
 import { PublishingApprovalService } from "./service";
+import { DrizzleGovernanceRepository } from "@/lib/governance/postgres-repository";
+import { RepositoryPublishingApprovalGovernancePolicy } from "@/lib/governance/publishing-approval-policy";
 
 export const PRODUCTION_PUBLISHING_APPROVAL_REPOSITORY =
   new DrizzlePublishingApprovalRepository(getDb);
@@ -32,6 +34,11 @@ export const PRODUCTION_PUBLISHING_APPROVAL_REVISIONS =
 export const PRODUCTION_PUBLISHING_APPROVAL_PRESENTATION =
   new ProductionPublishingApprovalPresentation();
 
+export const PRODUCTION_PUBLISHING_APPROVAL_GOVERNANCE_POLICY =
+  new RepositoryPublishingApprovalGovernancePolicy(
+    new DrizzleGovernanceRepository(getDb),
+  );
+
 export const PRODUCTION_PUBLISHING_APPROVAL_SERVICE =
   new PublishingApprovalService(
     PRODUCTION_PUBLISHING_APPROVAL_REPOSITORY,
@@ -39,4 +46,6 @@ export const PRODUCTION_PUBLISHING_APPROVAL_SERVICE =
     PRODUCTION_PUBLISHING_APPROVAL_REVISIONS,
     PRODUCTION_PUBLISHING_APPROVAL_AUTHORITY,
     PRODUCTION_PUBLISHING_APPROVAL_PRESENTATION,
+    undefined,
+    PRODUCTION_PUBLISHING_APPROVAL_GOVERNANCE_POLICY,
   );

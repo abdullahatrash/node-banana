@@ -25,6 +25,8 @@ import type {
   AuthenticateResult,
   GenerateAuthUrlResult,
   PageInfo,
+  PostMetricsRequest,
+  PostMetricsResult,
   PublishRequest,
   PublishResult,
   RefreshTokenResult,
@@ -32,6 +34,7 @@ import type {
   SocialProviderError,
 } from "@/lib/social/provider-interface";
 import { registerProvider } from "@/lib/social/provider-registry";
+import { normalizedMetrics, responseRequestId, validatePostMetricIds } from "@/lib/social/post-metrics";
 import {
   classifyMetaError,
   exchangeCodeForToken,
@@ -239,6 +242,7 @@ export const instagramProvider: SocialProviderAdapter = {
   supportsCarousel: true,
   maxImages: 10,
   maxConcurrentJobs: 5,
+  maxPostMetricsBatchSize: 20,
   requiresPageSelection: true,
 
   // -------------------------------------------------------------------------
@@ -558,6 +562,30 @@ export const instagramProvider: SocialProviderAdapter = {
     );
   },
 
+  async getPostMetrics(request: PostMetricsRequest): Promise<PostMetricsResult[]> {
+    const ids = validatePostMetricIds(request.platformPostIds, 20);
+    const results: PostMetricsResult[] = [];
+    for (const platformPostId of ids) {
+      const sourceRef = `${GRAPH_BASE}/${platformPostId}/insights?metric=views,likes,comments`;
+      const response = await fetch(`${sourceRef}&access_token=${encodeURIComponent(request.accessToken)}`);
+      const body = (await response.json()) as {
+        data?: Array<{ name?: string; values?: Array<{ value?: unknown }>; total_value?: { value?: unknown } }>;
+        error?: { message?: string; code?: number };
+      };
+      if (!response.ok || body.error || !Array.isArray(body.data)) {
+        throw new MetaApiError(body.error?.message ?? `Instagram media insights failed with HTTP ${response.status}`, body.error?.code, JSON.stringify(body));
+      }
+      const values = new Map(body.data.map((metric) => [metric.name, metric.total_value?.value ?? metric.values?.[0]?.value]));
+      results.push({
+        platformPostId,
+        metrics: normalizedMetrics({ views: values.get("views"), likes: values.get("likes"), comments: values.get("comments") }),
+        sourceRef,
+        providerRequestId: responseRequestId(response, ["x-fb-request-id", "x-fb-trace-id"]),
+      });
+    }
+    return results;
+  },
+
   // -------------------------------------------------------------------------
   // Error classification
   // -------------------------------------------------------------------------
@@ -590,6 +618,7 @@ export const instagramProvider: SocialProviderAdapter = {
       supportsVideo: true,
       supportsCarousel: true,
       requiresPageSelection: true,
+      supportsPostMetrics: true,
     };
   },
 };

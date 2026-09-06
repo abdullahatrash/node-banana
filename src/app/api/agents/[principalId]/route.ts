@@ -19,7 +19,7 @@ const principalStatusSchema = z
   .strict();
 
 export const PATCH = withStudioAuth<PrincipalContext>(
-  { route: "/api/agents/[principalId]", action: "write" },
+  { route: "/api/agents/[principalId]", action: "write", permission: "workspaces:write" },
   async (request: NextRequest, authz, context) => {
     const denied = requireAgentManagerRole(authz.role);
     if (denied) return denied;

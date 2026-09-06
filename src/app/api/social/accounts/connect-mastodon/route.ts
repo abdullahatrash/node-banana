@@ -5,7 +5,8 @@ import { socialMastodonInstances } from "@/lib/db/schema";
 import { withApiPermission } from "@/lib/studio/authz";
 import "@/lib/social/runtime-bootstrap";
 import { createOAuthState } from "@/lib/social/repository";
-import { getSocialPlanLimits, quotaExceededPayload } from "@/lib/social/limits";
+import { quotaExceededPayload } from "@/lib/social/limits";
+import { getWorkspaceChannelEntitlement } from "@/lib/commercial/channel-entitlement";
 import { countActiveSocialAccounts } from "@/lib/social/repository";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -63,16 +64,16 @@ export async function POST(
       );
     }
 
-    const limits = getSocialPlanLimits(result.session.planTier);
+    const entitlement = await getWorkspaceChannelEntitlement(result.session.workspace.id);
     const activeChannels = await countActiveSocialAccounts(
       result.session.workspace.id,
     );
-    if (activeChannels >= limits.channels) {
+    if (activeChannels >= entitlement.connectedChannels) {
       return NextResponse.json(
         quotaExceededPayload({
           section: "channels",
           current: activeChannels,
-          limit: limits.channels,
+          limit: entitlement.connectedChannels,
         }),
         { status: 402 },
       );

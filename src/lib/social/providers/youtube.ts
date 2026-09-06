@@ -7,6 +7,8 @@ import type {
   AuthenticateResult,
   GenerateAuthUrlResult,
   PageInfo,
+  PostMetricsRequest,
+  PostMetricsResult,
   ProviderCapabilities,
   PublishRequest,
   PublishResult,
@@ -15,6 +17,7 @@ import type {
   SocialProviderError,
 } from "@/lib/social/provider-interface";
 import { registerProvider } from "@/lib/social/provider-registry";
+import { normalizedMetrics, responseRequestId, validatePostMetricIds } from "@/lib/social/post-metrics";
 
 const YOUTUBE_SCOPES = [
   "https://www.googleapis.com/auth/userinfo.profile",
@@ -115,6 +118,7 @@ export const youTubeProvider: SocialProviderAdapter = {
   supportsCarousel: false,
   maxImages: 0,
   maxConcurrentJobs: 3,
+  maxPostMetricsBatchSize: 50,
   requiresPageSelection: true,
 
   async generateAuthUrl(callbackUrl: string): Promise<GenerateAuthUrlResult> {
@@ -248,6 +252,30 @@ export const youTubeProvider: SocialProviderAdapter = {
     return results;
   },
 
+  async getPostMetrics(request: PostMetricsRequest): Promise<PostMetricsResult[]> {
+    const ids = validatePostMetricIds(request.platformPostIds, 50);
+    const client = buildOAuth2Client();
+    client.setCredentials({ access_token: request.accessToken });
+    const yt = google.youtube({ version: "v3", auth: client });
+    const response = await yt.videos.list({ part: ["snippet", "statistics"], id: ids, maxResults: ids.length });
+    const sourceRef = `https://www.googleapis.com/youtube/v3/videos?part=snippet%2Cstatistics&id=${encodeURIComponent(ids.join(","))}`;
+    const items = response.data.items ?? [];
+    if (items.length !== ids.length) throw new Error("SOCIAL_POST_METRICS_PROVIDER_MISMATCH");
+    const requested = new Set(ids);
+    const results = items.map((video): PostMetricsResult => {
+      const platformPostId = video.id ?? "";
+      if (!requested.has(platformPostId) || video.snippet?.channelId !== request.platformUserId) throw new Error("SOCIAL_POST_METRICS_OWNERSHIP_MISMATCH");
+      return {
+        platformPostId,
+        metrics: normalizedMetrics({ views: video.statistics?.viewCount, likes: video.statistics?.likeCount, comments: video.statistics?.commentCount }),
+        sourceRef,
+        providerRequestId: responseRequestId(response, ["x-goog-request-id", "x-guploader-uploadid"]),
+      };
+    });
+    if (new Set(results.map((item) => item.platformPostId)).size !== results.length) throw new Error("SOCIAL_POST_METRICS_PROVIDER_MISMATCH");
+    return results;
+  },
+
   classifyError(error: unknown): SocialProviderError {
     const { message, signals, httpStatus } = extractGoogleErrorSignals(error);
 
@@ -345,6 +373,7 @@ export const youTubeProvider: SocialProviderAdapter = {
       supportsVideo: true,
       supportsCarousel: false,
       requiresPageSelection: true,
+      supportsPostMetrics: true,
     };
   },
 };

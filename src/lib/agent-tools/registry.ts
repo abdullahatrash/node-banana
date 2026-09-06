@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { CredentialMetadataReader } from "@/types/credentials";
 import { canonicalDigest } from "./canonical";
+export { authorizationContractDigestFor } from "./authorization-contract-digest";
 import type {
   CapabilityDefinition,
   CapabilityErrorContract,
@@ -344,13 +345,6 @@ export function contractDigestFor(
   definition: Omit<CapabilityDefinition, "contractDigest" | "lifecycle">,
 ): string {
   return canonicalDigest(definition);
-}
-
-export function authorizationContractDigestFor(
-  identity: CapabilityIdentity,
-  authorization: CapabilityRegistration["authorization"],
-): string {
-  return canonicalDigest({ identity, authorization });
 }
 
 export class CapabilityRegistry implements CapabilityRegistryReader {

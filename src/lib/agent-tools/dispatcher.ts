@@ -323,6 +323,7 @@ export class CapabilityDispatcher {
         ),
         resources: extractedResources.resources,
         resourceExtractionValid: extractedResources.valid,
+        effect: registration.effect,
       });
     } catch {
       return errorResponse({

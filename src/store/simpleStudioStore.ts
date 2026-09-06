@@ -6,9 +6,13 @@
 
 import { create } from "zustand";
 import {
-  createStudioAssetPresign,
-  finalizeStudioAssetUpload,
+  getStudioAssetDownloadUrl,
+  ingestStudioAsset,
 } from "@/lib/studio/client";
+import { runAdmittedStudioGeneration, StudioGenerationError } from "@/lib/model-routing/studio-generation-client";
+import type { ManagedCreditQuote } from "@/lib/model-routing/budget-authority";
+import { DEFAULT_GENERATION_FUNDING_MODE, type ExecutionPriceUsd } from "@/lib/model-routing/types";
+import { clampVideoDuration } from "@/lib/model-routing/video-duration";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -23,6 +27,8 @@ export interface Generation {
   result: string | null;
   assetId: string | null;
   error: string | null;
+  nextActionCode?: string | null;
+  nextActionHref?: string | null;
   mode: SimpleStudioMode;
   aspectRatio: string;
   prompt: string;
@@ -53,7 +59,11 @@ export interface SimpleStudioState {
   selectedModelId: string | null;
   selectedModelProvider: string | null;
   selectedModelName: string | null;
-  setSelectedModel: (id: string | null, provider?: string | null, name?: string | null) => void;
+  selectedModelVersion: string | null;
+  selectedModelSchemaDigest: string | null;
+  selectedModelExecutionPriceUsd: ExecutionPriceUsd | null;
+  selectedModelMaxQuantity: number | null;
+  setSelectedModel: (id: string | null, provider?: string | null, name?: string | null, version?: string | null, schemaDigest?: string | null, executionPriceUsd?: SimpleStudioState["selectedModelExecutionPriceUsd"], maxQuantity?: number | null) => void;
   setSelectedModelId: (id: string | null) => void;
   aspectRatio: string;
   setAspectRatio: (ratio: string) => void;
@@ -62,7 +72,8 @@ export interface SimpleStudioState {
   referenceImages: string[];
   setReferenceImages: (images: string[]) => void;
   sourceImage: string | null;
-  setSourceImage: (image: string | null) => void;
+  sourceMediaType: "image" | "video" | null;
+  setSourceImage: (image: string | null, mediaType?: "image" | "video" | null) => void;
   videoDuration: number;
   setVideoDuration: (duration: number) => void;
   dialogueEnabled: boolean;
@@ -79,6 +90,20 @@ export interface SimpleStudioState {
   setPlatform: (platform: string) => void;
   outputLanguage: "ar" | "en" | "both";
   setOutputLanguage: (lang: "ar" | "en" | "both") => void;
+  arabicVariety: "msa" | "gulf" | "egyptian" | "levantine" | "maghrebi" | "other";
+  setArabicVariety: (value: SimpleStudioState["arabicVariety"]) => void;
+  fundingMode: "byok" | "managed";
+  setFundingMode: (value: SimpleStudioState["fundingMode"]) => void;
+  pendingManagedCreditQuotes: ManagedCreditQuote[];
+  resolveManagedCreditQuote: (quoteId: string, accepted: boolean) => void;
+  rightsBasis: "owned" | "licensed" | "public_domain" | "consented";
+  setRightsBasis: (value: SimpleStudioState["rightsBasis"]) => void;
+  permittedRemix: "reference_only" | "transform" | "derivative";
+  setPermittedRemix: (value: SimpleStudioState["permittedRemix"]) => void;
+  rightsConfirmed: boolean;
+  setRightsConfirmed: (value: boolean) => void;
+  rightsEvidenceIds: string[];
+  setRightsEvidenceIds: (value: string[]) => void;
 
   // Generation (per-mode)
   isGenerating: boolean;
@@ -108,8 +133,32 @@ export interface SimpleStudioState {
 // ---------------------------------------------------------------------------
 
 let abortController: AbortController | null = null;
+const managedQuoteResolvers = new Map<string, (accepted: boolean) => void>();
+
+function requestManagedQuoteConfirmation(set: StudioSet, quote: ManagedCreditQuote): Promise<boolean> {
+  return new Promise((resolve) => {
+    const previous = managedQuoteResolvers.get(quote.quoteId);
+    if (previous) previous(false);
+    managedQuoteResolvers.set(quote.quoteId, resolve);
+    set((state) => ({ pendingManagedCreditQuotes: state.pendingManagedCreditQuotes.some((item) => item.quoteId === quote.quoteId) ? state.pendingManagedCreditQuotes : [...state.pendingManagedCreditQuotes, quote] }));
+  });
+}
+
+export function requestStudioManagedCreditQuoteConfirmation(quote: ManagedCreditQuote): Promise<boolean> {
+  return requestManagedQuoteConfirmation(useSimpleStudioStore.setState, quote);
+}
 
 const CONCURRENT_LIMIT = 4;
+
+async function submitAdmittedGeneration(input: { set: StudioSet; state: SimpleStudioState; prompt: string; mode: SimpleStudioMode; sourceAssetIds: string[]; idempotencyKey: string; signal: AbortSignal }) {
+  if (!input.state.selectedModelId || input.state.selectedModelProvider !== "replicate" || !input.state.selectedModelVersion || !input.state.selectedModelSchemaDigest) throw new Error("MODEL_NOT_SELECTED");
+  if (!input.state.rightsConfirmed) throw new Error("RIGHTS_CONFIRMATION_REQUIRED");
+  const prompt = input.mode === "copy" ? `${input.prompt}\n\nTone: ${input.state.tone}. Platform: ${input.state.platform}. Output language: ${input.state.outputLanguage}.` : input.prompt;
+  const contentLanguage = input.mode === "copy"
+    ? input.state.outputLanguage === "both" ? "mixed" : input.state.outputLanguage
+    : input.mode === "video" ? input.state.dialogueLanguage : undefined;
+  return runAdmittedStudioGeneration({ prompt, contentLanguage, model: { provider: "replicate", model: input.state.selectedModelId, version: input.state.selectedModelVersion, inputSchemaDigest: input.state.selectedModelSchemaDigest }, mode: input.mode, sourceMediaType: input.state.sourceMediaType, sourceAssetIds: input.sourceAssetIds, quantity: input.mode === "video" ? clampVideoDuration(input.state.videoDuration, input.state.selectedModelMaxQuantity) : 1, fundingMode: input.state.fundingMode, arabicVariety: input.state.arabicVariety, rightsBasis: input.state.rightsBasis, permittedRemix: input.state.permittedRemix, rightsEvidenceIds: input.state.rightsEvidenceIds, remixBrief: { preserve: ["accepted Brand Profile identity", "core subject"], transform: input.state.permittedRemix === "reference_only" ? [] : [input.mode === "copy" ? "wording for the selected channel" : "composition and motion for an original 9:16 result"], avoid: ["source logos or protected marks not present in the accepted Brand Profile"] }, idempotencyKey: input.idempotencyKey, signal: input.signal, confirmManagedCreditQuote: (quote) => requestManagedQuoteConfirmation(input.set, quote) });
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -128,56 +177,11 @@ async function processInChunks<T>(
   }
 }
 
-/**
- * Persist a base64 data URL result to R2 via presign → PUT → finalize.
- * Returns the assetId on success, null on failure (non-fatal).
- */
-async function persistToR2(
-  dataUrl: string,
-  mode: SimpleStudioMode,
-  prompt: string,
-  batchId: string,
-): Promise<string | null> {
-  try {
-    // Convert data URL or remote URL to blob
-    const res = await fetch(dataUrl);
-    const blob = await res.blob();
-
-    const assetType = mode === "video" ? "video" : "image";
-    const ext = mode === "video" ? "mp4" : "png";
-    // Use mode-aware content type rather than trusting blob.type
-    // (e.g. video results may report as application/octet-stream)
-    const contentType = mode === "video"
-      ? "video/mp4"
-      : blob.type || `image/${ext}`;
-
-    // Presign
-    const presign = await createStudioAssetPresign({
-      assetType,
-      contentType,
-      expectedSizeBytes: blob.size,
-      fileName: `simple-${mode}-${Date.now()}.${ext}`,
-    });
-
-    // Upload to R2
-    await fetch(presign.uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": contentType },
-      body: blob,
-    });
-
-    // Finalize
-    await finalizeStudioAssetUpload(presign.assetId, {
-      uploadState: "ready",
-      sizeBytes: blob.size,
-      mimeType: contentType,
-    });
-
-    return presign.assetId;
-  } catch {
-    // Non-fatal — generation still shows in UI, just not persisted
-    return null;
-  }
+async function resolveSourceAssetIds(state: SimpleStudioState, mode: Exclude<SimpleStudioMode, "copy">, filePrefix: string) {
+  const sources = mode === "photo" ? state.referenceImages : state.sourceImage ? [state.sourceImage] : [];
+  const sourceType = mode === "video" && state.sourceMediaType === "video" ? "video" : "image";
+  const extension = sourceType === "video" ? "mp4" : "png";
+  return Promise.all(sources.map(async (source, index) => source.startsWith("asset:") ? source.slice(6) : (await ingestStudioAsset({ assetType: sourceType, sourceDataUrl: source.startsWith("data:") ? source : undefined, sourceUrl: source.startsWith("http") ? source : undefined, fileName: `${filePrefix}-${index}.${extension}` })).assetId));
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +209,28 @@ function setGenerations(
   });
 }
 
+type StudioSet = (fn: (state: SimpleStudioState) => Partial<SimpleStudioState>) => void;
+async function executeGenerationEntry(input: { set: StudioSet; state: SimpleStudioState; generation: Generation; mode: SimpleStudioMode; prompt: string; sourceAssetIds: string[]; idempotencyKey: string; signal: AbortSignal }) {
+  setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "generating", error: null, nextActionCode: null, nextActionHref: null } : value));
+  try {
+    const admitted = await submitAdmittedGeneration({ set: input.set, state: input.state, prompt: input.prompt, mode: input.mode, sourceAssetIds: input.sourceAssetIds, idempotencyKey: input.idempotencyKey, signal: input.signal });
+    setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "complete", result: admitted.result, assetId: admitted.assetId } : value));
+  } catch (error) {
+    if (input.signal.aborted) return;
+    if (error instanceof StudioGenerationError && error.code === "GENERATION_PENDING_RECOVERY") {
+      setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? { ...value, status: "pending", error: error.code, nextActionCode: error.nextActionCode, nextActionHref: error.nextActionHref } : value));
+      return;
+    }
+    setGenerations(input.set, input.mode, (values) => values.map((value) => value.id === input.generation.id ? {
+      ...value,
+      status: "failed",
+      error: error instanceof Error ? error.message : "GENERATION_FAILED",
+      nextActionCode: error instanceof StudioGenerationError ? error.nextActionCode : null,
+      nextActionHref: error instanceof StudioGenerationError ? error.nextActionHref : null,
+    } : value));
+  }
+}
+
 export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   // Mode
   mode: "photo",
@@ -223,19 +249,24 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   selectedModelId: null,
   selectedModelProvider: null,
   selectedModelName: null,
-  setSelectedModel: (id, provider = null, name = null) =>
-    set({ selectedModelId: id, selectedModelProvider: provider, selectedModelName: name }),
-  setSelectedModelId: (id) => set({ selectedModelId: id, selectedModelProvider: null, selectedModelName: null }),
-  aspectRatio: "1:1",
+  selectedModelVersion: null,
+  selectedModelSchemaDigest: null,
+  selectedModelExecutionPriceUsd: null,
+  selectedModelMaxQuantity: null,
+  setSelectedModel: (id, provider = null, name = null, version = null, schemaDigest = null, executionPriceUsd = null, maxQuantity = null) =>
+    set((state) => ({ selectedModelId: id, selectedModelProvider: provider, selectedModelName: name, selectedModelVersion: version, selectedModelSchemaDigest: schemaDigest, selectedModelExecutionPriceUsd: executionPriceUsd, selectedModelMaxQuantity: maxQuantity, videoDuration: maxQuantity === null ? state.videoDuration : clampVideoDuration(state.videoDuration, maxQuantity) })),
+  setSelectedModelId: (id) => set({ selectedModelId: id, selectedModelProvider: null, selectedModelName: null, selectedModelVersion: null, selectedModelSchemaDigest: null, selectedModelExecutionPriceUsd: null, selectedModelMaxQuantity: null }),
+  aspectRatio: "9:16",
   setAspectRatio: (ratio) => set({ aspectRatio: ratio }),
   batchCount: 4,
   setBatchCount: (count) => set({ batchCount: count }),
   referenceImages: [],
   setReferenceImages: (images) => set({ referenceImages: images }),
   sourceImage: null,
-  setSourceImage: (image) => set({ sourceImage: image }),
+  sourceMediaType: null,
+  setSourceImage: (image, mediaType = image ? "image" : null) => set({ sourceImage: image, sourceMediaType: image ? mediaType : null, selectedModelId: null, selectedModelProvider: null, selectedModelName: null, selectedModelVersion: null, selectedModelSchemaDigest: null, selectedModelExecutionPriceUsd: null, selectedModelMaxQuantity: null }),
   videoDuration: 5,
-  setVideoDuration: (duration) => set({ videoDuration: duration }),
+  setVideoDuration: (duration) => set((state) => ({ videoDuration: clampVideoDuration(duration, state.selectedModelMaxQuantity) })),
   dialogueEnabled: false,
   setDialogueEnabled: (enabled) => set({ dialogueEnabled: enabled }),
   dialogueText: "",
@@ -250,6 +281,25 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
   setPlatform: (platform) => set({ platform }),
   outputLanguage: "en",
   setOutputLanguage: (lang) => set({ outputLanguage: lang }),
+  arabicVariety: "msa",
+  setArabicVariety: (arabicVariety) => set({ arabicVariety }),
+  fundingMode: DEFAULT_GENERATION_FUNDING_MODE,
+  setFundingMode: (fundingMode) => set({ fundingMode }),
+  pendingManagedCreditQuotes: [],
+  resolveManagedCreditQuote: (quoteId, accepted) => {
+    const resolve = managedQuoteResolvers.get(quoteId);
+    managedQuoteResolvers.delete(quoteId);
+    set((state) => ({ pendingManagedCreditQuotes: state.pendingManagedCreditQuotes.filter((quote) => quote.quoteId !== quoteId) }));
+    resolve?.(accepted);
+  },
+  rightsBasis: "owned",
+  setRightsBasis: (rightsBasis) => set((state) => ({ rightsBasis, rightsConfirmed: false, rightsEvidenceIds: rightsBasis === "owned" ? [] : state.rightsEvidenceIds })),
+  permittedRemix: "transform",
+  setPermittedRemix: (permittedRemix) => set({ permittedRemix, rightsConfirmed: false }),
+  rightsConfirmed: false,
+  setRightsConfirmed: (rightsConfirmed) => set({ rightsConfirmed }),
+  rightsEvidenceIds: [],
+  setRightsEvidenceIds: (rightsEvidenceIds) => set({ rightsEvidenceIds }),
 
   // Generation
   isGenerating: false,
@@ -309,6 +359,8 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
         result: null,
         assetId: null,
         error: null,
+        nextActionCode: null,
+        nextActionHref: null,
         mode: genMode,
         aspectRatio: state.aspectRatio,
         prompt: finalPrompt,
@@ -321,167 +373,18 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
     setGenerations(set, genMode, (prev) => [...entries, ...prev]);
     set({ currentBatchId: batchId });
 
-    const processGeneration = async (entry: Generation, sig: AbortSignal) => {
-      if (sig.aborted) return;
-
-      // Mark as generating
-      setGenerations(set, genMode, (prev) =>
-        prev.map((g) => g.id === entry.id ? { ...g, status: "generating" as const } : g),
-      );
-
+    let sourceAssetIds: string[] = [];
+    if (genMode !== "copy") {
       try {
-        let result: string | null = null;
-
-        if (state.mode === "copy") {
-          // Use /api/studio/copy streaming endpoint
-          const langDirective = state.outputLanguage === "ar"
-            ? "Write in Arabic only."
-            : state.outputLanguage === "both"
-              ? "Write in both Arabic and English."
-              : "Write in English only.";
-          const systemPrompt = `You are a professional copywriter. ${langDirective} Platform: ${state.platform}. Tone: ${state.tone}. Return ONLY the copy text, no explanations or meta-commentary.`;
-
-          const res = await fetch("/api/studio/copy", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              messages: [{ id: entry.id, role: "user", parts: [{ type: "text", text: finalPrompt }] }],
-              model: state.copyModelId,
-              system: systemPrompt,
-            }),
-            signal: sig,
-          });
-
-          if (!res.ok) {
-            let errMsg = "Copy generation failed";
-            try {
-              const errData = await res.json();
-              errMsg = errData.error || errMsg;
-            } catch {
-              errMsg = (await res.text()) || errMsg;
-            }
-            throw new Error(errMsg);
-          }
-
-          // Read AI SDK v6 UI message stream to completion
-          // Format: lines of `data: {"type":"text-delta","id":"0","delta":"..."}`
-          const reader = res.body?.getReader();
-          if (!reader) throw new Error("No response body");
-          const decoder = new TextDecoder();
-          let buffer = "";
-          let fullText = "";
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (sig.aborted) { reader.cancel(); break; }
-            buffer += decoder.decode(value, { stream: true });
-
-            // Process complete lines
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed.startsWith("data: ")) continue;
-              const payload = trimmed.slice(6);
-              if (payload === "[DONE]") continue;
-              try {
-                const parsed = JSON.parse(payload);
-                if (parsed.type === "text-delta" && parsed.delta) {
-                  fullText += parsed.delta;
-                }
-              } catch {
-                // skip unparseable lines
-              }
-            }
-          }
-
-          result = fullText;
-        } else {
-          // Use /api/generate for photo/video
-          const images = state.mode === "photo"
-            ? state.referenceImages
-            : state.sourceImage ? [state.sourceImage] : [];
-          const hasSourceImage = state.mode === "video" && images.length > 0;
-
-          let modelId = state.selectedModelId;
-          let modelProvider = state.selectedModelProvider;
-          let modelName = state.selectedModelName;
-
-          // Auto-switch to image-to-video variant when source image is provided
-          if (hasSourceImage && modelId?.includes("/text-to-video")) {
-            modelId = modelId.replace("/text-to-video", "/image-to-video");
-          }
-
-          // Default to Veo when in video mode with no model selected
-          if (state.mode === "video" && !modelId) {
-            modelId = hasSourceImage ? "veo-3.1/image-to-video" : "veo-3.1/text-to-video";
-            modelProvider = null;
-            modelName = "Veo 3.1";
-          }
-
-          const body: Record<string, unknown> = {
-            prompt: finalPrompt,
-            images,
-            selectedModel: modelId
-              ? {
-                  modelId,
-                  provider: modelProvider || undefined,
-                  displayName: modelName || modelId,
-                }
-              : undefined,
-            mediaType: state.mode === "video" ? "video" : undefined,
-            parameters: {
-              aspectRatio: state.aspectRatio,
-              ...(state.mode === "video" ? { duration: state.videoDuration } : {}),
-            },
-          };
-
-          const res = await fetch("/api/generate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-            signal: sig,
-          });
-          const data = await res.json();
-          if (!data.success) throw new Error(data.error || "Generation failed");
-          // For video: prefer video (base64) or videoUrl (remote URL)
-          // For other modes: image, audio
-          if (state.mode === "video") {
-            result = data.video || data.videoUrl || null;
-          } else {
-            result = data.image || data.audio || null;
-          }
-        }
-
-        setGenerations(set, genMode, (prev) =>
-          prev.map((g) => g.id === entry.id ? { ...g, status: "complete" as const, result } : g),
-        );
-
-        // Persist image/video results to R2 in the background (non-blocking)
-        // Results can be base64 data URLs or remote URLs (for large videos)
-        if (result && genMode !== "copy" && (result.startsWith("data:") || result.startsWith("http"))) {
-          persistToR2(result, genMode, finalPrompt, batchId).then((assetId) => {
-            if (assetId) {
-              setGenerations(set, genMode, (prev) =>
-                prev.map((g) => g.id === entry.id ? { ...g, assetId } : g),
-              );
-            }
-          }).catch(() => {
-            // Non-fatal — asset just won't be persisted
-          });
-        }
-      } catch (err) {
-        if (sig.aborted) return;
-        setGenerations(set, genMode, (prev) =>
-          prev.map((g) =>
-            g.id === entry.id
-              ? { ...g, status: "failed" as const, error: err instanceof Error ? err.message : "Generation failed" }
-              : g,
-          ),
-        );
+        sourceAssetIds = await resolveSourceAssetIds(state, genMode, `inspiration-${batchId}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Inspiration media could not be stored safely.";
+        setGenerations(set, genMode, (prev) => prev.map((generation) => generation.batchId === batchId ? { ...generation, status: "failed" as const, error: message, nextActionCode: null, nextActionHref: null } : generation));
+        set({ isGenerating: false, currentBatchId: null }); abortController = null; return;
       }
-    };
+    }
+
+    const processGeneration = (entry: Generation, sig: AbortSignal) => sig.aborted ? Promise.resolve() : executeGenerationEntry({ set, state, generation: entry, mode: genMode, prompt: finalPrompt, sourceAssetIds, idempotencyKey: `simple-studio:${entry.id}`, signal: sig });
 
     await processInChunks(entries, CONCURRENT_LIMIT, processGeneration, signal);
 
@@ -494,18 +397,19 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       abortController.abort();
       abortController = null;
     }
+    for (const [quoteId, resolve] of managedQuoteResolvers) { managedQuoteResolvers.delete(quoteId); resolve(false); }
     // Cancel pending/generating entries across all modes
     const modes: SimpleStudioMode[] = ["photo", "video", "copy"];
     for (const m of modes) {
       setGenerations(set, m, (prev) =>
         prev.map((g) =>
           g.status === "pending" || g.status === "generating"
-            ? { ...g, status: "failed" as const, error: "Cancelled" }
+            ? { ...g, status: "failed" as const, error: "Cancelled", nextActionCode: null, nextActionHref: null }
             : g,
         ),
       );
     }
-    set({ isGenerating: false, currentBatchId: null });
+    set({ isGenerating: false, currentBatchId: null, pendingManagedCreditQuotes: [] });
   },
 
   retryGeneration: async (id: string) => {
@@ -515,151 +419,14 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
 
     const genMode = gen.mode;
 
-    // Mark as generating
-    setGenerations(set, genMode, (prev) =>
-      prev.map((g) => g.id === id ? { ...g, status: "generating" as const, error: null } : g),
-    );
-
     const retryController = new AbortController();
     const sig = retryController.signal;
-
-    try {
-      let result: string | null = null;
-
-      if (genMode === "copy") {
-        const langDirective = state.outputLanguage === "ar"
-          ? "Write in Arabic only."
-          : state.outputLanguage === "both"
-            ? "Write in both Arabic and English."
-            : "Write in English only.";
-        const systemPrompt = `You are a professional copywriter. ${langDirective} Platform: ${state.platform}. Tone: ${state.tone}. Return ONLY the copy text, no explanations or meta-commentary.`;
-
-        const res = await fetch("/api/studio/copy", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            messages: [{ id, role: "user", parts: [{ type: "text", text: gen.prompt }] }],
-            model: state.copyModelId,
-            system: systemPrompt,
-          }),
-          signal: sig,
-        });
-
-        if (!res.ok) {
-          let errMsg = "Copy generation failed";
-          try { const errData = await res.json(); errMsg = errData.error || errMsg; } catch { errMsg = (await res.text()) || errMsg; }
-          throw new Error(errMsg);
-        }
-
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error("No response body");
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let fullText = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (sig.aborted) { reader.cancel(); break; }
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith("data: ")) continue;
-            const payload = trimmed.slice(6);
-            if (payload === "[DONE]") continue;
-            try { const parsed = JSON.parse(payload); if (parsed.type === "text-delta" && parsed.delta) fullText += parsed.delta; } catch { /* skip */ }
-          }
-        }
-        result = fullText;
-      } else {
-        const images = genMode === "photo"
-          ? state.referenceImages
-          : state.sourceImage ? [state.sourceImage] : [];
-        const hasSourceImage = genMode === "video" && images.length > 0;
-
-        let modelId = state.selectedModelId;
-        let modelProvider = state.selectedModelProvider;
-        let modelName = state.selectedModelName;
-
-        if (hasSourceImage && modelId?.includes("/text-to-video")) {
-          modelId = modelId.replace("/text-to-video", "/image-to-video");
-        }
-        if (genMode === "video" && !modelId) {
-          modelId = hasSourceImage ? "veo-3.1/image-to-video" : "veo-3.1/text-to-video";
-          modelProvider = null;
-          modelName = "Veo 3.1";
-        }
-
-        const body: Record<string, unknown> = {
-          prompt: gen.prompt,
-          images,
-          selectedModel: modelId ? { modelId, provider: modelProvider || undefined, displayName: modelName || modelId } : undefined,
-          mediaType: genMode === "video" ? "video" : undefined,
-          parameters: { aspectRatio: gen.aspectRatio, ...(genMode === "video" ? { duration: state.videoDuration } : {}) },
-        };
-
-        const res = await fetch("/api/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-          signal: sig,
-        });
-        const data = await res.json();
-        if (!data.success) throw new Error(data.error || "Generation failed");
-        result = genMode === "video" ? (data.video || data.videoUrl || null) : (data.image || data.audio || null);
-      }
-
-      setGenerations(set, genMode, (prev) =>
-        prev.map((g) => g.id === id ? { ...g, status: "complete" as const, result } : g),
-      );
-
-      if (result && genMode !== "copy" && (result.startsWith("data:") || result.startsWith("http"))) {
-        persistToR2(result, genMode, gen.prompt, gen.batchId).then((assetId) => {
-          if (assetId) {
-            setGenerations(set, genMode, (prev) =>
-              prev.map((g) => g.id === id ? { ...g, assetId } : g),
-            );
-          }
-        }).catch(() => {});
-      }
-    } catch (err) {
-      if (sig.aborted) return;
-      setGenerations(set, genMode, (prev) =>
-        prev.map((g) =>
-          g.id === id
-            ? { ...g, status: "failed" as const, error: err instanceof Error ? err.message : "Generation failed" }
-            : g,
-        ),
-      );
-    }
+    const sourceAssetIds = genMode === "copy" ? [] : await resolveSourceAssetIds(state, genMode, `retry-inspiration-${id}`);
+    await executeGenerationEntry({ set, state, generation: gen, mode: genMode, prompt: gen.prompt, sourceAssetIds, idempotencyKey: `simple-studio-retry:${id}:${crypto.randomUUID()}`, signal: sig });
   },
 
   rewritePrompt: async () => {
-    const { prompt } = get();
-    if (!prompt.trim()) return;
-
-    set({ isRewriting: true });
-
-    try {
-      const res = await fetch("/api/llm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: `Rewrite this prompt for better AI image/video generation results. Keep the same intent but make it more descriptive and detailed. Return ONLY the rewritten prompt, no explanations:\n\n${prompt}`,
-          provider: "google",
-          model: "gemini-2.5-flash",
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        set({ rewrittenPrompt: data.text || data.response || null });
-      }
-    } catch {
-      // Silently fail — user can still generate with original prompt
-    } finally {
-      set({ isRewriting: false });
-    }
+    set({ isRewriting: false, rewrittenPrompt: null });
   },
 
   // Gallery
@@ -669,25 +436,44 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       const res = await fetch("/api/studio/assets?source=simple");
       const data = await res.json();
       if (data.success && data.assets) {
-        const entries: Generation[] = data.assets.map(
-          (asset: Record<string, unknown>) => {
+        const resolvedEntries = await Promise.all(
+          (data.assets as Record<string, unknown>[]).map(async (asset) => {
             const metadata = (asset.metadata as Record<string, unknown>) || {};
+            const type = asset.type;
+            if ((type !== "image" && type !== "video") || metadata.uploadState === "pending" || metadata.uploadState === "failed") return null;
+            const assetId = typeof asset.id === "string" ? asset.id : null;
+            if (!assetId) return null;
+            const download = await getStudioAssetDownloadUrl(assetId).catch(() => null);
+            if (!download) return null;
+            const configuredMode = metadata.mode;
+            const mode: SimpleStudioMode = configuredMode === "photo" || configuredMode === "video"
+              ? configuredMode
+              : type === "video" ? "video" : "photo";
+            const createdAt = typeof metadata.createdAt === "number"
+              ? metadata.createdAt
+              : typeof asset.createdAt === "string" ? Date.parse(asset.createdAt) : NaN;
             return {
-              id: asset.id as string,
+              id: assetId,
               batchId: (metadata.batchId as string) || "unknown",
               status: "complete" as const,
-              result: asset.storageKey as string,
-              assetId: asset.id as string,
+              result: download.downloadUrl,
+              assetId,
               error: null,
-              mode: (metadata.mode as SimpleStudioMode) || "photo",
+              nextActionCode: null,
+              nextActionHref: null,
+              mode,
               aspectRatio: (metadata.aspectRatio as string) || "1:1",
               prompt: (metadata.prompt as string) || "",
-              createdAt: (metadata.createdAt as number) || Date.now(),
+              createdAt: Number.isFinite(createdAt) ? createdAt : 0,
               modelName: (metadata.modelName as string) || null,
             };
-          },
+          }),
         );
-        setGenerations(set, currentMode, () => entries);
+        const entries: Generation[] = [];
+        for (const entry of resolvedEntries) if (entry) entries.push(entry);
+        const byMode = { photo: [], video: [], copy: [] } as Record<SimpleStudioMode, Generation[]>;
+        for (const entry of entries) byMode[entry.mode].push(entry);
+        set({ generationsByMode: byMode, generations: byMode[currentMode] });
       }
     } catch {
       // Non-fatal — gallery just stays empty
@@ -722,6 +508,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
             dialogueText: state.dialogueText,
             dialogueLanguage: state.dialogueLanguage,
             copyModelId: state.copyModelId,
+            fundingMode: state.fundingMode,
           },
         }),
       });
@@ -769,6 +556,10 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       selectedModelId: (config.selectedModelId as string) || null,
       selectedModelProvider: (config.selectedModelProvider as string) || null,
       selectedModelName: (config.selectedModelName as string) || null,
+      selectedModelVersion: null,
+      selectedModelSchemaDigest: null,
+      selectedModelExecutionPriceUsd: null,
+      selectedModelMaxQuantity: null,
       aspectRatio: (config.aspectRatio as string) || "1:1",
       batchCount: (config.batchCount as number) || 4,
       tone: (config.tone as string) || "professional",
@@ -779,6 +570,7 @@ export const useSimpleStudioStore = create<SimpleStudioState>((set, get) => ({
       dialogueText: (config.dialogueText as string) || "",
       dialogueLanguage: (config.dialogueLanguage as "ar" | "en") || "en",
       copyModelId: (config.copyModelId as string) || "gemini-2.5-flash",
+      fundingMode: config.fundingMode === "byok" ? "byok" : DEFAULT_GENERATION_FUNDING_MODE,
     });
   },
 }));

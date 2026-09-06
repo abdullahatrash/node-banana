@@ -1,9 +1,5 @@
-import type {
-  AgentKeyRecord,
-  AgentPrincipalRecord,
-  AgentSecurityContext,
-} from "./agentAuth";
-import type { CapabilityIdentity } from "./capabilities";
+import type { AgentKeyRecord } from "./agentAuth";
+import type { CapabilityEffect, CapabilityIdentity } from "./capabilities";
 import type { ResolvedSecurityContext } from "./capabilities";
 
 export type AgentResourceKind =
@@ -11,6 +7,7 @@ export type AgentResourceKind =
   | "credential_profile"
   | "workflow"
   | "automation"
+  | "studio_asset"
   | "artifact";
 
 export interface AgentResourceRef {
@@ -23,6 +20,11 @@ export interface AgentResourceConstraints {
   credentialProfileIds: string[];
   workflowIds: string[];
   automationIds: string[];
+  /**
+   * Studio media-library assets stored in the `assets` table. This is
+   * intentionally distinct from immutable runtime Artifacts.
+   */
+  studioAssetIds?: string[];
   /**
    * Optional while deserializing authority JSON written before Artifact
    * resources existed. All server normalizers materialize this as an array.
@@ -49,7 +51,9 @@ export interface AgentGrantSetRecord {
   name: string;
   activeRevision: number | null;
   disabledAt: Date | null;
-  createdByUserId: string;
+  createdByUserId: string | null;
+  createdBySystemActorId?: string | null;
+  initiatingUserId?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -59,7 +63,9 @@ export interface AgentGrantRevisionRecord {
   grantSetId: string;
   revision: number;
   grants: AgentCapabilityGrant[];
-  createdByUserId: string;
+  createdByUserId: string | null;
+  createdBySystemActorId?: string | null;
+  initiatingUserId?: string | null;
   createdAt: Date;
 }
 
@@ -69,7 +75,9 @@ export interface WorkspaceAgentPolicyRecord {
   revision: number;
   enabled: boolean;
   grants: AgentCapabilityGrant[];
-  updatedByUserId: string;
+  updatedByUserId: string | null;
+  updatedBySystemActorId?: string | null;
+  initiatingUserId?: string | null;
   updatedAt: Date;
 }
 
@@ -105,6 +113,8 @@ export interface AgentSecurityEventRecord {
   principalId: string | null;
   keyId: string | null;
   actorUserId: string | null;
+  systemActorId?: string | null;
+  initiatingUserId?: string | null;
   eventType:
     | "authorization.allowed"
     | "authorization.denied"
@@ -201,6 +211,8 @@ export interface CapabilityAuthorizationRequest {
   authorizationContractDigest: string;
   resources: AgentResourceRef[];
   resourceExtractionValid?: boolean;
+  /** Server-owned effect metadata used for Workspace lifecycle admission. */
+  effect?: CapabilityEffect;
 }
 
 export interface CapabilityAuthorizationAdmission {

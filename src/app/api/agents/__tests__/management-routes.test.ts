@@ -29,6 +29,7 @@ vi.mock("@/lib/agent-auth", () => ({
       mockSetPrincipalStatus(...args),
   },
 }));
+vi.mock("@/lib/governance/step-up-http", () => ({ requireGovernanceStepUp: vi.fn(async () => null) }));
 
 import { POST as rotateKey } from "../[principalId]/keys/route";
 import { PATCH as setPrincipalStatus } from "../[principalId]/route";

@@ -4,6 +4,9 @@ import { NextRequest, NextResponse } from "next/server";
 const mockAuthorizeStudioRequest = vi.fn();
 const mockSoftDeleteAsset = vi.fn();
 const mockFinalizeAssetUpload = vi.fn();
+const mockGetAsset = vi.fn();
+const mockGetObjectStreamFromS3 = vi.fn();
+const mockCollectStreamedAssetEvidence = vi.fn();
 
 const {
   MockStudioAssetNotFoundError,
@@ -48,12 +51,15 @@ vi.mock("@/lib/studio/authz", () => {
 });
 
 vi.mock("@/lib/studio/repository", () => ({
-  getAsset: vi.fn(),
+  getAsset: (...args: unknown[]) => mockGetAsset(...args),
   softDeleteAsset: (...args: unknown[]) => mockSoftDeleteAsset(...args),
   finalizeAssetUpload: (...args: unknown[]) => mockFinalizeAssetUpload(...args),
   StudioAssetNotFoundError: MockStudioAssetNotFoundError,
   StudioAssetUploadTransitionError: MockStudioAssetUploadTransitionError,
 }));
+
+vi.mock("@/lib/storage", () => ({ getObjectStreamFromS3: (...args: unknown[]) => mockGetObjectStreamFromS3(...args) }));
+vi.mock("@/lib/studio/asset-media-evidence", () => ({ collectStreamedAssetEvidence: (...args: unknown[]) => mockCollectStreamedAssetEvidence(...args) }));
 
 import { DELETE, PATCH } from "../route";
 
@@ -125,6 +131,9 @@ describe("/api/studio/assets/[assetId] DELETE role enforcement", () => {
 describe("/api/studio/assets/[assetId] PATCH finalize upload", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetAsset.mockResolvedValue({ id: "asset_1", workspaceId: "ws_1", type: "image", storageProvider: "s3", storageKey: "ws_1/image.png", mimeType: "image/png", checksum: null, metadata: { uploadState: "pending", expectedSizeBytes: 1024 } });
+    mockGetObjectStreamFromS3.mockResolvedValue({ body: (async function* () { yield new Uint8Array([1]); })(), contentType: "image/png", contentLength: 1024 });
+    mockCollectStreamedAssetEvidence.mockResolvedValue({ sizeBytes: 1024, checksum: `sha256:${"a".repeat(64)}`, width: 100, height: 100, metadata: { dimensionEvidence: "server-media-probe/v1" } });
   });
 
   it("returns 401 for unauthenticated requests", async () => {
@@ -277,10 +286,15 @@ describe("/api/studio/assets/[assetId] PATCH finalize upload", () => {
       assetId: "asset_1",
       uploadState: "ready",
       sizeBytes: 1024,
-      checksum: undefined,
+      checksum: `sha256:${"a".repeat(64)}`,
       mimeType: "image/png",
+      width: 100,
+      height: 100,
+      durationSeconds: undefined,
+      metadata: { dimensionEvidence: "server-media-probe/v1" },
       error: undefined,
     });
+    expect(mockCollectStreamedAssetEvidence).toHaveBeenCalledWith(expect.objectContaining({ assetType: "image", mimeType: "image/png", maximumBytes: 500 * 1024 * 1024 }));
   });
 
   it("returns 200 for pending -> failed", async () => {
@@ -314,8 +328,20 @@ describe("/api/studio/assets/[assetId] PATCH finalize upload", () => {
       sizeBytes: undefined,
       checksum: undefined,
       mimeType: undefined,
+      width: undefined,
+      height: undefined,
+      durationSeconds: undefined,
+      metadata: undefined,
       error: "Upload timed out",
     });
+  });
+
+  it("rejects a stored object whose size differs from the reservation", async () => {
+    mockAuthorizeStudioRequest.mockResolvedValue({ authorized: true, userId: "user_1", workspaceId: "ws_1", role: "member" });
+    mockGetObjectStreamFromS3.mockResolvedValue({ body: (async function* () {})(), contentType: "image/png", contentLength: 12 });
+    const response = await PATCH(createPatchRequest({ uploadState: "ready", sizeBytes: 12 }), { params: Promise.resolve({ assetId: "asset_1" }) });
+    expect(response.status).toBe(422);
+    expect(mockFinalizeAssetUpload).not.toHaveBeenCalled();
   });
 
   it("returns 200 for ready -> ready idempotent", async () => {
@@ -325,11 +351,7 @@ describe("/api/studio/assets/[assetId] PATCH finalize upload", () => {
       workspaceId: "ws_1",
       role: "member",
     });
-    mockFinalizeAssetUpload.mockResolvedValue({
-      id: "asset_1",
-      workspaceId: "ws_1",
-      metadata: { uploadState: "ready" },
-    });
+    mockGetAsset.mockResolvedValue({ id: "asset_1", workspaceId: "ws_1", type: "image", storageProvider: "s3", storageKey: "ws_1/image.png", mimeType: "image/png", checksum: `sha256:${"b".repeat(64)}`, metadata: { uploadState: "ready" } });
 
     const response = await PATCH(
       createPatchRequest({
@@ -339,15 +361,8 @@ describe("/api/studio/assets/[assetId] PATCH finalize upload", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mockFinalizeAssetUpload).toHaveBeenCalledWith({
-      workspaceId: "ws_1",
-      assetId: "asset_1",
-      uploadState: "ready",
-      sizeBytes: undefined,
-      checksum: undefined,
-      mimeType: undefined,
-      error: undefined,
-    });
+    expect(mockFinalizeAssetUpload).not.toHaveBeenCalled();
+    expect(mockGetObjectStreamFromS3).not.toHaveBeenCalled();
   });
 
   it("returns 409 for ready -> failed", async () => {
@@ -384,9 +399,7 @@ describe("/api/studio/assets/[assetId] PATCH finalize upload", () => {
       workspaceId: "ws_1",
       role: "member",
     });
-    mockFinalizeAssetUpload.mockRejectedValue(
-      new MockStudioAssetUploadTransitionError("failed", "ready"),
-    );
+    mockGetAsset.mockResolvedValue({ id: "asset_1", workspaceId: "ws_1", type: "image", storageProvider: "s3", storageKey: "ws_1/image.png", mimeType: "image/png", checksum: null, metadata: { uploadState: "failed" } });
 
     const response = await PATCH(
       createPatchRequest({

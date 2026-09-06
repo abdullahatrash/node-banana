@@ -6,11 +6,13 @@ const {
   mockIsDatabaseConfigured,
   mockSelectRows,
   mockWithApiPermission,
+  mockResolvePermissions,
 } = vi.hoisted(() => ({
   mockResolveWorkspaceIdByRawToken: vi.fn(),
   mockIsDatabaseConfigured: vi.fn(() => true),
   mockSelectRows: vi.fn(),
   mockWithApiPermission: vi.fn(),
+  mockResolvePermissions: vi.fn((_input: unknown) => ["workspaces:read"]),
 }));
 
 const mockDb = {
@@ -33,8 +35,17 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@/lib/api-tokens/repository", () => ({
+  resolveApiTokenAuthorityByRawToken: async (...args: unknown[]) => {
+    const workspaceId = await mockResolveWorkspaceIdByRawToken(...args);
+    return workspaceId ? { workspaceId, createdByUserId: "owner-scoped" } : null;
+  },
   resolveWorkspaceIdByRawToken: (...args: unknown[]) =>
     mockResolveWorkspaceIdByRawToken(...args),
+}));
+
+vi.mock("@/lib/commercial/entitlements", () => ({
+  CommercialEntitlementError: class CommercialEntitlementError extends Error {},
+  requireWorkspaceCommercialFeature: vi.fn().mockResolvedValue({}),
 }));
 
 // Session-auth fallback lives in the studio authz layer; the public route
@@ -46,6 +57,7 @@ vi.mock("@/lib/studio/authz", async () => {
   return {
     ...actual,
     withApiPermission: (...args: unknown[]) => mockWithApiPermission(...args),
+    resolveWorkspaceMemberPermissions: (input: unknown) => mockResolvePermissions(input),
   };
 });
 

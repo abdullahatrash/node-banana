@@ -11,7 +11,7 @@ interface PromptResponse {
 type PromptIdContext = { params: Promise<{ promptId: string }> };
 
 export const PATCH = withStudioAuth<PromptIdContext>(
-  { route: "/api/studio/prompts", action: "write" },
+  { route: "/api/studio/prompts", action: "write", permission: "projects:write" },
   async (
     request: NextRequest,
     authz,
@@ -86,7 +86,7 @@ export const PATCH = withStudioAuth<PromptIdContext>(
 );
 
 export const DELETE = withStudioAuth<PromptIdContext>(
-  { route: "/api/studio/prompts", action: "write" },
+  { route: "/api/studio/prompts", action: "write", permission: "projects:write" },
   async (
     _request: NextRequest,
     authz,

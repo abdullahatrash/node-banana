@@ -16,8 +16,12 @@ import {
 import { useToast } from "@/components/Toast"
 import { Loader2Icon } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { useFormatter, useTranslations } from "next-intl"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 export default function SocialAgentsPage() {
+  const t = useTranslations("social.agents")
+  const format = useFormatter()
   const [rules, setRules] = useState<AutomationRule[]>([])
   const [tasks, setTasks] = useState<AutomationTask[]>([])
   const [prefs, setPrefs] = useState<{
@@ -32,6 +36,7 @@ export default function SocialAgentsPage() {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const { show } = useToast()
+  const { present: presentClientError, show: showClientError } = useClientErrorPresentation()
 
   const load = useCallback(async () => {
     setError(null)
@@ -45,8 +50,7 @@ export default function SocialAgentsPage() {
       setTasks(loadedTasks)
       setPrefs(loadedPrefs)
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to load automation"
+      const message = presentClientError(error, t("errors.load")).message
       setError(message)
       setRules([])
       setTasks([])
@@ -54,7 +58,7 @@ export default function SocialAgentsPage() {
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [presentClientError, t])
 
   useEffect(() => {
     load()
@@ -68,9 +72,9 @@ export default function SocialAgentsPage() {
         muteAll: !prefs.muteAll,
       })
       setPrefs(updated)
-      show(updated.muteAll ? "Notifications muted" : "Notifications enabled", "success")
+      show(updated.muteAll ? t("toast.muted") : t("toast.notificationsEnabled"), "success")
     } catch (error) {
-      show(error instanceof Error ? error.message : "Failed to update preferences", "error")
+      showClientError(show, error, t("errors.preferences"))
     } finally {
       setIsSaving(false)
     }
@@ -81,23 +85,23 @@ export default function SocialAgentsPage() {
     try {
       await updateAutomationRule(rule.id, { enabled: !rule.enabled })
       await load()
-      show(rule.enabled ? "Rule disabled" : "Rule enabled", "success")
+      show(rule.enabled ? t("toast.ruleDisabled") : t("toast.ruleEnabled"), "success")
     } catch (error) {
-      show(error instanceof Error ? error.message : "Failed to update rule", "error")
+      showClientError(show, error, t("errors.updateRule"))
     } finally {
       setBusyId(null)
     }
   }
 
   async function removeRule(ruleId: string) {
-    if (!confirm("Delete this automation rule?")) return
+    if (!confirm(t("confirmDeleteRule"))) return
     setBusyId(ruleId)
     try {
       await deleteAutomationRule(ruleId)
       await load()
-      show("Rule deleted", "success")
+      show(t("toast.ruleDeleted"), "success")
     } catch (error) {
-      show(error instanceof Error ? error.message : "Failed to delete rule", "error")
+      showClientError(show, error, t("errors.deleteRule"))
     } finally {
       setBusyId(null)
     }
@@ -108,23 +112,23 @@ export default function SocialAgentsPage() {
     try {
       await updateAutomationTask(taskId, { state: "cancelled" })
       await load()
-      show("Task cancelled", "success")
+      show(t("toast.taskCancelled"), "success")
     } catch (error) {
-      show(error instanceof Error ? error.message : "Failed to cancel task", "error")
+      showClientError(show, error, t("errors.cancelTask"))
     } finally {
       setBusyId(null)
     }
   }
 
   async function removeTask(taskId: string) {
-    if (!confirm("Delete this automation task?")) return
+    if (!confirm(t("confirmDeleteTask"))) return
     setBusyId(taskId)
     try {
       await deleteAutomationTask(taskId)
       await load()
-      show("Task deleted", "success")
+      show(t("toast.taskDeleted"), "success")
     } catch (error) {
-      show(error instanceof Error ? error.message : "Failed to delete task", "error")
+      showClientError(show, error, t("errors.deleteTask"))
     } finally {
       setBusyId(null)
     }
@@ -140,7 +144,7 @@ export default function SocialAgentsPage() {
 
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
-      <h2 className="text-lg font-semibold">Agents & Automation</h2>
+      <h2 className="text-lg font-semibold">{t("title")}</h2>
       {error ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
           {error}
@@ -148,27 +152,27 @@ export default function SocialAgentsPage() {
       ) : null}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <div className="rounded-lg border bg-card p-4">
-          <div className="text-xs text-muted-foreground">Automation rules</div>
-          <div className="mt-1 text-2xl font-semibold">{rules.length}</div>
+          <div className="text-xs text-muted-foreground">{t("ruleCount")}</div>
+          <div className="mt-1 text-2xl font-semibold"><bdi>{format.number(rules.length)}</bdi></div>
         </div>
         <div className="rounded-lg border bg-card p-4">
-          <div className="text-xs text-muted-foreground">Automation tasks</div>
-          <div className="mt-1 text-2xl font-semibold">{tasks.length}</div>
+          <div className="text-xs text-muted-foreground">{t("taskCount")}</div>
+          <div className="mt-1 text-2xl font-semibold"><bdi>{format.number(tasks.length)}</bdi></div>
         </div>
         <div className="rounded-lg border bg-card p-4">
-          <div className="text-xs text-muted-foreground">Notifications</div>
+          <div className="text-xs text-muted-foreground">{t("notifications")}</div>
           <div className="mt-2">
             <Button size="sm" variant="outline" onClick={toggleMuteAll} disabled={isSaving}>
-              {prefs?.muteAll ? "Unmute all" : "Mute all"}
+              {prefs?.muteAll ? t("unmuteAll") : t("muteAll")}
             </Button>
           </div>
         </div>
       </div>
 
       <div className="rounded-lg border bg-card p-4">
-        <h3 className="text-sm font-medium">Rules</h3>
+        <h3 className="text-sm font-medium">{t("rules")}</h3>
         {rules.length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">No automation rules found.</p>
+          <p className="mt-2 text-sm text-muted-foreground">{t("emptyRules")}</p>
         ) : (
           <div className="mt-3 space-y-2">
             {rules.map((rule) => (
@@ -176,7 +180,7 @@ export default function SocialAgentsPage() {
                 <div className="min-w-0">
                   <div className="truncate text-sm">{rule.name}</div>
                   <div className="text-[10px] text-muted-foreground">
-                    {rule.enabled ? "Enabled" : "Disabled"} · {rule.triggerSource}
+                    {rule.enabled ? t("state.enabled") : t("state.disabled")} · <bdi>{rule.triggerSource}</bdi>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -186,7 +190,7 @@ export default function SocialAgentsPage() {
                     onClick={() => toggleRule(rule)}
                     disabled={busyId === rule.id}
                   >
-                    {rule.enabled ? "Disable" : "Enable"}
+                    {rule.enabled ? t("disable") : t("enable")}
                   </Button>
                   <Button
                     size="sm"
@@ -195,7 +199,7 @@ export default function SocialAgentsPage() {
                     onClick={() => removeRule(rule.id)}
                     disabled={busyId === rule.id}
                   >
-                    Delete
+                    {t("delete")}
                   </Button>
                 </div>
               </div>
@@ -206,15 +210,15 @@ export default function SocialAgentsPage() {
 
       <div className="rounded-lg border bg-card p-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium">Tasks</h3>
+          <h3 className="text-sm font-medium">{t("tasks")}</h3>
           {tasks.length > 40 && (
             <span className="text-xs text-muted-foreground">
-              Showing 40 of {tasks.length}
+              {t("showing", { shown: 40, total: tasks.length })}
             </span>
           )}
         </div>
         {tasks.length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">No automation tasks found.</p>
+          <p className="mt-2 text-sm text-muted-foreground">{t("emptyTasks")}</p>
         ) : (
           <div className="mt-3 space-y-2">
             {tasks.slice(0, 40).map((task) => (
@@ -222,7 +226,7 @@ export default function SocialAgentsPage() {
                 <div className="min-w-0">
                   <div className="truncate text-sm">{task.taskKey}</div>
                   <div className="text-[10px] text-muted-foreground">
-                    {task.state} · run {task.runIndex}
+                    {t(`taskState.${task.state}`)} · {t("run", { index: task.runIndex })}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -233,7 +237,7 @@ export default function SocialAgentsPage() {
                       onClick={() => cancelTask(task.id)}
                       disabled={busyId === task.id}
                     >
-                      Cancel
+                      {t("cancel")}
                     </Button>
                   )}
                   <Button
@@ -243,7 +247,7 @@ export default function SocialAgentsPage() {
                     onClick={() => removeTask(task.id)}
                     disabled={busyId === task.id}
                   >
-                    Delete
+                    {t("delete")}
                   </Button>
                 </div>
               </div>

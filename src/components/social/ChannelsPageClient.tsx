@@ -1,7 +1,9 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useTranslations } from "next-intl"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { PlusIcon, Loader2Icon } from "lucide-react"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { PlatformPicker } from "@/components/social/PlatformPicker"
@@ -20,6 +22,7 @@ import {
   selectPage,
 } from "@/lib/social/client"
 import type { PageInfo } from "@/lib/social/client"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 interface ChannelsPageClientProps {
   oauthCallback: {
@@ -34,6 +37,7 @@ export function ChannelsPageClient({
   oauthCallback,
   oauthError,
 }: ChannelsPageClientProps) {
+  const t = useTranslations("social.channels.page")
   const router = useRouter()
   const { accounts, isLoading, fetchAccounts } = useSocialAccountsStore()
   const [showPicker, setShowPicker] = useState(false)
@@ -44,6 +48,7 @@ export function ChannelsPageClient({
     selectionSessionId: string
   } | null>(null)
   const { show: showToast } = useToast()
+  const { present: presentClientError, show: showClientError } = useClientErrorPresentation()
   const initialized = useRef(false)
 
   function notifyOpener(success: boolean, message: string) {
@@ -79,22 +84,23 @@ export function ChannelsPageClient({
             selectionSessionId: result.selectionSessionId,
           })
         } else if (result.requiresPageSelection) {
-          throw new Error("Missing secure selection session. Please reconnect.")
+          throw new Error("CHANNEL_PAGE_SELECTION_MISSING")
         } else {
-          if (notifyOpener(true, "Channel connected successfully!")) {
+          if (notifyOpener(true, t("connected"))) {
             return
           }
-          showToast("Channel connected successfully!", "success")
+          showToast(t("connected"), "success")
           fetchAccounts()
         }
 
         // Clean URL params
         router.replace("/social/channels")
       } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Failed to complete connection"
+        const fallback = error instanceof Error && error.message === "CHANNEL_PAGE_SELECTION_MISSING"
+          ? t("errors.missingSelection")
+          : t("errors.complete")
+        const presentation = presentClientError(error, fallback)
+        const message = presentation.message
         if (notifyOpener(false, message)) {
           return
         }
@@ -104,7 +110,7 @@ export function ChannelsPageClient({
         setIsProcessingCallback(false)
       }
     },
-    [fetchAccounts, router, showToast],
+    [fetchAccounts, presentClientError, router, showToast, t],
   )
 
   useEffect(() => {
@@ -122,13 +128,14 @@ export function ChannelsPageClient({
 
     setIsProcessingCallback(false)
     if (oauthError) {
-      if (notifyOpener(false, oauthError)) {
+      const message = t("errors.complete")
+      if (notifyOpener(false, message)) {
         return
       }
-      showToast(oauthError, "error")
+      showToast(message, "error")
       router.replace("/social/channels")
     }
-  }, [oauthCallback, oauthError, processOAuthCallback, router, showToast])
+  }, [oauthCallback, oauthError, processOAuthCallback, router, showToast, t])
 
   async function handlePageSelect(page: PageInfo) {
     if (!pageSelection) return
@@ -138,17 +145,14 @@ export function ChannelsPageClient({
         page.id,
         pageSelection.selectionSessionId,
       )
-      if (notifyOpener(true, `Connected to ${page.name}!`)) {
+      if (notifyOpener(true, t("pageConnected", { name: page.name }))) {
         return
       }
-      showToast(`Connected to ${page.name}!`, "success")
+      showToast(t("pageConnected", { name: page.name }), "success")
       fetchAccounts()
       setPageSelection(null)
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : "Failed to select page",
-        "error",
-      )
+      showClientError(showToast, error, t("errors.selectPage"))
     }
   }
 
@@ -158,7 +162,7 @@ export function ChannelsPageClient({
       <div className="flex h-full items-center justify-center">
         <div className="text-center">
           <Loader2Icon className="mx-auto mb-3 size-6 animate-spin text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">Completing connection...</p>
+          <p className="text-sm text-muted-foreground">{t("completing")}</p>
         </div>
       </div>
     )
@@ -171,16 +175,16 @@ export function ChannelsPageClient({
         <div className="flex h-full items-center justify-center">
           <div className="max-w-sm text-center">
             <h2 className="mb-2 text-lg font-semibold">
-              Connect your first channel
+              {t("emptyTitle")}
             </h2>
             <p className="mb-6 text-sm text-muted-foreground">
-              Link your social accounts to start scheduling and publishing
-              content directly from ContentOS.
+              {t("emptyDescription")}
             </p>
             <Button onClick={() => setShowPicker(true)}>
               <PlusIcon className="size-4" />
-              Connect Channel
+              {t("connect")}
             </Button>
+            <Link href="/channels/onboarding" className="ms-2 inline-flex min-h-9 items-center rounded-md border px-4 text-sm font-medium">{t("managedOnboarding")}</Link>
           </div>
         </div>
         <PlatformPicker open={showPicker} onOpenChange={setShowPicker} />
@@ -194,15 +198,16 @@ export function ChannelsPageClient({
       <div className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold">Connected Channels</h2>
+            <h2 className="text-lg font-semibold">{t("title")}</h2>
             <p className="text-sm text-muted-foreground">
-              Manage your social media accounts and connections
+              {t("description")}
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={() => setShowPicker(true)}>
             <PlusIcon className="size-4" />
-            Connect Channel
+            {t("connect")}
           </Button>
+          <Link href="/channels/onboarding" className="inline-flex min-h-8 items-center rounded-md border px-3 text-sm font-medium">{t("managedOnboarding")}</Link>
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -218,9 +223,9 @@ export function ChannelsPageClient({
       <Dialog open={!!pageSelection} onOpenChange={() => setPageSelection(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Select an account</DialogTitle>
+            <DialogTitle>{t("selectAccount")}</DialogTitle>
             <DialogDescription>
-              Choose which page or account to post as
+              {t("selectAccountDescription")}
             </DialogDescription>
           </DialogHeader>
           <div className="max-h-64 overflow-y-auto">
@@ -244,7 +249,7 @@ export function ChannelsPageClient({
                 <div>
                   <p className="text-sm font-medium">{page.name}</p>
                   {page.username && (
-                    <p className="text-xs text-muted-foreground">@{page.username}</p>
+                    <p className="text-xs text-muted-foreground"><bdi>@{page.username}</bdi></p>
                   )}
                 </div>
               </button>

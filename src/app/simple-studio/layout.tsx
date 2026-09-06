@@ -1,18 +1,18 @@
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
-import { getServerAuthSession } from "@/lib/auth/session";
 import { SimpleStudioLayout } from "@/components/simple-studio-shell/SimpleStudioLayout";
+import { getProductShellContext } from "@/lib/product-shell/server";
+import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
+import { validateWorkspaceContentLanguage } from "@/lib/product-surfaces/workspace-language-preferences";
 
 export default async function SimpleStudioRootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const session = await getServerAuthSession(await headers());
+  const [shellContext, access] = await Promise.all([
+    getProductShellContext("/simple-studio/images"),
+    requireOnboardingComplete("/simple-studio/images"),
+  ]);
+  const defaultContentLanguage = validateWorkspaceContentLanguage(access.aggregate?.contentLanguage ?? "ar");
 
-  if (!session?.user) {
-    redirect("/sign-in?next=%2Fsimple-studio%2Fimages");
-  }
-
-  return <SimpleStudioLayout>{children}</SimpleStudioLayout>;
+  return <SimpleStudioLayout shellContext={shellContext} defaultContentLanguage={defaultContentLanguage}>{children}</SimpleStudioLayout>;
 }

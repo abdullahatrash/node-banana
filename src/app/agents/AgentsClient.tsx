@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useFormatter, useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 
 interface Workspace {
@@ -29,6 +30,7 @@ interface AgentPrincipal {
 async function jsonRequest(
   url: string,
   workspaceId: string,
+  fallbackMessage: string,
   init?: RequestInit,
 ) {
   const response = await fetch(url, {
@@ -40,11 +42,13 @@ async function jsonRequest(
     },
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error ?? "Request failed.");
+  if (!response.ok) throw new Error(data.error ?? fallbackMessage);
   return data;
 }
 
 export default function AgentsClient() {
+  const t = useTranslations("agentManagement");
+  const format = useFormatter();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceId, setWorkspaceId] = useState("");
   const [principals, setPrincipals] = useState<AgentPrincipal[]>([]);
@@ -55,7 +59,7 @@ export default function AgentsClient() {
     fetch("/api/studio/workspaces")
       .then(async (response) => {
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error ?? "Failed to load Workspaces.");
+        if (!response.ok) throw new Error(data.error ?? t("errors.workspaces"));
         setWorkspaces(
           (data.workspaces ?? []).filter(
             (workspace: { role: string }) =>
@@ -64,9 +68,9 @@ export default function AgentsClient() {
         );
       })
       .catch((cause) =>
-        setError(cause instanceof Error ? cause.message : "Failed to load Workspaces."),
+        setError(cause instanceof Error ? cause.message : t("errors.workspaces")),
       );
-  }, []);
+  }, [t]);
 
   async function loadAgents(selectedWorkspaceId = workspaceId) {
     if (!selectedWorkspaceId) {
@@ -75,10 +79,10 @@ export default function AgentsClient() {
     }
     try {
       setError(null);
-      const data = await jsonRequest("/api/agents", selectedWorkspaceId);
+      const data = await jsonRequest("/api/agents", selectedWorkspaceId, t("errors.load"));
       setPrincipals(data.principals);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Failed to load Agents.");
+      setError(cause instanceof Error ? cause.message : t("errors.load"));
     }
   }
 
@@ -88,21 +92,21 @@ export default function AgentsClient() {
   ) {
     try {
       setError(null);
-      await jsonRequest(`/api/agents/${principal.id}`, workspaceId, {
+      await jsonRequest(`/api/agents/${principal.id}`, workspaceId, t("errors.status"), {
         method: "PATCH",
         body: JSON.stringify({ status }),
       });
       await loadAgents();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Status update failed.");
+      setError(cause instanceof Error ? cause.message : t("errors.status"));
     }
   }
 
   async function rotate(principal: AgentPrincipal) {
-    const name = window.prompt("Name the new Agent Key:", "Rotated key");
+    const name = window.prompt(t("prompts.keyName"), t("prompts.rotatedKey"));
     if (!name) return;
     const expiryInput = window.prompt(
-      "Optional expiration (ISO date/time). Leave blank for no expiration:",
+      t("prompts.expiry"),
       "",
     );
     if (expiryInput === null) return;
@@ -110,7 +114,7 @@ export default function AgentsClient() {
       ? new Date(expiryInput.trim())
       : null;
     if (expiresAt && !Number.isFinite(expiresAt.getTime())) {
-      setError("Enter a valid ISO date/time for key expiration.");
+      setError(t("errors.invalidExpiry"));
       return;
     }
     try {
@@ -118,6 +122,7 @@ export default function AgentsClient() {
       const data = await jsonRequest(
         `/api/agents/${principal.id}/keys`,
         workspaceId,
+        t("errors.rotate"),
         {
           method: "POST",
           body: JSON.stringify({
@@ -129,36 +134,36 @@ export default function AgentsClient() {
       setSecret(data.agentKey);
       await loadAgents();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Key rotation failed.");
+      setError(cause instanceof Error ? cause.message : t("errors.rotate"));
     }
   }
 
   async function revokeKey(keyId: string) {
-    if (!window.confirm("Revoke this Agent Key? This cannot be undone.")) return;
+    if (!window.confirm(t("confirmRevokeKey"))) return;
     try {
       setError(null);
-      await jsonRequest(`/api/agents/keys/${keyId}`, workspaceId, {
+      await jsonRequest(`/api/agents/keys/${keyId}`, workspaceId, t("errors.revokeKey"), {
         method: "DELETE",
       });
       await loadAgents();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Key revocation failed.");
+      setError(cause instanceof Error ? cause.message : t("errors.revokeKey"));
     }
   }
 
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-6">
       <div>
-        <h1 className="text-2xl font-semibold">Workspace Agents</h1>
+        <h1 className="text-2xl font-semibold">{t("title")}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Pair local agents and manage their Workspace-bound credentials.
+          {t("description")}
         </p>
       </div>
 
       <label className="flex max-w-sm flex-col gap-2 text-sm font-medium">
-        Workspace
+        {t("workspace")}
         <select
-          aria-label="Workspace"
+          aria-label={t("workspace")}
           className="h-10 rounded-md border bg-background px-3"
           value={workspaceId}
           onChange={(event) => {
@@ -167,7 +172,7 @@ export default function AgentsClient() {
             void loadAgents(next);
           }}
         >
-          <option value="">Select a Workspace</option>
+          <option value="">{t("selectWorkspace")}</option>
           {workspaces.map((workspace) => (
             <option key={workspace.id} value={workspace.id}>
               {workspace.name} ({workspace.role})
@@ -184,10 +189,10 @@ export default function AgentsClient() {
 
       {!workspaceId ? (
         <p className="text-sm text-muted-foreground">
-          Select an owner/admin Workspace to view its Agents.
+          {t("selectWorkspaceHelp")}
         </p>
       ) : principals.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No paired Agents.</p>
+        <p className="text-sm text-muted-foreground">{t("empty")}</p>
       ) : (
         <div className="space-y-4">
           {principals.map((principal) => (
@@ -206,7 +211,7 @@ export default function AgentsClient() {
                       variant="outline"
                       onClick={() => void setStatus(principal, "suspended")}
                     >
-                      Suspend
+                      {t("suspend")}
                     </Button>
                   ) : principal.status === "suspended" ? (
                     <Button
@@ -214,7 +219,7 @@ export default function AgentsClient() {
                       variant="outline"
                       onClick={() => void setStatus(principal, "active")}
                     >
-                      Resume
+                      {t("resume")}
                     </Button>
                   ) : null}
                   {principal.status !== "revoked" ? (
@@ -224,14 +229,14 @@ export default function AgentsClient() {
                         variant="outline"
                         onClick={() => void rotate(principal)}
                       >
-                        Rotate key
+                        {t("rotateKey")}
                       </Button>
                       <Button
                         size="sm"
                         variant="destructive"
                         onClick={() => void setStatus(principal, "revoked")}
                       >
-                        Revoke Agent
+                        {t("revokeAgent")}
                       </Button>
                     </>
                   ) : null}
@@ -244,14 +249,14 @@ export default function AgentsClient() {
                     className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/40 p-3 text-xs"
                   >
                     <span>
-                      {key.name} · {key.lookupPrefix} · expires{" "}
+                      {key.name} · <bdi>{key.lookupPrefix}</bdi> · {t("expires")}{" "}
                       {key.expiresAt
-                        ? new Date(key.expiresAt).toLocaleString()
-                        : "never"}{" "}
-                      · last used{" "}
+                        ? format.dateTime(new Date(key.expiresAt), { dateStyle: "medium", timeStyle: "short" })
+                        : t("never")}{" "}
+                      · {t("lastUsed")}{" "}
                       {key.lastUsedAt
-                        ? new Date(key.lastUsedAt).toLocaleString()
-                        : "never"}
+                        ? format.dateTime(new Date(key.lastUsedAt), { dateStyle: "medium", timeStyle: "short" })
+                        : t("never")}
                     </span>
                     {!key.revokedAt ? (
                       <Button
@@ -259,10 +264,10 @@ export default function AgentsClient() {
                         variant="ghost"
                         onClick={() => void revokeKey(key.id)}
                       >
-                        Revoke key
+                        {t("revokeKey")}
                       </Button>
                     ) : (
-                      <span>revoked</span>
+                      <span>{t("revoked")}</span>
                     )}
                   </div>
                 ))}
@@ -276,19 +281,19 @@ export default function AgentsClient() {
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="New Agent Key"
+          aria-label={t("newKey")}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
         >
           <div className="w-full max-w-lg rounded-lg bg-background p-5 shadow-xl">
-            <h2 className="font-semibold">Copy this Agent Key now</h2>
+            <h2 className="font-semibold">{t("copyNow")}</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              It is shown once and cannot be recovered.
+              {t("shownOnce")}
             </p>
             <code className="mt-4 block break-all rounded-md bg-muted p-3 text-xs">
               {secret}
             </code>
             <Button className="mt-4" onClick={() => setSecret(null)}>
-              I saved it
+              {t("saved")}
             </Button>
           </div>
         </div>

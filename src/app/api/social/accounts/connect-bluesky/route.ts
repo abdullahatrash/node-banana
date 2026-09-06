@@ -4,8 +4,8 @@ import { withApiPermission } from "@/lib/studio/authz";
 import "@/lib/social/runtime-bootstrap";
 import { blueskyProvider } from "@/lib/social/providers/bluesky";
 import { encryptToken } from "@/lib/social/crypto";
-import { upsertSocialAccount } from "@/lib/social/repository";
-import { getSocialPlanLimits } from "@/lib/social/limits";
+import { SocialAccountQuotaExceededError, upsertSocialAccount } from "@/lib/social/repository";
+import { getWorkspaceChannelEntitlement } from "@/lib/commercial/channel-entitlement";
 import { countActiveSocialAccounts } from "@/lib/social/repository";
 import { quotaExceededPayload } from "@/lib/social/limits";
 import { logger } from "@/utils/logger";
@@ -57,16 +57,16 @@ export async function POST(
       );
     }
 
-    const limits = getSocialPlanLimits(result.session.planTier);
+    const entitlement = await getWorkspaceChannelEntitlement(result.session.workspace.id);
     const activeChannels = await countActiveSocialAccounts(
       result.session.workspace.id,
     );
-    if (activeChannels >= limits.channels) {
+    if (activeChannels >= entitlement.connectedChannels) {
       return NextResponse.json(
         quotaExceededPayload({
           section: "channels",
           current: activeChannels,
-          limit: limits.channels,
+          limit: entitlement.connectedChannels,
         }),
         { status: 402 },
       );
@@ -95,6 +95,7 @@ export async function POST(
         ? new Date(Date.now() + authResult.expiresIn * 1000)
         : undefined,
       createdByUserId: result.session.user.id,
+      maxActiveChannels: entitlement.connectedChannels,
     });
 
     logger.info("system", "Bluesky channel connected via app password", {
@@ -116,6 +117,12 @@ export async function POST(
       },
     });
   } catch (error) {
+    if (error instanceof SocialAccountQuotaExceededError) {
+      return NextResponse.json(
+        quotaExceededPayload({ section: "channels", current: error.current, limit: error.limit }),
+        { status: 402 },
+      );
+    }
     const message =
       error instanceof Error ? error.message : "Failed to connect Bluesky account";
     return NextResponse.json(

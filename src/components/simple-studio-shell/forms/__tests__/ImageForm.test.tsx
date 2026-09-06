@@ -3,27 +3,30 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { ImageForm } from "../ImageForm";
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
+vi.mock("next-intl", () => ({ useLocale: () => "ar", useTranslations: (namespace: string) => (key: string, values?: Record<string, number>) => namespace === "simpleStudio.generation" ? ({ generating: "Generating…", cancel: "Cancel", progress: "Generation progress" })[key] ?? key : namespace === "simpleStudio.forms" ? ({ prompt: "Prompt", generate: "Generate", enhancing: "Enhancing prompt…", enhance: "AI Prompt Enhance", enhanced: "Enhanced prompt", "image.referenceAlt": `Reference ${values?.number}`, "image.removeReference": `Remove reference image ${values?.number}`, "image.addReference": "Add reference image" })[key] ?? key : key }));
 
 describe("ImageForm", () => {
   beforeEach(() => {
     useSimpleStudioStore.setState({
       mode: "photo",
       prompt: "",
-      aspectRatio: "1:1",
+      aspectRatio: "9:16",
       batchCount: 4,
       isGenerating: false,
       isRewriting: false,
       referenceImages: [],
       rewriteEnabled: false,
       rewrittenPrompt: null,
+      selectedModelId: "qualified-model",
+      rightsConfirmed: true,
     });
     // Stub fetch so ModelSelect's /api/models call doesn't race with test teardown
     global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch;
   });
 
-  it("renders a prompt textarea", () => {
+  it("renders a prompt textarea with automatic bidi direction", () => {
     render(<ImageForm />);
-    expect(screen.getByLabelText("Prompt")).toBeInTheDocument();
+    expect(screen.getByLabelText("Prompt")).toHaveAttribute("dir", "auto");
   });
 
   it("renders a Generate button", () => {
@@ -102,12 +105,13 @@ describe("ImageForm", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("toggles AI Prompt Enhance via the store", async () => {
+  it("keeps unadmitted AI Prompt Enhance disabled", async () => {
     render(<ImageForm />);
     const toggle = screen.getByRole("switch", { name: /ai prompt enhance/i });
     expect(toggle).toHaveAttribute("aria-checked", "false");
     await userEvent.click(toggle);
-    expect(useSimpleStudioStore.getState().rewriteEnabled).toBe(true);
+    expect(toggle).toBeDisabled();
+    expect(useSimpleStudioStore.getState().rewriteEnabled).toBe(false);
   });
 
   it("shows enhanced prompt preview when rewriteEnabled and rewrittenPrompt set", () => {

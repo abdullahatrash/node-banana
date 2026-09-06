@@ -58,7 +58,7 @@ describe("withStudioAuth", () => {
     mockIsDatabaseConfigured.mockReturnValue(false);
     const handler = vi.fn();
 
-    const route = withStudioAuth({ route: "/api/studio/test", action: "read" }, handler);
+    const route = withStudioAuth({ route: "/api/studio/test", action: "read", permission: "workspaces:read" }, handler);
     const response = await route(createRequest(), undefined as never);
     const data = await response.json();
 
@@ -77,7 +77,7 @@ describe("withStudioAuth", () => {
     });
     const handler = vi.fn();
 
-    const route = withStudioAuth({ route: "/api/studio/test", action: "read" }, handler);
+    const route = withStudioAuth({ route: "/api/studio/test", action: "read", permission: "workspaces:read" }, handler);
     const response = await route(createRequest(), undefined as never);
     const data = await response.json();
 
@@ -96,7 +96,7 @@ describe("withStudioAuth", () => {
     });
     const handler = vi.fn();
 
-    const route = withStudioAuth({ route: "/api/studio/test", action: "read" }, handler);
+    const route = withStudioAuth({ route: "/api/studio/test", action: "read", permission: "workspaces:read" }, handler);
     const response = await route(createRequest(), undefined as never);
     const data = await response.json();
 
@@ -110,7 +110,7 @@ describe("withStudioAuth", () => {
     const handlerResponse = NextResponse.json({ success: true, data: "ok" });
     const handler = vi.fn().mockResolvedValue(handlerResponse);
 
-    const route = withStudioAuth({ route: "/api/studio/test", action: "read" }, handler);
+    const route = withStudioAuth({ route: "/api/studio/test", action: "read", permission: "workspaces:read" }, handler);
     const request = createRequest();
     const response = await route(request, undefined as never);
     const data = await response.json();
@@ -120,6 +120,21 @@ describe("withStudioAuth", () => {
     expect(handler).toHaveBeenCalledWith(request, authorizedResult, undefined);
   });
 
+  it("forwards an exact product capability instead of inferring Workspace mutation", async () => {
+    mockAuthorizeStudioRequest.mockResolvedValue(authorizedResult);
+    const route = withStudioAuth(
+      { route: "/api/product-support/submit", action: "write", permission: "product:support:submit" },
+      vi.fn().mockResolvedValue(NextResponse.json({ success: true })),
+    );
+    const request = createRequest();
+    await route(request, undefined as never);
+    expect(mockAuthorizeStudioRequest).toHaveBeenCalledWith(request, {
+      route: "/api/product-support/submit",
+      action: "write",
+      permission: "product:support:submit",
+    });
+  });
+
   it("returns 500 with generic message when handler throws (not leaking error.message)", async () => {
     mockAuthorizeStudioRequest.mockResolvedValue(authorizedResult);
     const canary =
@@ -127,7 +142,7 @@ describe("withStudioAuth", () => {
     const handler = vi.fn().mockRejectedValue(new Error(canary));
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const route = withStudioAuth({ route: "/api/studio/test", action: "write" }, handler);
+    const route = withStudioAuth({ route: "/api/studio/test", action: "write", permission: "workspaces:write" }, handler);
     const response = await route(createRequest(), undefined as never);
     const data = await response.json();
 
@@ -163,7 +178,7 @@ describe("withStudioAuth", () => {
     const handler = vi.fn().mockRejectedValue(new Error("private failure"));
 
     const route = withStudioAuth(
-      { route: "/api/studio/test", action: "write" },
+      { route: "/api/studio/test", action: "write", permission: "workspaces:write" },
       handler,
     );
     const response = await route(createRequest(), undefined as never);
@@ -182,7 +197,7 @@ describe("withStudioAuth", () => {
 
     const context = { params: Promise.resolve({ assetId: "asset_abc" }) };
     const route = withStudioAuth<typeof context>(
-      { route: "/api/studio/assets/[assetId]", action: "read" },
+      { route: "/api/studio/assets/[assetId]", action: "read", permission: "assets:read" },
       handler,
     );
 

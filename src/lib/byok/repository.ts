@@ -3,6 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 
 import { getDb } from "@/lib/db";
 import { workspaceProviderKeys } from "@/lib/db/schema";
+import { readConfiguredSecret } from "@/lib/configured-secret";
 
 import { decryptProviderKey, encryptProviderKey } from "./crypto";
 import { maskProviderKey } from "./mask";
@@ -35,6 +36,20 @@ export interface ProviderKeySummary {
   lastValidatedAt: Date | null;
   updatedAt: Date;
 }
+
+export type DurableProviderCredentialRef = {
+  id: string;
+  provider: ByokProvider;
+  source?: "workspace";
+  /** Exact vault-row revision. Rotation deliberately invalidates in-flight resolution. */
+  updatedAt: string;
+} | {
+  id: string;
+  provider: ByokProvider;
+  source: "managed";
+  /** Operator-controlled revision; rotation deliberately invalidates in-flight resolution. */
+  revision: string;
+};
 
 interface ProviderKeyRow {
   provider: string;
@@ -189,4 +204,51 @@ export async function resolveProviderKey(
 
   if (!row) return null;
   return decryptProviderKey(row.keyEncrypted);
+}
+
+/** Resolve a stored key and pin the exact durable vault revision used by async work. */
+export async function resolveDurableProviderKey(
+  workspaceId: string,
+  provider: ByokProvider,
+): Promise<{ key: string; ref: DurableProviderCredentialRef } | null> {
+  const [row] = await getDb()
+    .select({ id: workspaceProviderKeys.id, keyEncrypted: workspaceProviderKeys.keyEncrypted, updatedAt: workspaceProviderKeys.updatedAt })
+    .from(workspaceProviderKeys)
+    .where(and(eq(workspaceProviderKeys.workspaceId, workspaceId), eq(workspaceProviderKeys.provider, provider)))
+    .limit(1);
+  if (!row) return null;
+  return { key: decryptProviderKey(row.keyEncrypted), ref: { id: row.id, provider, updatedAt: row.updatedAt.toISOString() } };
+}
+
+/** Re-resolve only the exact credential revision admitted for an async effect. */
+export async function resolveProviderKeyByRef(
+  workspaceId: string,
+  ref: DurableProviderCredentialRef,
+): Promise<string | null> {
+  if (ref.source === "managed") {
+    if (ref.provider !== "replicate" || ref.id !== "managed:replicate") return null;
+    const revision = process.env.REPLICATE_MANAGED_KEY_REVISION?.trim();
+    const key = readConfiguredSecret(process.env.REPLICATE_MANAGED_API_TOKEN);
+    return key && revision && revision === ref.revision ? key : null;
+  }
+  const [row] = await getDb()
+    .select({ keyEncrypted: workspaceProviderKeys.keyEncrypted })
+    .from(workspaceProviderKeys)
+    .where(and(
+      eq(workspaceProviderKeys.workspaceId, workspaceId),
+      eq(workspaceProviderKeys.id, ref.id),
+      eq(workspaceProviderKeys.provider, ref.provider),
+      eq(workspaceProviderKeys.updatedAt, new Date(ref.updatedAt)),
+    ))
+    .limit(1);
+  return row ? decryptProviderKey(row.keyEncrypted) : null;
+}
+
+/** Resolve the platform-managed credential without ever exposing it to a Workspace surface. */
+export function resolveManagedProviderKey(provider: ByokProvider, environment: NodeJS.ProcessEnv = process.env): { key: string; ref: DurableProviderCredentialRef } | null {
+  if (provider !== "replicate") return null;
+  const key = readConfiguredSecret(environment.REPLICATE_MANAGED_API_TOKEN);
+  const revision = environment.REPLICATE_MANAGED_KEY_REVISION?.trim();
+  if (!key || !revision || revision.length > 200) return null;
+  return { key, ref: { id: "managed:replicate", provider, source: "managed", revision } };
 }

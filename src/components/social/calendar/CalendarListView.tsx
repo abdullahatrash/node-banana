@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo } from "react"
+import { useFormatter, useTranslations } from "next-intl"
 import { format } from "date-fns"
 import { useRouter } from "next/navigation"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
@@ -12,12 +13,16 @@ import { Button } from "@/components/ui/button"
 import { retrySocialPost } from "@/lib/social/client"
 import { useToast } from "@/components/Toast"
 import type { SocialPlatform, SocialPostStatus } from "@/lib/db/schema"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 export function CalendarListView() {
+  const t = useTranslations("social.calendarUi")
+  const formatValue = useFormatter()
   const { posts } = useSocialCalendarStore()
   const accounts = useSocialAccountsStore((s) => s.accounts)
   const router = useRouter()
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const fetchPosts = useSocialCalendarStore((s) => s.fetchPosts)
 
   // Group by date
@@ -36,7 +41,7 @@ export function CalendarListView() {
   if (posts.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center py-12">
-        <p className="text-sm text-muted-foreground">No posts this week</p>
+        <p className="text-sm text-muted-foreground">{t("noPostsThisWeek")}</p>
       </div>
     )
   }
@@ -44,13 +49,10 @@ export function CalendarListView() {
   async function handleRetry(postId: string) {
     try {
       await retrySocialPost(postId)
-      showToast("Post re-queued", "success")
+      showToast(t("toast.requeued"), "success")
       fetchPosts()
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : "Retry failed",
-        "error",
-      )
+      showClientError(showToast, error, t("errors.retry"))
     }
   }
 
@@ -60,8 +62,8 @@ export function CalendarListView() {
         <div key={dateKey} className="mb-6">
           <h3 className="mb-2 text-xs font-medium text-muted-foreground">
             {dateKey !== "unknown"
-              ? format(new Date(dateKey), "EEEE, MMMM d, yyyy")
-              : "Unscheduled"}
+              ? formatValue.dateTime(new Date(dateKey), { weekday: "long", year: "numeric", month: "long", day: "numeric" })
+              : t("unscheduled")}
           </h3>
           <div className="space-y-1.5">
             {datePosts.map((post) => {
@@ -82,39 +84,42 @@ export function CalendarListView() {
                     size={16}
                   />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs">
-                      {post.content?.slice(0, 80) || "No content"}
+                    <p dir="auto" className="truncate text-xs">
+                      {post.content?.slice(0, 80) || t("noContent")}
+                    </p>
+                    <p className="truncate text-[10px] text-muted-foreground">
+                      {t(`authority.${post.authority.kind}`)}
                     </p>
                   </div>
                   <Badge
                     variant="secondary"
                     className={`text-[10px] ${statusConfig?.color ?? ""}`}
                   >
-                    {statusConfig?.label ?? post.status}
+                    {t(`status.${post.status}`)}
                   </Badge>
                   {time && (
                     <span className="text-[10px] text-muted-foreground">
-                      {format(new Date(time), "HH:mm")}
+                      {formatValue.dateTime(new Date(time), { hour: "2-digit", minute: "2-digit" })}
                     </span>
                   )}
-                  {post.status === "draft" && (
+                  {post.authority.kind === "legacy_compatibility" && post.status === "draft" && (
                     <Button
                       variant="ghost"
                       size="sm"
                       className="h-6 px-2 text-[10px]"
                       onClick={() => router.push(`/social/compose/${post.id}`)}
                     >
-                      Edit
+                      {t("actions.edit")}
                     </Button>
                   )}
-                  {post.status === "failed" && (
+                  {post.authority.kind === "legacy_compatibility" && post.status === "failed" && (
                     <Button
                       variant="ghost"
                       size="sm"
                       className="h-6 px-2 text-[10px] text-destructive"
                       onClick={() => handleRetry(post.id)}
                     >
-                      Retry
+                      {t("actions.retry")}
                     </Button>
                   )}
                 </div>

@@ -56,6 +56,7 @@ vi.mock("@/lib/agent-runtime/server-dispatcher", () => ({
       },
   },
 }));
+vi.mock("@/lib/governance/step-up-http", () => ({ requireGovernanceStepUp: vi.fn(async () => null) }));
 
 import { GET, POST } from "../route";
 

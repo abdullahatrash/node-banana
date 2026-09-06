@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import {
   Avatar,
   AvatarFallback,
@@ -20,9 +21,13 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { EllipsisVerticalIcon, CircleUserRoundIcon, CreditCardIcon, BellIcon, LogOutIcon, LanguagesIcon } from "lucide-react"
+import { EllipsisVerticalIcon, CircleUserRoundIcon, LogOutIcon, LanguagesIcon } from "lucide-react"
 import { useDirectionStore } from "@/store/directionStore"
 import { useRouter } from "next/navigation"
+import { useLocale, useTranslations } from "next-intl"
+import { authClient } from "@/lib/auth/client"
+import { getActiveWorkspaceId } from "@/lib/studio/client"
+import { saveInterfaceLocalePreference } from "@/lib/interface-locale/client"
 
 export function NavUser({
   user,
@@ -34,11 +39,38 @@ export function NavUser({
   }
 }) {
   const { isMobile } = useSidebar()
-  const { locale, setLocale } = useDirectionStore()
+  const locale = useLocale()
+  const setLocale = useDirectionStore((state) => state.setLocale)
   const router = useRouter()
+  const t = useTranslations("common")
+  const [isSavingLocale, setIsSavingLocale] = useState(false)
+  const initials = user.name
+    .trim()
+    .split(/\s+/u)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toLocaleUpperCase() || "—"
 
-  function toggleLanguage() {
-    setLocale(locale === "en" ? "ar" : "en")
+  async function toggleLanguage() {
+    if (isSavingLocale) return
+    const next = locale === "en" ? "ar" : "en"
+    setIsSavingLocale(true)
+    setLocale(next)
+    const workspaceId = getActiveWorkspaceId()
+    try {
+      await saveInterfaceLocalePreference({ locale: next, workspaceId })
+      router.refresh()
+    } catch {
+      setLocale(locale === "ar" ? "ar" : "en")
+    } finally {
+      setIsSavingLocale(false)
+    }
+  }
+
+  async function logOut() {
+    await authClient.signOut()
+    router.replace("/sign-in")
     router.refresh()
   }
 
@@ -48,16 +80,16 @@ export function NavUser({
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <SidebarMenuButton size="lg" className="aria-expanded:bg-muted" />
+              <SidebarMenuButton id="shell-user-menu" size="lg" className="aria-expanded:bg-muted" />
             }
           >
             <Avatar className="size-8 rounded-lg grayscale">
               <AvatarImage src={user.avatar} alt={user.name} />
-              <AvatarFallback className="rounded-lg">CN</AvatarFallback>
+              <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
             </Avatar>
             <div className="grid flex-1 text-start text-sm leading-tight">
               <span className="truncate font-medium">{user.name}</span>
-              <span className="truncate text-xs text-foreground/70">
+              <span dir="ltr" className="truncate text-start text-xs text-foreground/70">
                 {user.email}
               </span>
             </div>
@@ -65,7 +97,7 @@ export function NavUser({
           </DropdownMenuTrigger>
           <DropdownMenuContent
             className="min-w-56"
-            side={isMobile ? "bottom" : "right"}
+            side={isMobile ? "bottom" : locale === "ar" ? "left" : "right"}
             align="end"
             sideOffset={4}
           >
@@ -74,11 +106,11 @@ export function NavUser({
                 <div className="flex items-center gap-2 px-1 py-1.5 text-start text-sm">
                   <Avatar className="size-8">
                     <AvatarImage src={user.avatar} alt={user.name} />
-                    <AvatarFallback className="rounded-lg">CN</AvatarFallback>
+                    <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
                   </Avatar>
                   <div className="grid flex-1 text-start text-sm leading-tight">
                     <span className="truncate font-medium">{user.name}</span>
-                    <span className="truncate text-xs text-muted-foreground">
+                    <span dir="ltr" className="truncate text-start text-xs text-muted-foreground">
                       {user.email}
                     </span>
                   </div>
@@ -87,32 +119,26 @@ export function NavUser({
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem>
+              <DropdownMenuItem onClick={() => router.push("/settings?section=account")}>
                 <CircleUserRoundIcon
                 />
-                Account
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <CreditCardIcon
-                />
-                Billing
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <BellIcon
-                />
-                Notifications
+                {t("account")}
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={toggleLanguage}>
+            <DropdownMenuItem
+              disabled={isSavingLocale}
+              aria-busy={isSavingLocale}
+              onSelect={() => void toggleLanguage()}
+            >
               <LanguagesIcon />
-              {locale === "en" ? "العربية" : "English"}
+              {t(`languageSwitch.${locale === "en" ? "ar" : "en"}`)}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void logOut()}>
               <LogOutIcon
               />
-              Log out
+              {t("logOut")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

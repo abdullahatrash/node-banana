@@ -7,7 +7,7 @@ import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 const repository = new DrizzleAgentAuthorizationRepository(getDb);
 
 export const GET = withStudioAuth<undefined>(
-  { route: "/api/agents/authorization-decisions", action: "read" },
+  { route: "/api/agents/authorization-decisions", action: "read", permission: "workspaces:read" },
   async (request, authz) => {
     const denied = requireAgentManagerRole(authz.role);
     if (denied) {

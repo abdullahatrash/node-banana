@@ -12,7 +12,7 @@ const VALID_MODES = new Set(["photo", "video", "copy"]);
 
 // Public prompts require authentication but not workspace write access
 export const GET = withStudioAuth<undefined>(
-  { route: "/api/studio/prompts/public", action: "read" },
+  { route: "/api/studio/prompts/public", action: "read", permission: "projects:read" },
   async (request: NextRequest): Promise<NextResponse<PublicPromptsGetResponse>> => {
     const mode = request.nextUrl.searchParams.get("mode") || undefined;
     if (mode && !VALID_MODES.has(mode)) {

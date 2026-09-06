@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
+import { ensureWorkspaceFreePlan } from "@/lib/commercial/free-plan";
 import {
   assetTypeEnum,
   assets,
@@ -20,6 +21,7 @@ import {
 type AssetUploadState = "pending" | "ready" | "failed";
 
 export const DEFAULT_WORKSPACE_QUOTA_BYTES = 10 * 1024 * 1024 * 1024;
+export const SOFT_DELETE_RETENTION_DAYS = 30;
 
 function asMetadataRecord(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) {
@@ -250,6 +252,38 @@ export async function ensureWorkspaceStorageLimit(
     .onConflictDoNothing();
 }
 
+export type WorkspaceStorageSummary = {
+  quotaBytes: number;
+  usedBytes: number;
+  pendingReservedBytes: number;
+  activeAssetCount: number;
+  recoverableDeletedBytes: number;
+  recoverableDeletedCount: number;
+  byType: Array<{ type: (typeof assetTypeEnum.enumValues)[number]; bytes: number; count: number }>;
+  measuredAt: string;
+};
+
+export async function getWorkspaceStorageSummary(workspaceId: string): Promise<WorkspaceStorageSummary> {
+  const db = getDb();
+  const [limitRows, activeRows, pendingRows, deletedRows] = await Promise.all([
+    db.select({ quotaBytes: workspaceStorageLimits.quotaBytes }).from(workspaceStorageLimits).where(eq(workspaceStorageLimits.workspaceId, workspaceId)).limit(1),
+    db.select({ type: assets.type, bytes: sql<string>`coalesce(sum(${assets.sizeBytes}), 0)::text`, count: sql<string>`count(*)::text` }).from(assets).where(and(eq(assets.workspaceId, workspaceId), isNull(assets.deletedAt), sql`coalesce(${assets.metadata} ->> 'uploadState', 'ready') <> 'failed'`)).groupBy(assets.type),
+    db.select({ bytes: sql<string>`coalesce(sum(case when jsonb_typeof(${assets.metadata} -> 'expectedSizeBytes') = 'number' then (${assets.metadata} ->> 'expectedSizeBytes')::bigint else 0 end), 0)::text` }).from(assets).where(and(eq(assets.workspaceId, workspaceId), isNull(assets.deletedAt), sql`${assets.metadata} ->> 'uploadState' = 'pending'`, sql`case when pg_input_is_valid(${assets.metadata} ->> 'pendingExpiresAt', 'timestamptz') then (${assets.metadata} ->> 'pendingExpiresAt')::timestamptz > now() else false end`)),
+    db.select({ bytes: sql<string>`coalesce(sum(${assets.sizeBytes}), 0)::text`, count: sql<string>`count(*)::text` }).from(assets).where(and(eq(assets.workspaceId, workspaceId), isNotNull(assets.deletedAt), gte(assets.deletedAt, sql`now() - make_interval(days => ${SOFT_DELETE_RETENTION_DAYS})`))),
+  ]);
+  const byType = activeRows.map((row) => ({ type: row.type, bytes: parseByteCount(row.bytes), count: parseByteCount(row.count) }));
+  return {
+    quotaBytes: limitRows[0]?.quotaBytes ?? DEFAULT_WORKSPACE_QUOTA_BYTES,
+    usedBytes: byType.reduce((sum, row) => sum + row.bytes, 0),
+    pendingReservedBytes: parseByteCount(pendingRows[0]?.bytes),
+    activeAssetCount: byType.reduce((sum, row) => sum + row.count, 0),
+    recoverableDeletedBytes: parseByteCount(deletedRows[0]?.bytes),
+    recoverableDeletedCount: parseByteCount(deletedRows[0]?.count),
+    byType,
+    measuredAt: new Date().toISOString(),
+  };
+}
+
 export async function ensureWorkspaceUser(
   workspaceId: string,
   userId: string,
@@ -304,6 +338,7 @@ export async function ensureWorkspaceUser(
     userId,
     role: "owner",
   });
+  await ensureWorkspaceFreePlan(workspaceId, now);
 }
 
 function buildWorkspaceName(userName: string | null | undefined, userEmail: string | null | undefined): string {
@@ -354,6 +389,7 @@ export async function ensurePersonalWorkspaceForUser(input: {
       userId: input.userId,
       role: existingMembership.role,
     });
+    await ensureWorkspaceFreePlan(existingMembership.workspaceId);
     return {
       workspaceId: existingMembership.workspaceId,
       slug: existingMembership.slug,
@@ -423,6 +459,7 @@ export async function ensurePersonalWorkspaceForUser(input: {
       userId: input.userId,
       role: "owner",
     });
+    await ensureWorkspaceFreePlan(createdWorkspace.id, now);
 
     return {
       workspaceId: createdWorkspace.id,
@@ -455,6 +492,10 @@ interface FinalizeAssetUploadInput {
   sizeBytes?: number;
   checksum?: string;
   mimeType?: string;
+  width?: number;
+  height?: number;
+  durationSeconds?: number | null;
+  metadata?: Record<string, unknown>;
   error?: string;
 }
 
@@ -486,6 +527,7 @@ export async function finalizeAssetUpload(input: FinalizeAssetUploadInput) {
   const existingMetadata = asMetadataRecord(existing.metadata);
   const nextMetadata: Record<string, unknown> = {
     ...existingMetadata,
+    ...(input.metadata ?? {}),
     uploadState: input.uploadState,
   };
 
@@ -510,6 +552,9 @@ export async function finalizeAssetUpload(input: FinalizeAssetUploadInput) {
         typeof input.sizeBytes === "number" ? input.sizeBytes : existing.sizeBytes,
       checksum: input.checksum ?? existing.checksum,
       mimeType: input.mimeType ?? existing.mimeType,
+      width: input.width ?? existing.width,
+      height: input.height ?? existing.height,
+      durationSeconds: input.durationSeconds === undefined ? existing.durationSeconds : input.durationSeconds,
       updatedAt: now,
     })
     .where(
@@ -551,6 +596,7 @@ interface RecordPendingS3AssetWithQuotaInput {
   mimeType?: string | null;
   originalFileName?: string | null;
   expectedSizeBytes: number;
+  metadata?: Record<string, unknown>;
 }
 
 export async function recordPendingS3AssetWithQuota(
@@ -568,6 +614,12 @@ export async function recordPendingS3AssetWithQuota(
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext(${input.workspaceId}))`,
     );
+
+    const [existing] = await tx.select().from(assets).where(and(eq(assets.storageProvider, "s3"), eq(assets.storageKey, input.storageKey), isNull(assets.deletedAt))).limit(1);
+    if (existing) {
+      if (existing.workspaceId !== input.workspaceId) throw new StudioAssetNotFoundError();
+      return existing;
+    }
 
     await tx
       .insert(workspaceStorageLimits)
@@ -650,6 +702,7 @@ export async function recordPendingS3AssetWithQuota(
         storageKey: input.storageKey,
         mimeType: input.mimeType || null,
         metadata: {
+          ...(input.metadata ?? {}),
           uploadState: "pending",
           originalFileName: input.originalFileName || null,
           pendingExpiresAt,
@@ -665,6 +718,7 @@ export async function recordPendingS3AssetWithQuota(
           projectId: input.projectId || null,
           mimeType: input.mimeType || null,
           metadata: {
+            ...(input.metadata ?? {}),
             uploadState: "pending",
             originalFileName: input.originalFileName || null,
             pendingExpiresAt,
@@ -862,7 +916,7 @@ export async function listPurgeableSoftDeletedAssets(params: {
   limit?: number;
 }) {
   const db = getDb();
-  const retentionDays = params.retentionDays ?? 30;
+  const retentionDays = params.retentionDays ?? SOFT_DELETE_RETENTION_DAYS;
   const limit = params.limit ?? 100;
 
   return db

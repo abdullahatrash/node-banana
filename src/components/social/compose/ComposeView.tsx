@@ -27,14 +27,20 @@ import {
   pickSelectedPublishingSettings,
   validateSelectedPublishingSettings,
 } from "@/lib/social/publishing-settings"
+import { useTranslations } from "next-intl"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { useToast } from "@/components/Toast"
 import type { SocialPlatform } from "@/lib/db/schema"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 export function ComposeView() {
+  const t = useTranslations("social.compose")
+  const tShell = useTranslations("shell.actions")
+  const tPosts = useTranslations("social.posts.actions")
   const router = useRouter()
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const [isSubmitting, setIsSubmitting] = useState<
     "draft" | "schedule" | "publish" | null
   >(null)
@@ -58,6 +64,7 @@ export function ComposeView() {
   const canPublish = hasContent && hasChannels
   const canSchedule = canPublish && scheduledAt && scheduledAt > new Date()
   const sourceAccountId = editSourceAccountId ?? selectedAccountIds[0] ?? null
+  const mediaReferences = mediaUrls.map((media) => ({ resourceKind: media.resourceKind ?? "studio_asset" as const, id: media.assetId ?? "", ...(media.assetDigest ? { digest: media.assetDigest } : {}) }))
 
   function getAccountMaps() {
     const platformByChannelId: Record<string, SocialPlatform> = {}
@@ -100,6 +107,7 @@ export function ComposeView() {
         await updateSocialPost(postId, {
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
           platformSettings: sourceAccountId
             ? preparedSettings[sourceAccountId]
             : undefined,
@@ -116,18 +124,16 @@ export function ComposeView() {
           socialAccountId: accountId,
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
           platformSettings: preparedSettings[accountId],
           scheduledAt: scheduledAt?.toISOString(),
         })
       }
-      showToast("Draft saved", "success")
+      showToast(t("toast.draftSaved"), "success")
       reset()
       router.push("/social/posts")
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : "Failed to save draft",
-        "error",
-      )
+      showClientError(showToast, error, t("errors.saveDraft"))
     } finally {
       setIsSubmitting(null)
     }
@@ -152,7 +158,7 @@ export function ComposeView() {
     if (!canSchedule) return
     const validation = validateBeforePublish()
     if (!validation.valid) {
-      showToast(validation.errors[0] ?? "Publishing settings need attention", "error")
+      showToast(validation.errors[0] ?? t("errors.settings"), "error")
       return
     }
     setIsSubmitting("schedule")
@@ -164,6 +170,7 @@ export function ComposeView() {
         const updated = await updateSocialPost(postId, {
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
           platformSettings: sourceAccountId
             ? preparedSettings[sourceAccountId]
             : undefined,
@@ -181,6 +188,7 @@ export function ComposeView() {
           socialAccountId: accountId,
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
           platformSettings: preparedSettings[accountId],
           scheduledAt: scheduledAt!.toISOString(),
         })
@@ -190,19 +198,16 @@ export function ComposeView() {
       const { total, failed } = await publishAll(publishQueue)
       if (failed > 0) {
         showToast(
-          `Scheduled ${total - failed} of ${total} posts. ${failed} failed.`,
+          t("toast.schedulePartial", { success: total - failed, total, failed }),
           "error",
         )
       } else {
-        showToast("Post scheduled", "success")
+        showToast(t("toast.scheduled"), "success")
       }
       reset()
       router.push("/social/calendar")
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : "Failed to schedule",
-        "error",
-      )
+      showClientError(showToast, error, t("errors.schedule"))
     } finally {
       setIsSubmitting(null)
     }
@@ -212,7 +217,7 @@ export function ComposeView() {
     if (!canPublish) return
     const validation = validateBeforePublish()
     if (!validation.valid) {
-      showToast(validation.errors[0] ?? "Publishing settings need attention", "error")
+      showToast(validation.errors[0] ?? t("errors.settings"), "error")
       return
     }
     setIsSubmitting("publish")
@@ -224,6 +229,7 @@ export function ComposeView() {
         const updated = await updateSocialPost(postId, {
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
           platformSettings: sourceAccountId
             ? preparedSettings[sourceAccountId]
             : undefined,
@@ -241,6 +247,7 @@ export function ComposeView() {
           socialAccountId: accountId,
           content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
           platformSettings: preparedSettings[accountId],
         })
         publishQueue.push(created.id)
@@ -249,50 +256,47 @@ export function ComposeView() {
       const { total, failed } = await publishAll(publishQueue)
       if (failed > 0) {
         showToast(
-          `Published ${total - failed} of ${total} posts. ${failed} failed.`,
+          t("toast.publishPartial", { success: total - failed, total, failed }),
           "error",
         )
       } else {
-        showToast("Publishing...", "success")
+        showToast(t("toast.publishing"), "success")
       }
       reset()
       router.push("/social/calendar")
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : "Failed to publish",
-        "error",
-      )
+      showClientError(showToast, error, t("errors.publish"))
     } finally {
       setIsSubmitting(null)
     }
   }
 
   return (
-    <div className="flex flex-1 flex-col">
+    <main className="flex min-w-0 flex-1 flex-col">
       {/* Top bar */}
-      <div className="flex items-center gap-2 border-b px-4 py-2">
+      <div className="flex min-w-0 items-center gap-2 border-b px-4 py-2">
         <Button
           variant="ghost"
           size="sm"
           onClick={() => {
-            if (isDirty && !confirm("Discard unsaved changes?")) return
+            if (isDirty && !confirm(t("confirmDiscard"))) return
             reset()
             router.push("/social/calendar")
           }}
         >
-          <ArrowLeftIcon className="size-4" />
-          Back
+          <ArrowLeftIcon className="size-4 rtl:rotate-180" />
+          {t("back")}
         </Button>
         <Separator orientation="vertical" className="h-4" />
-        <span className="text-sm font-medium">
-          {postId ? "Edit Draft" : "New Post"}
+        <span className="min-w-0 truncate text-sm font-medium">
+          {postId ? tPosts("edit") : tShell("newPost")}
         </span>
       </div>
 
       {/* Main content */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:flex-row">
         {/* Left: editor */}
-        <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-6">
+        <div className="flex min-w-0 flex-1 flex-col gap-5 overflow-y-auto p-4 sm:p-6">
           <PlatformSelector />
           <PublishingSettingsPanels />
           <PostEditor />
@@ -308,7 +312,7 @@ export function ComposeView() {
       </div>
 
       {/* Bottom action bar */}
-      <div className="flex items-center gap-2 border-t px-6 py-3">
+      <div className="flex flex-wrap items-center gap-2 border-t px-4 py-3 sm:px-6">
         <Button
           variant="outline"
           size="sm"
@@ -320,7 +324,7 @@ export function ComposeView() {
           ) : (
             <SaveIcon className="size-4" />
           )}
-          Save Draft
+          {t("saveDraft")}
         </Button>
 
         <Button
@@ -334,7 +338,7 @@ export function ComposeView() {
           ) : (
             <CalendarClockIcon className="size-4" />
           )}
-          Schedule
+          {t("schedule")}
         </Button>
 
         <Button
@@ -347,9 +351,9 @@ export function ComposeView() {
           ) : (
             <SendIcon className="size-4" />
           )}
-          Publish Now
+          {t("publishNow")}
         </Button>
       </div>
-    </div>
+    </main>
   )
 }

@@ -1,0 +1,21 @@
+CREATE TABLE "runtime_workflow_run_spend_quote_redemptions" (
+  "quote_id" text PRIMARY KEY NOT NULL,
+  "workspace_id" text NOT NULL,
+  "run_id" text NOT NULL,
+  "principal_id" text NOT NULL,
+  "key_id" text NOT NULL,
+  "amount" text NOT NULL,
+  "currency" text NOT NULL,
+  "pricing_snapshot_ids" jsonb NOT NULL,
+  "target_state_digest" text NOT NULL,
+  "ceiling_digest" text NOT NULL,
+  "quote" jsonb NOT NULL,
+  "redeemed_at" timestamptz NOT NULL,
+  CONSTRAINT "runtime_workflow_run_spend_quote_redemptions_run_unique" UNIQUE("workspace_id", "run_id"),
+  CONSTRAINT "runtime_workflow_run_spend_quote_redemptions_run_fk" FOREIGN KEY ("workspace_id", "run_id") REFERENCES "workflow_runs"("workspace_id", "id") ON DELETE RESTRICT,
+  CONSTRAINT "runtime_workflow_run_spend_quote_redemptions_principal_fk" FOREIGN KEY ("workspace_id", "principal_id") REFERENCES "agent_principals"("workspace_id", "id") ON DELETE RESTRICT,
+  CONSTRAINT "runtime_workflow_run_spend_quote_redemptions_amount_check" CHECK ("amount" ~ '^(0|[1-9][0-9]*)(\.[0-9]{1,6})?$'),
+  CONSTRAINT "runtime_workflow_run_spend_quote_redemptions_currency_check" CHECK ("currency" ~ '^[A-Z]{3}$'),
+  CONSTRAINT "runtime_workflow_run_spend_quote_redemptions_target_digest_check" CHECK ("target_state_digest" ~ '^sha256:[a-f0-9]{64}$'),
+  CONSTRAINT "runtime_workflow_run_spend_quote_redemptions_ceiling_digest_check" CHECK ("ceiling_digest" ~ '^sha256:[a-f0-9]{64}$')
+);

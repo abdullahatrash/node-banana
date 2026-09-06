@@ -684,10 +684,10 @@ BEGIN
 		AND event_delta >= 3
 		AND event_types[event_delta - 2] = 'step.attempt.reconciled'
 		AND event_types[event_delta - 1] = 'step.attempt.completed'
-		AND event_types[event_delta] = CASE
+		AND event_types[event_delta] = (CASE
 			WHEN NEW.state = 'waiting' THEN 'run.waiting'
 			ELSE 'run.completed'
-		END THEN
+		END) THEN
 		SELECT coalesce(bool_and("type" = 'artifact.generated'), true)
 		INTO prefix_is_artifacts
 		FROM "workflow_run_events"

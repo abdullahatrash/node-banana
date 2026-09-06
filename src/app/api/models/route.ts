@@ -39,6 +39,7 @@ import {
   WaveSpeedApiSchema,
 } from "@/lib/providers/cache";
 import { searchMissRetryThrottle } from "./search-throttle";
+import { readConfiguredSecret } from "@/lib/configured-secret";
 
 // API base URLs
 const REPLICATE_API_BASE = "https://api.replicate.com/v1";
@@ -1023,10 +1024,10 @@ export async function GET(
     : null;
 
   // Get API keys from headers, falling back to env variables
-  const replicateKey = request.headers.get("X-Replicate-Key") || process.env.REPLICATE_API_KEY || null;
-  const falKey = request.headers.get("X-Fal-Key") || process.env.FAL_API_KEY || null;
-  const kieKey = request.headers.get("X-Kie-Key") || process.env.KIE_API_KEY || null;
-  const wavespeedKey = request.headers.get("X-WaveSpeed-Key") || process.env.WAVESPEED_API_KEY || null;
+  const replicateKey = readConfiguredSecret(request.headers.get("X-Replicate-Key")) || readConfiguredSecret(process.env.REPLICATE_API_KEY);
+  const falKey = readConfiguredSecret(request.headers.get("X-Fal-Key")) || readConfiguredSecret(process.env.FAL_API_KEY);
+  const kieKey = readConfiguredSecret(request.headers.get("X-Kie-Key")) || readConfiguredSecret(process.env.KIE_API_KEY);
+  const wavespeedKey = readConfiguredSecret(request.headers.get("X-WaveSpeed-Key")) || readConfiguredSecret(process.env.WAVESPEED_API_KEY);
 
   // Build list of all available providers (have keys from env or client headers)
   const availableProviders: string[] = ["gemini"]; // Gemini always available

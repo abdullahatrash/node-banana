@@ -1,17 +1,22 @@
 "use client"
 
-import { useRef, useState } from "react"
-import { KeyRoundIcon, Loader2Icon, ShieldCheckIcon } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { useFormatter, useTranslations } from "next-intl"
+import Link from "next/link"
+import { KeyRoundIcon, Loader2Icon, RouteIcon, ShieldCheckIcon, WalletCardsIcon } from "lucide-react"
 import { useToast } from "@/components/Toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { StudioApiError } from "@/lib/studio/client"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 import {
+  beginProviderKeyStepUpRequest,
   deleteProviderKeyRequest,
   listProviderKeysRequest,
   saveProviderKeyRequest,
   type ProviderKeySummaryView,
+  verifyProviderKeyStepUpRequest,
 } from "@/lib/byok/client"
 import {
   BYOK_PROVIDERS,
@@ -19,76 +24,133 @@ import {
   type ByokProvider,
 } from "@/lib/byok/providers"
 
-function formatDate(value: string | null): string {
-  if (!value) return "Never"
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return "—"
-  return date.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  })
-}
-
 export function ProviderKeysSettings() {
+  const t = useTranslations("social.settings.providerKeys")
+  const { show: showClientError } = useClientErrorPresentation()
+  const formatValue = useFormatter()
+  const formatDate = (value: string | null) => {
+    if (!value) return t("never")
+    const date = new Date(value)
+    return Number.isNaN(date.getTime())
+      ? "—"
+      : formatValue.dateTime(date, { year: "numeric", month: "short", day: "numeric" })
+  }
   const { show: showToast } = useToast()
   const [keys, setKeys] = useState<ProviderKeySummaryView[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [provider, setProvider] = useState<ByokProvider>(BYOK_PROVIDERS[0])
   const [apiKey, setApiKey] = useState("")
   const [isSaving, setIsSaving] = useState(false)
+  const [challenge, setChallenge] = useState<{ challengeId: string; expiresAt: string } | null>(null)
+  const [verificationCode, setVerificationCode] = useState("")
+  const [stepUpToken, setStepUpToken] = useState("")
+  const [isRequestingCode, setIsRequestingCode] = useState(false)
+  const [isVerifyingCode, setIsVerifyingCode] = useState(false)
+  const [stepUpError, setStepUpError] = useState<string | null>(null)
   const [deletingProvider, setDeletingProvider] = useState<string | null>(null)
   const initialized = useRef(false)
 
-  async function loadKeys() {
+  const loadKeys = useCallback(async () => {
     setIsLoading(true)
     try {
       setKeys(await listProviderKeysRequest())
     } catch (error) {
-      showToast(
-        error instanceof StudioApiError
-          ? error.message
-          : "Failed to load provider keys",
-        "error",
-      )
+      showClientError(showToast, error, t("errors.load"))
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [showClientError, showToast, t])
 
-  // Load once on first render — no useEffect (matches repo convention).
-  if (!initialized.current) {
+  useEffect(() => {
+    if (initialized.current) return
     initialized.current = true
-    loadKeys()
-  }
+    void loadKeys()
+  }, [loadKeys])
 
   async function handleSave(event: React.FormEvent) {
     event.preventDefault()
     const trimmed = apiKey.trim()
-    if (!trimmed || isSaving) return
+    if (!trimmed || !stepUpToken || isSaving) return
 
     setIsSaving(true)
     try {
-      await saveProviderKeyRequest(provider, trimmed)
+      await saveProviderKeyRequest(provider, trimmed, stepUpToken)
       setApiKey("")
-      showToast(`${BYOK_PROVIDER_LABELS[provider]} key saved`, "success")
+      resetStepUp()
+      showToast(t("toast.saved", { provider: BYOK_PROVIDER_LABELS[provider] }), "success")
       await loadKeys()
     } catch (error) {
-      showToast(
-        error instanceof StudioApiError || error instanceof Error
-          ? error.message
-          : "Failed to save provider key",
-        "error",
-      )
+      // A transport failure has an ambiguous outcome, while a 403 means the
+      // proof is no longer accepted. A provider-validation 422 can safely keep
+      // the still-fresh, exact-provider proof while the user corrects the key.
+      if (!(error instanceof StudioApiError && error.status === 422)) {
+        resetStepUp()
+      }
+      showClientError(showToast, error, t("errors.save"))
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  function resetStepUp() {
+    setChallenge(null)
+    setVerificationCode("")
+    setStepUpToken("")
+    setStepUpError(null)
+  }
+
+  function handleProviderChange(value: ByokProvider) {
+    setProvider(value)
+    resetStepUp()
+  }
+
+  async function requestStepUpCode() {
+    if (isRequestingCode || isVerifyingCode || isSaving) return
+    setIsRequestingCode(true)
+    setStepUpError(null)
+    try {
+      setChallenge(await beginProviderKeyStepUpRequest(provider))
+      setVerificationCode("")
+      setStepUpToken("")
+    } catch {
+      setStepUpError(t("stepUp.errors.request"))
+    } finally {
+      setIsRequestingCode(false)
+    }
+  }
+
+  async function verifyStepUpCode() {
+    if (!challenge || !/^\d{6}$/.test(verificationCode) || isVerifyingCode) return
+    setIsVerifyingCode(true)
+    setStepUpError(null)
+    try {
+      const result = await verifyProviderKeyStepUpRequest(
+        challenge.challengeId,
+        verificationCode,
+      )
+      if (!result.verified) {
+        setStepUpError(
+          t("stepUp.errors.invalid", { count: result.attemptsRemaining }),
+        )
+        return
+      }
+      if (!result.stepUpToken.trim()) {
+        setStepUpError(t("stepUp.errors.verify"))
+        return
+      }
+      setStepUpToken(result.stepUpToken)
+      setVerificationCode("")
+    } catch {
+      setStepUpError(t("stepUp.errors.verify"))
+    } finally {
+      setIsVerifyingCode(false)
     }
   }
 
   async function handleDelete(target: ByokProvider) {
     if (
       !confirm(
-        `Delete the stored ${BYOK_PROVIDER_LABELS[target]} key for this workspace?`,
+        t("confirmDelete", { provider: BYOK_PROVIDER_LABELS[target] }),
       )
     ) {
       return
@@ -98,14 +160,9 @@ export function ProviderKeysSettings() {
     try {
       await deleteProviderKeyRequest(target)
       setKeys((prev) => prev.filter((key) => key.provider !== target))
-      showToast("Provider key deleted", "success")
+      showToast(t("toast.deleted"), "success")
     } catch (error) {
-      showToast(
-        error instanceof StudioApiError
-          ? error.message
-          : "Failed to delete provider key",
-        "error",
-      )
+      showClientError(showToast, error, t("errors.delete"))
     } finally {
       setDeletingProvider(null)
     }
@@ -116,75 +173,178 @@ export function ProviderKeysSettings() {
       <div>
         <h2 className="flex items-center gap-2 text-lg font-semibold">
           <KeyRoundIcon className="size-5" />
-          Provider Keys (BYOK)
+          {t("title")}
         </h2>
         <p className="text-sm text-muted-foreground">
-          Store your own AI provider API keys per workspace. Keys are
-          validated with a live check before saving, encrypted at rest, and
-          never shown again after creation.
+          {t("description")}
         </p>
       </div>
 
+      <section aria-labelledby="provider-funding-title" className="grid gap-3 rounded-xl border bg-muted/20 p-4">
+        <div>
+          <h3 id="provider-funding-title" className="text-sm font-semibold">{t("funding.title")}</h3>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            {t.rich("funding.encryptionBoundary", {
+              encryptionKey: (chunks) => <bdi dir="ltr" className="font-mono text-xs">{chunks}</bdi>,
+            })}
+          </p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="rounded-lg border bg-background p-3">
+            <p className="flex items-center gap-2 text-sm font-medium">
+              <KeyRoundIcon className="size-4" aria-hidden="true" />
+              {t("funding.byokTitle")}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">{t("funding.byokDescription")}</p>
+          </div>
+          <div className="rounded-lg border bg-background p-3">
+            <p className="flex items-center gap-2 text-sm font-medium">
+              <WalletCardsIcon className="size-4" aria-hidden="true" />
+              {t("funding.managedTitle")}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">{t("funding.managedDescription")}</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs font-semibold">
+          <Link href="/studio/model-routing" className="inline-flex items-center gap-1.5 text-primary underline-offset-4 hover:underline">
+            <RouteIcon className="size-3.5" aria-hidden="true" />
+            {t("funding.readinessAction")}
+          </Link>
+          <Link href="/billing" className="text-primary underline-offset-4 hover:underline">
+            {t("funding.billingAction")}
+          </Link>
+        </div>
+      </section>
+
       <form
         onSubmit={handleSave}
-        className="flex flex-col gap-2 sm:flex-row sm:items-end"
+        className="grid gap-4"
       >
-        <div>
-          <Label htmlFor="provider-key-provider">Provider</Label>
-          <select
-            id="provider-key-provider"
-            aria-label="Provider"
-            className="flex h-9 w-full min-w-40 rounded-lg border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none"
-            value={provider}
-            onChange={(event) =>
-              setProvider(event.target.value as ByokProvider)
-            }
-          >
-            {BYOK_PROVIDERS.map((value) => (
-              <option key={value} value={value}>
-                {BYOK_PROVIDER_LABELS[value]}
-              </option>
-            ))}
-          </select>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <div>
+            <Label htmlFor="provider-key-provider">{t("provider")}</Label>
+            <select
+              id="provider-key-provider"
+              aria-label={t("provider")}
+              className="flex h-9 w-full min-w-40 rounded-lg border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none"
+              value={provider}
+              onChange={(event) =>
+                handleProviderChange(event.target.value as ByokProvider)
+              }
+            >
+              {BYOK_PROVIDERS.map((value) => (
+                <option key={value} value={value}>
+                  {BYOK_PROVIDER_LABELS[value]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex-1">
+            <Label htmlFor="provider-key-value">{t("apiKey")}</Label>
+            <Input
+              id="provider-key-value"
+              type="password"
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+              placeholder={t("keyPlaceholder")}
+              autoComplete="off"
+            />
+          </div>
+          <Button type="submit" disabled={!apiKey.trim() || !stepUpToken || isSaving}>
+            {isSaving ? (
+              <Loader2Icon className="size-4 animate-spin" />
+            ) : (
+              <ShieldCheckIcon className="size-4" />
+            )}
+            {t("save")}
+          </Button>
         </div>
-        <div className="flex-1">
-          <Label htmlFor="provider-key-value">API key</Label>
-          <Input
-            id="provider-key-value"
-            type="password"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            placeholder="Paste the provider's API key"
-            autoComplete="off"
-          />
-        </div>
-        <Button type="submit" disabled={!apiKey.trim() || isSaving}>
-          {isSaving ? (
-            <Loader2Icon className="size-4 animate-spin" />
+
+        <div
+          className="grid gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3"
+          aria-labelledby="provider-key-step-up-title"
+        >
+          <div>
+            <p id="provider-key-step-up-title" className="flex items-center gap-2 text-sm font-medium">
+              <ShieldCheckIcon className="size-4" aria-hidden="true" />
+              {t("stepUp.title")}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {t("stepUp.description", { provider: BYOK_PROVIDER_LABELS[provider] })}
+            </p>
+          </div>
+
+          {!challenge ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-fit"
+              disabled={isRequestingCode || isSaving}
+              onClick={requestStepUpCode}
+            >
+              {isRequestingCode && <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />}
+              {isRequestingCode ? t("stepUp.requesting") : t("stepUp.request")}
+            </Button>
+          ) : stepUpToken ? (
+            <p className="text-sm text-primary" role="status">
+              {t("stepUp.verified", { provider: BYOK_PROVIDER_LABELS[provider] })}
+            </p>
           ) : (
-            <ShieldCheckIcon className="size-4" />
+            <>
+              <p className="text-xs text-muted-foreground">{t("stepUp.sent")}</p>
+              <div className="flex flex-wrap items-end gap-3">
+                <div>
+                  <Label htmlFor="provider-key-verification-code">
+                    {t("stepUp.code")}
+                  </Label>
+                  <Input
+                    id="provider-key-verification-code"
+                    value={verificationCode}
+                    onChange={(event) => setVerificationCode(event.target.value)}
+                    inputMode="numeric"
+                    pattern="[0-9]{6}"
+                    maxLength={6}
+                    autoComplete="one-time-code"
+                    dir="ltr"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  disabled={!/^\d{6}$/.test(verificationCode) || isVerifyingCode}
+                  onClick={verifyStepUpCode}
+                >
+                  {isVerifyingCode && <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />}
+                  {isVerifyingCode ? t("stepUp.verifying") : t("stepUp.verify")}
+                </Button>
+                <Button type="button" variant="ghost" onClick={requestStepUpCode} disabled={isRequestingCode || isVerifyingCode}>
+                  {t("stepUp.resend")}
+                </Button>
+              </div>
+            </>
           )}
-          Save key
-        </Button>
+
+          <div aria-live="polite" aria-atomic="true">
+            {stepUpError ? <p className="text-sm text-destructive" role="alert">{stepUpError}</p> : null}
+          </div>
+        </div>
       </form>
 
       <div className="rounded-lg border">
         <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-4 border-b px-4 py-2.5 text-xs font-medium text-muted-foreground">
-          <span>Provider</span>
-          <span className="hidden sm:block">Key</span>
-          <span className="hidden sm:block">Updated</span>
-          <span className="text-end">Actions</span>
+          <span>{t("provider")}</span>
+          <span className="hidden sm:block">{t("key")}</span>
+          <span className="hidden sm:block">{t("updated")}</span>
+          <span className="text-end">{t("actions")}</span>
         </div>
 
         {isLoading ? (
           <div className="flex items-center justify-center gap-2 px-4 py-8 text-sm text-muted-foreground">
             <Loader2Icon className="size-4 animate-spin" />
-            Loading provider keys…
+            {t("loading")}
           </div>
         ) : keys.length === 0 ? (
           <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-            No provider keys yet. Add one above to run generation on your own
-            budget.
+            {t("empty")}
           </div>
         ) : (
           keys.map((key) => (
@@ -211,7 +371,7 @@ export function ProviderKeysSettings() {
                   {deletingProvider === key.provider ? (
                     <Loader2Icon className="size-3.5 animate-spin" />
                   ) : (
-                    "Delete"
+                    t("delete")
                   )}
                 </Button>
               </div>

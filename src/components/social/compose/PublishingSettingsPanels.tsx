@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo } from "react"
+import { useTranslations } from "next-intl"
 import type { ReactNode } from "react"
 import type { SocialPlatform } from "@/lib/db/schema"
 import { getPublishingSettingsDefinition } from "@/lib/social/publishing-settings"
@@ -95,34 +96,37 @@ function YouTubeSettings({
   settings: SettingsValue
   update: (patch: SettingsValue) => void
 }) {
+  const t = useTranslations("social.publishingSettings")
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <div className="space-y-1.5 sm:col-span-2">
-        <FieldLabel>Title</FieldLabel>
+        <FieldLabel>{t("title")}</FieldLabel>
         <Input
           value={asString(settings.title)}
+          dir="auto"
           onChange={(event) => update({ title: event.target.value })}
           maxLength={100}
         />
       </div>
       <SelectField
-        label="Privacy"
+        label={t("privacy")}
         value={asString(settings.privacyStatus) || "private"}
         onChange={(privacyStatus) => update({ privacyStatus })}
       >
-        <option value="private">Private</option>
-        <option value="unlisted">Unlisted</option>
-        <option value="public">Public</option>
+        <option value="private">{t("visibility.private")}</option>
+        <option value="unlisted">{t("visibility.unlisted")}</option>
+        <option value="public">{t("visibility.public")}</option>
       </SelectField>
       <div className="space-y-1.5">
-        <FieldLabel>Tags</FieldLabel>
+        <FieldLabel>{t("tags")}</FieldLabel>
         <Input
           value={tagsToInput(settings.tags)}
+          dir="auto"
           onChange={(event) => update({ tags: inputToTags(event.target.value) })}
         />
       </div>
       <CheckboxField
-        label="Made for kids"
+        label={t("madeForKids")}
         checked={asBoolean(settings.madeForKids)}
         onChange={(madeForKids) => update({ madeForKids })}
       />
@@ -137,58 +141,59 @@ function TikTokSettings({
   settings: SettingsValue
   update: (patch: SettingsValue) => void
 }) {
+  const t = useTranslations("social.publishingSettings")
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <SelectField
-        label="Visibility"
+        label={t("visibilityLabel")}
         value={asString(settings.privacyLevel) || "SELF_ONLY"}
         onChange={(privacyLevel) => update({ privacyLevel })}
       >
-        <option value="SELF_ONLY">Only me</option>
-        <option value="FOLLOWER_OF_CREATOR">Followers</option>
-        <option value="MUTUAL_FOLLOW_FRIENDS">Mutual friends</option>
-        <option value="PUBLIC_TO_EVERYONE">Public</option>
+        <option value="SELF_ONLY">{t("visibility.onlyMe")}</option>
+        <option value="FOLLOWER_OF_CREATOR">{t("visibility.followers")}</option>
+        <option value="MUTUAL_FOLLOW_FRIENDS">{t("visibility.mutualFriends")}</option>
+        <option value="PUBLIC_TO_EVERYONE">{t("visibility.public")}</option>
       </SelectField>
       <SelectField
-        label="Posting method"
+        label={t("postingMethod")}
         value={asString(settings.contentPostingMethod) || "UPLOAD"}
         onChange={(contentPostingMethod) => update({ contentPostingMethod })}
       >
-        <option value="UPLOAD">Upload</option>
-        <option value="DIRECT_POST">Direct post</option>
+        <option value="UPLOAD">{t("methods.upload")}</option>
+        <option value="DIRECT_POST">{t("methods.direct")}</option>
       </SelectField>
       <CheckboxField
-        label="Allow comments"
+        label={t("allowComments")}
         checked={settings.allowComments !== false}
         onChange={(allowComments) => update({ allowComments })}
       />
       <CheckboxField
-        label="Allow duet"
+        label={t("allowDuet")}
         checked={asBoolean(settings.allowDuet)}
         onChange={(allowDuet) => update({ allowDuet })}
       />
       <CheckboxField
-        label="Allow stitch"
+        label={t("allowStitch")}
         checked={asBoolean(settings.allowStitch)}
         onChange={(allowStitch) => update({ allowStitch })}
       />
       <CheckboxField
-        label="Auto add music"
+        label={t("autoAddMusic")}
         checked={asBoolean(settings.autoAddMusic)}
         onChange={(autoAddMusic) => update({ autoAddMusic })}
       />
       <CheckboxField
-        label="Video made with AI"
+        label={t("videoMadeWithAi")}
         checked={asBoolean(settings.videoMadeWithAi)}
         onChange={(videoMadeWithAi) => update({ videoMadeWithAi })}
       />
       <CheckboxField
-        label="Branded content"
+        label={t("brandedContent")}
         checked={asBoolean(settings.brandedContent)}
         onChange={(brandedContent) => update({ brandedContent })}
       />
       <CheckboxField
-        label="Your brand"
+        label={t("yourBrand")}
         checked={asBoolean(settings.yourBrand)}
         onChange={(yourBrand) => update({ yourBrand })}
       />
@@ -203,36 +208,39 @@ function RedditSettings({
   settings: SettingsValue
   update: (patch: SettingsValue) => void
 }) {
+  const t = useTranslations("social.publishingSettings")
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <div className="space-y-1.5">
-        <FieldLabel>Subreddit</FieldLabel>
+        <FieldLabel>{t("subreddit")}</FieldLabel>
         <Input
           value={asString(settings.subreddit)}
           onChange={(event) => update({ subreddit: event.target.value })}
-          placeholder="/r/nodebanana"
+          placeholder={t("subredditPlaceholder")}
+          dir="ltr"
         />
       </div>
       <div className="space-y-1.5">
-        <FieldLabel>Title</FieldLabel>
+        <FieldLabel>{t("title")}</FieldLabel>
         <Input
           value={asString(settings.title)}
           onChange={(event) => update({ title: event.target.value })}
         />
       </div>
       <SelectField
-        label="Type"
+        label={t("type")}
         value={asString(settings.type) || "self"}
         onChange={(type) => update({ type })}
       >
-        <option value="self">Text</option>
-        <option value="link">Link</option>
+        <option value="self">{t("types.text")}</option>
+        <option value="link">{t("types.link")}</option>
       </SelectField>
       {(settings.type || "self") === "link" && (
         <div className="space-y-1.5">
-          <FieldLabel>Link</FieldLabel>
+          <FieldLabel>{t("link")}</FieldLabel>
           <Input
             value={asString(settings.url)}
+            dir="ltr"
             onChange={(event) => update({ url: event.target.value })}
             type="url"
           />
@@ -273,24 +281,26 @@ function MastodonSettings({
   settings: SettingsValue
   update: (patch: SettingsValue) => void
 }) {
+  const t = useTranslations("social.publishingSettings")
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <SelectField
-        label="Visibility"
+        label={t("visibilityLabel")}
         value={asString(settings.visibility) || "public"}
         onChange={(visibility) => update({ visibility })}
       >
-        <option value="public">Public</option>
-        <option value="unlisted">Unlisted</option>
-        <option value="private">Followers only</option>
-        <option value="direct">Mentioned only</option>
+        <option value="public">{t("visibility.public")}</option>
+        <option value="unlisted">{t("visibility.unlisted")}</option>
+        <option value="private">{t("visibility.followersOnly")}</option>
+        <option value="direct">{t("visibility.mentionedOnly")}</option>
       </SelectField>
       <div className="space-y-1.5">
-        <FieldLabel>Content Warning</FieldLabel>
+        <FieldLabel>{t("contentWarning")}</FieldLabel>
         <Input
           value={asString(settings.contentWarning)}
+          dir="auto"
           onChange={(event) => update({ contentWarning: event.target.value })}
-          placeholder="Optional warning text"
+          placeholder={t("contentWarningPlaceholder")}
         />
       </div>
     </div>
@@ -298,6 +308,7 @@ function MastodonSettings({
 }
 
 export function PublishingSettingsPanels() {
+  const t = useTranslations("social.publishingSettings")
   const accounts = useSocialAccountsStore((state) => state.accounts)
   const {
     selectedAccountIds,
@@ -342,7 +353,7 @@ export function PublishingSettingsPanels() {
   return (
     <div className="space-y-2">
       <div className="text-xs font-medium text-muted-foreground">
-        Publishing Settings
+        {t("heading")}
       </div>
       <div className="space-y-2">
         {supportedAccounts.map((account) => {

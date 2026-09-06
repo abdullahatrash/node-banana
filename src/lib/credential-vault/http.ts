@@ -11,6 +11,7 @@ export function credentialHumanContext(
     workspaceId: string;
     userId: string;
     role: "owner" | "admin" | "member";
+    authContextId: string;
   },
 ): CredentialHumanContext | null {
   const selectedWorkspaceId = request.headers.get("x-workspace-id")?.trim();
@@ -33,6 +34,7 @@ export function credentialHumanContext(
     workspaceId: selectedWorkspaceId,
     userId: authz.userId,
     role: authz.role,
+    authContextId: authz.authContextId,
     ...(idempotencyKey ? { idempotencyKey } : {}),
   };
 }

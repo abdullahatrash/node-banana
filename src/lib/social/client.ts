@@ -6,6 +6,7 @@
 import { getActiveWorkspaceId, StudioApiError } from "@/lib/studio/client";
 import type { ProviderCapabilities } from "@/lib/social/provider-interface";
 import type { SocialPlatform, SocialPostStatus } from "@/lib/db/schema";
+import type { CalendarItem, CanonicalCalendarBinding } from "@/lib/product-surfaces/calendar-projection";
 
 // ---------------------------------------------------------------------------
 // Internal helpers (reuse studio client patterns)
@@ -54,7 +55,9 @@ async function socialFetch(
   if (record.success === false) {
     const message =
       typeof record.error === "string" ? record.error : "Request failed";
-    throw new StudioApiError(response.status, message);
+    throw new StudioApiError(response.status, message, {
+      code: typeof record.code === "string" ? record.code : null,
+    });
   }
 
   return record;
@@ -87,6 +90,7 @@ export interface SocialPost {
   status: SocialPostStatus;
   content?: string | null;
   mediaUrls?: Array<{ type: string; url: string; alt?: string }> | null;
+  stableMediaRefs?: Array<{ resourceKind?: "studio_asset" | "artifact"; assetId: string; assetDigest: string; order: number; alt?: string }>;
   platformSettings?: Record<string, unknown> | null;
   scheduledAt?: string | null;
   publishedAt?: string | null;
@@ -260,13 +264,28 @@ export async function listSocialPosts(filters?: {
   return (data.posts as SocialPost[]) || [];
 }
 
+export async function listCalendarItems(filters: {
+  startDate: string;
+  endDate: string;
+  socialAccountId?: string;
+}): Promise<CalendarItem[]> {
+  const params = new URLSearchParams({
+    start: filters.startDate,
+    end: filters.endDate,
+  });
+  if (filters.socialAccountId) params.set("socialAccountId", filters.socialAccountId);
+  const data = await socialFetch(`/api/studio/calendar?${params.toString()}`);
+  return (data.items as CalendarItem[]) || [];
+}
+
 export async function createSocialPost(input: {
   socialAccountId: string;
   content?: string;
   mediaUrls?: Array<{ type: string; url: string; alt?: string }>;
   platformSettings?: Record<string, unknown>;
   scheduledAt?: string;
-  studioAssetId?: string;
+  mediaAssetIds?: string[];
+  mediaReferences?: Array<{ resourceKind: "studio_asset" | "artifact"; id: string; digest?: string }>;
 }): Promise<SocialPost> {
   const data = await socialFetch("/api/social/posts", {
     method: "POST",
@@ -286,6 +305,8 @@ export async function updateSocialPost(
   input: {
     content?: string;
     mediaUrls?: Array<{ type: string; url: string; alt?: string }>;
+    mediaAssetIds?: string[];
+    mediaReferences?: Array<{ resourceKind: "studio_asset" | "artifact"; id: string; digest?: string }>;
     platformSettings?: Record<string, unknown>;
     scheduledAt?: string | null;
   },
@@ -303,6 +324,22 @@ export async function rescheduleSocialPost(
   scheduledAt: string,
 ): Promise<SocialPost> {
   return updateSocialPost(postId, { scheduledAt });
+}
+
+export async function reschedulePublishingPlanTarget(input: {
+  source: CanonicalCalendarBinding;
+  scheduledAt: string;
+  confirmCancelReleasedDelivery: boolean;
+  idempotencyKey: string;
+}) {
+  const data = await socialFetch("/api/studio/calendar/reschedule", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return data.result as
+    | { kind: "rescheduled"; revision: { id: string; revision: number }; supersededApprovalId: string | null; requiresApproval: true }
+    | { kind: "cancellation_not_guaranteed"; cancellation: { outcome: "conditional" | "unknown" | "too_late" } };
 }
 
 export async function deleteSocialPost(postId: string): Promise<void> {

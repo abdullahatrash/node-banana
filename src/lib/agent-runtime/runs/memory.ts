@@ -128,6 +128,7 @@ export class InMemoryWorkflowRunRepository implements WorkflowRunRepository {
   readonly runs = new Map<string, WorkflowRunRecord>();
   readonly events = new Map<string, WorkflowRunEventRecord[]>();
   readonly receipts = new Map<string, WorkflowRunMutationReceiptRecord>();
+  readonly spendQuoteRedemptions = new Map<string, { runId: string; principalId: string; redeemedAt: Date }>();
   readonly outbox = new Map<string, WorkflowRunOutboxIntentRecord>();
   readonly leases = new Map<string, WorkflowRunExecutionLeaseRecord>();
   readonly stepAttempts = new Map<string, WorkflowStepAttemptRecord>();
@@ -440,6 +441,19 @@ export class InMemoryWorkflowRunRepository implements WorkflowRunRepository {
       this.failNextStart = false;
       return { kind: "unavailable" as const };
     }
+    if (input.acceptedSpendQuote) {
+      if (
+        !input.acceptedSpendQuoteRef ||
+        this.spendQuoteRedemptions.has(input.acceptedSpendQuote.quoteId) ||
+        canonicalDigest(input.run.startSnapshot.acceptedSpendQuote) !== canonicalDigest(input.acceptedSpendQuote) ||
+        input.acceptedSpendQuote.targetWorkspaceId !== input.run.workspaceId ||
+        input.acceptedSpendQuote.delegatedPrincipalId !== input.receipt.principalId ||
+        input.acceptedSpendQuote.delegatedKeyId !== input.receipt.keyId ||
+        input.acceptedSpendQuote.workflowId !== input.run.workflowId ||
+        input.acceptedSpendQuote.workflowRevisionId !== input.run.workflowRevisionId ||
+        input.acceptedSpendQuote.expiresAt <= input.run.acceptedAt.toISOString()
+      ) return { kind: "unavailable" as const };
+    } else if (input.acceptedSpendQuoteRef) return { kind: "unavailable" as const };
     if (input.budgetAdmissionPlan) {
       if (
         !this.budgetWriter ||
@@ -489,6 +503,7 @@ export class InMemoryWorkflowRunRepository implements WorkflowRunRepository {
     } : input.run));
     const event = immutable(clone(input.firstEvent));
     const receipt = immutable(clone(input.receipt));
+    if (input.acceptedSpendQuote) this.spendQuoteRedemptions.set(input.acceptedSpendQuote.quoteId, { runId: run.id, principalId: input.receipt.principalId, redeemedAt: input.run.acceptedAt });
     this.runs.set(compound(run.workspaceId, run.id), run);
     this.events.set(compound(run.workspaceId, run.id), quotaWait ? [
       event,

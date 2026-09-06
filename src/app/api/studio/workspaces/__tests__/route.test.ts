@@ -3,7 +3,6 @@ import { NextRequest } from "next/server";
 
 const mockGetSession = vi.fn();
 const mockEnsureWorkspaceUser = vi.fn();
-const mockEnsurePersonalWorkspaceForUser = vi.fn();
 const mockSelectRows = vi.fn();
 const mockIsDatabaseConfigured = vi.fn(() => true);
 
@@ -32,8 +31,6 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/studio/repository", () => ({
   ensureWorkspaceUser: (...args: unknown[]) => mockEnsureWorkspaceUser(...args),
-  ensurePersonalWorkspaceForUser: (...args: unknown[]) =>
-    mockEnsurePersonalWorkspaceForUser(...args),
 }));
 
 import { GET } from "../route";
@@ -118,10 +115,9 @@ describe("/api/studio/workspaces GET", () => {
         },
       ],
     });
-    expect(mockEnsurePersonalWorkspaceForUser).not.toHaveBeenCalled();
   });
 
-  it("auto-provisions a workspace when user has none", async () => {
+  it("returns an empty list when onboarding has not provisioned a workspace", async () => {
     mockGetSession.mockResolvedValue({
       user: {
         id: "user_2",
@@ -129,32 +125,14 @@ describe("/api/studio/workspaces GET", () => {
         email: "noworkspace@example.com",
       },
     });
-    mockSelectRows
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        {
-          id: "ws_new",
-          name: "No Workspace User's Workspace",
-          slug: "no-workspace-user-workspace",
-          role: "owner",
-        },
-      ]);
-    mockEnsurePersonalWorkspaceForUser.mockResolvedValue({
-      workspaceId: "ws_new",
-      slug: "no-workspace-user-workspace",
-    });
+    mockSelectRows.mockResolvedValueOnce([]);
 
     const response = await GET(createRequest());
     const data = await response.json();
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
-    expect(data.workspaces).toHaveLength(1);
-    expect(mockEnsurePersonalWorkspaceForUser).toHaveBeenCalledWith({
-      userId: "user_2",
-      userName: "No Workspace User",
-      userEmail: "noworkspace@example.com",
-    });
+    expect(data.workspaces).toEqual([]);
   });
 
   it("supports DEV_AUTH_BYPASS local fallback", async () => {

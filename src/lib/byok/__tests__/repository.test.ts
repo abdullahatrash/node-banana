@@ -196,4 +196,43 @@ describe("byok/repository", () => {
       expect(resolved).toBeNull();
     });
   });
+
+  describe("durable async credential resolution", () => {
+    it("pins a managed Replicate key to an operator revision without exposing it to Workspace storage", async () => {
+      const { resolveManagedProviderKey, resolveProviderKeyByRef } = await loadRepository();
+      vi.stubEnv("REPLICATE_MANAGED_API_TOKEN", "r8_managed_secret");
+      vi.stubEnv("REPLICATE_MANAGED_KEY_REVISION", "vault-revision-7");
+      const credential = resolveManagedProviderKey("replicate");
+      expect(credential).toEqual({ key: "r8_managed_secret", ref: { id: "managed:replicate", provider: "replicate", source: "managed", revision: "vault-revision-7" } });
+      await expect(resolveProviderKeyByRef("unrelated-workspace", credential!.ref)).resolves.toBe("r8_managed_secret");
+    });
+
+    it("fails closed after a managed key revision rotates", async () => {
+      const { resolveProviderKeyByRef } = await loadRepository();
+      vi.stubEnv("REPLICATE_MANAGED_API_TOKEN", "r8_managed_secret");
+      vi.stubEnv("REPLICATE_MANAGED_KEY_REVISION", "vault-revision-8");
+      await expect(resolveProviderKeyByRef("ws_1", { id: "managed:replicate", provider: "replicate", source: "managed", revision: "vault-revision-7" })).resolves.toBeNull();
+    });
+
+    it("does not resolve an example-file placeholder as a managed credential", async () => {
+      const { resolveManagedProviderKey } = await loadRepository();
+      vi.stubEnv("REPLICATE_MANAGED_API_TOKEN", "your_replicate_api_key_here");
+      vi.stubEnv("REPLICATE_MANAGED_KEY_REVISION", "vault-revision-8");
+      expect(resolveManagedProviderKey("replicate")).toBeNull();
+    });
+
+    it("returns the exact stored key revision as a non-secret reference", async () => {
+      const { resolveDurableProviderKey } = await loadRepository();
+      const { encryptProviderKey } = await import("../crypto");
+      const updatedAt = new Date("2026-09-04T00:00:00.000Z");
+      mockLimit.mockResolvedValue([{ id: "provkey_1", keyEncrypted: encryptProviderKey("r8_test_secret"), updatedAt }]);
+      await expect(resolveDurableProviderKey("ws_1", "replicate")).resolves.toEqual({ key: "r8_test_secret", ref: { id: "provkey_1", provider: "replicate", updatedAt: updatedAt.toISOString() } });
+    });
+
+    it("fails closed when the exact stored revision no longer exists", async () => {
+      const { resolveProviderKeyByRef } = await loadRepository();
+      mockLimit.mockResolvedValue([]);
+      await expect(resolveProviderKeyByRef("ws_1", { id: "provkey_1", provider: "replicate", updatedAt: "2026-09-04T00:00:00.000Z" })).resolves.toBeNull();
+    });
+  });
 });

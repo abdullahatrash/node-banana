@@ -5,6 +5,9 @@ const mockAuthorizeStudioRequest = vi.fn();
 const mockGetAsset = vi.fn();
 const mockCreatePresignedDownload = vi.fn();
 const mockBuildCdnDownloadUrl = vi.fn();
+const mockRequireRegion = vi.fn(async (_input?: unknown) => undefined);
+
+vi.mock("@/lib/governance/region-enforcement", () => ({ GOVERNANCE_REGION_ROUTES: { assetStorage: { kind: "primary_storage", routeId: "storage:workspace-assets" } }, requireGovernanceRegionRoute: (...args: unknown[]) => mockRequireRegion(args[0]) }));
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: vi.fn(() => true),

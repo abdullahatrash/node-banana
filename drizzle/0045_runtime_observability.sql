@@ -47,7 +47,7 @@ DECLARE
   timestamp_pattern constant text := '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$';
   decimal_pattern constant text := '^(0|[1-9][0-9]*)(\.[0-9]+)?$';
   digest_pattern constant text := '^sha256:[a-f0-9]{64}$';
-  identity_pattern constant text := '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,499}$';
+  identity_pattern constant text := '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,249}[A-Za-z0-9._:/-]{0,250}$';
   run_id_pattern constant text := '^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$';
   timezone_pattern constant text := '^[A-Za-z0-9][A-Za-z0-9._+:/-]{0,127}$';
   exact_keys text[];
@@ -449,6 +449,8 @@ CREATE TABLE "runtime_telemetry_operator_grants" (
 	CONSTRAINT "runtime_telemetry_operator_grants_state_check" CHECK ("runtime_telemetry_operator_grants"."status" in ('active','revoked','expired'))
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_support_bundles_workspace_id_unique" ON "runtime_support_bundles" USING btree ("workspace_id","id");--> statement-breakpoint
+CREATE UNIQUE INDEX "runtime_telemetry_operator_grants_workspace_id_unique" ON "runtime_telemetry_operator_grants" USING btree ("workspace_id","id");--> statement-breakpoint
 ALTER TABLE "runtime_observability_retention_policies" ADD CONSTRAINT "runtime_observability_retention_policies_workspace_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "runtime_contract_evidence_versions" ADD CONSTRAINT "runtime_contract_evidence_versions_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "runtime_contract_evidence_backfill_quarantine" ADD CONSTRAINT "runtime_contract_evidence_backfill_quarantine_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
@@ -481,11 +483,9 @@ CREATE UNIQUE INDEX "runtime_observability_retention_revisions_policy_revision_u
 CREATE INDEX "runtime_operational_metrics_expiry_idx" ON "runtime_operational_metrics" USING btree ("expires_at","id");--> statement-breakpoint
 CREATE INDEX "runtime_support_bundle_audit_events_occurred_idx" ON "runtime_support_bundle_audit_events" USING btree ("workspace_id","occurred_at","id");--> statement-breakpoint
 CREATE INDEX "runtime_support_bundle_access_audits_occurred_idx" ON "runtime_support_bundle_access_audits" USING btree ("workspace_id","occurred_at","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_support_bundles_workspace_id_unique" ON "runtime_support_bundles" USING btree ("workspace_id","id");--> statement-breakpoint
 CREATE INDEX "runtime_support_bundles_expiry_idx" ON "runtime_support_bundles" USING btree ("expires_at","id");--> statement-breakpoint
 CREATE UNIQUE INDEX "runtime_support_bundle_bind_intents_workspace_key_unique" ON "runtime_support_bundle_bind_intents" USING btree ("workspace_id","idempotency_key");--> statement-breakpoint
 CREATE INDEX "runtime_support_bundle_bind_intents_pending_idx" ON "runtime_support_bundle_bind_intents" USING btree ("state","updated_at","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "runtime_telemetry_operator_grants_workspace_id_unique" ON "runtime_telemetry_operator_grants" USING btree ("workspace_id","id");--> statement-breakpoint
 CREATE INDEX "runtime_telemetry_operator_grants_active_idx" ON "runtime_telemetry_operator_grants" USING btree ("workspace_id","operator_id","status","expires_at");
 --> statement-breakpoint
 -- Historical mutable owners predate Contract Evidence producers. Projection digests
@@ -576,7 +576,7 @@ WITH source AS (
           WITH ORDINALITY AS item(value, ordinality)
         WHERE item.ordinality <= 64
           AND jsonb_typeof(item.value) = 'string'
-          AND (item.value #>> '{}') ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,499}$'
+          AND (item.value #>> '{}') ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,249}[A-Za-z0-9._:/-]{0,250}$'
       ), '[]'::jsonb),
       'createdAt', to_char(reservation.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
       'updatedAt', to_char(reservation.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
@@ -632,10 +632,10 @@ WITH source AS (
       'dimension', reservation.dimension,
       'unit', reservation.unit,
       'window', jsonb_build_object(
-        'kind', window.kind,
-        'timezone', window.timezone,
-        'startsAt', to_char(window.starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-        'endsAt', CASE WHEN window.ends_at IS NULL THEN NULL ELSE to_char(window.ends_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END
+        'kind', quota_window.kind,
+        'timezone', quota_window.timezone,
+        'startsAt', to_char(quota_window.starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+        'endsAt', CASE WHEN quota_window.ends_at IS NULL THEN NULL ELSE to_char(quota_window.ends_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END
       ),
       'reservationRule', reservation.reservation_rule,
       'reservedAmount', reservation.reserved_amount,
@@ -648,8 +648,8 @@ WITH source AS (
       'updatedAt', to_char(reservation.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
     ) AS projection
   FROM runtime_quota_reservations AS reservation
-  INNER JOIN runtime_quota_windows AS window
-    ON window.workspace_id = reservation.workspace_id AND window.id = reservation.window_id
+  INNER JOIN runtime_quota_windows AS quota_window
+    ON quota_window.workspace_id = reservation.workspace_id AND quota_window.id = reservation.window_id
 ), prepared AS (
   SELECT source.*,
     'sha256:' || encode(sha256(convert_to(runtime_contract_evidence_canonical_json(source.canonical_source), 'UTF8')), 'hex') AS canonical_digest,
@@ -694,7 +694,7 @@ WITH source AS (
         WHEN jsonb_typeof(wait.wait->'subject') = 'object'
           AND wait.wait->'subject'->>'kind' IN ('run','step_attempt','artifact','usage_settlement')
           AND jsonb_typeof(wait.wait->'subject'->'id') = 'string'
-          AND wait.wait->'subject'->>'id' ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,499}$'
+          AND wait.wait->'subject'->>'id' ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,249}[A-Za-z0-9._:/-]{0,250}$'
         THEN jsonb_build_object('kind', wait.wait->'subject'->>'kind', 'id', wait.wait->'subject'->>'id')
         ELSE jsonb_build_object('kind', 'run', 'id', wait.run_id)
       END,
@@ -727,7 +727,7 @@ WITH source AS (
         FROM jsonb_array_elements(wait.wait->'resolutionReservationIds') WITH ORDINALITY AS item(value, ordinality)
         WHERE item.ordinality <= 64
           AND jsonb_typeof(item.value) = 'string'
-          AND (item.value #>> '{}') ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,499}$'
+          AND (item.value #>> '{}') ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,249}[A-Za-z0-9._:/-]{0,250}$'
       ), '[]'::jsonb) ELSE '[]'::jsonb END,
       'createdAt', to_char(wait.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
       'resolvedAt', CASE WHEN wait.resolved_at IS NULL THEN NULL ELSE to_char(wait.resolved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END

@@ -29,6 +29,7 @@ import {
   useState,
 } from "react";
 import { Streamdown } from "streamdown";
+import { useTranslations } from "next-intl";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -259,10 +260,11 @@ export const MessageBranchPrevious = ({
   ...props
 }: MessageBranchPreviousProps) => {
   const { goToPrevious, totalBranches } = useMessageBranch();
+  const t = useTranslations("common");
 
   return (
     <Button
-      aria-label="Previous branch"
+      aria-label={t("previousBranch")}
       disabled={totalBranches <= 1}
       onClick={goToPrevious}
       size="icon-sm"
@@ -270,7 +272,7 @@ export const MessageBranchPrevious = ({
       variant="ghost"
       {...props}
     >
-      {children ?? <ChevronLeftIcon size={14} />}
+      {children ?? <ChevronLeftIcon className="rtl:rotate-180" size={14} />}
     </Button>
   );
 };
@@ -282,10 +284,11 @@ export const MessageBranchNext = ({
   ...props
 }: MessageBranchNextProps) => {
   const { goToNext, totalBranches } = useMessageBranch();
+  const t = useTranslations("common");
 
   return (
     <Button
-      aria-label="Next branch"
+      aria-label={t("nextBranch")}
       disabled={totalBranches <= 1}
       onClick={goToNext}
       size="icon-sm"
@@ -293,7 +296,7 @@ export const MessageBranchNext = ({
       variant="ghost"
       {...props}
     >
-      {children ?? <ChevronRightIcon size={14} />}
+      {children ?? <ChevronRightIcon className="rtl:rotate-180" size={14} />}
     </Button>
   );
 };
@@ -305,6 +308,7 @@ export const MessageBranchPage = ({
   ...props
 }: MessageBranchPageProps) => {
   const { currentBranch, totalBranches } = useMessageBranch();
+  const t = useTranslations("common");
 
   return (
     <ButtonGroupText
@@ -314,7 +318,7 @@ export const MessageBranchPage = ({
       )}
       {...props}
     >
-      {currentBranch + 1} of {totalBranches}
+      {t("branchPosition", { current: currentBranch + 1, total: totalBranches })}
     </ButtonGroupText>
   );
 };

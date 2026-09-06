@@ -1,4 +1,4 @@
-import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import { canonicalDigest, canonicalJson } from "@/lib/agent-tools/canonical";
 import { admissionExposureFor } from "@/lib/agent-runtime/budgets/catalog";
 import {
   PROVIDER_ADAPTER_MANIFEST,
@@ -33,6 +33,7 @@ import type {
   WorkflowStepExecutor,
   WorkflowStepExecutorRegistry,
 } from "./types";
+import { CONTENT_GENERATION_DISPATCH_OPERATIONS } from "@/lib/model-routing/content-workflow-operation";
 
 const IDENTITY = "runtime.digest_text@1";
 
@@ -84,10 +85,66 @@ class DigestTextExecutor implements WorkflowStepExecutor {
     if (typeof text !== "string") {
       throw new Error("Deterministic text input is unavailable.");
     }
+    const textDigest = canonicalDigest(text);
+    if (input.snapshot.definition.steps.length > 1) {
+      return Promise.resolve({
+        kind: "generated",
+        providerOperationRef: textDigest,
+        outputs: {
+          textDigest: {
+            kind: "text",
+            mediaType: "text/plain; charset=utf-8",
+            bytes: Buffer.from(textDigest, "utf8"),
+          },
+        },
+      });
+    }
     return Promise.resolve({
       kind: "legacy",
-      output: { textDigest: canonicalDigest(text) },
+      output: { textDigest },
     });
+  }
+}
+
+class ContentGenerationDispatchExecutor implements WorkflowStepExecutor {
+  readonly provider = "runtime";
+  readonly providerOperation: string;
+  readonly model = "content-workflow-v1";
+  constructor(readonly operationIdentity: string, private readonly operationContractDigest: string) { this.providerOperation = operationIdentity.split("@")[0]!.slice("runtime.".length); }
+  get providerResolution() {
+    return {
+      adapterModule: "runtime/legacy-executor",
+      adapterContractDigest: canonicalDigest({ schema: "runtime-step-executor/v1", operationIdentity: this.operationIdentity, operationContractDigest: this.operationContractDigest, provider: this.provider, providerOperation: this.providerOperation, model: this.model }),
+      provider: this.provider, providerOperation: this.providerOperation, model: this.model,
+      effectKeySupport: "native" as const, observation: "provider_operation_ref" as const,
+      launchSafety: { mode: "native_effect_key" as const, guard: "workflow-step-attempt/v1" as const, replay: "provider_deduplicated" as const },
+      usageCeilings: [],
+    };
+  }
+  admissionExposure() {
+    return admissionExposureFor({ provider: this.provider, providerOperation: this.providerOperation, model: this.model, serviceTier: "local" });
+  }
+  async execute(input: Parameters<WorkflowStepExecutor["execute"]>[0]): ReturnType<WorkflowStepExecutor["execute"]> {
+    const raw = input.inputs.recipe?.textContent;
+    if (!raw) return { kind: "failed_known", failureCode: "CONTENT_DISPATCH_REQUEST_MISSING", retryable: false, providerOperationRef: null };
+    let request: { workspaceId: string; userId: string; role: string; planTier: string; intentId: string; prompt: string; sourceAssetIds: string[]; idempotencyKey: string; workflowInputs: Record<string, unknown> };
+    try { request = JSON.parse(raw) as typeof request; }
+    catch { return { kind: "failed_known", failureCode: "CONTENT_DISPATCH_REQUEST_INVALID", retryable: false, providerOperationRef: null }; }
+    const expectedOperation = this.operationIdentity;
+    const declared = Object.keys(input.step.inputs).filter((name) => name !== "guard" && name !== "recipe");
+    const typedInputsMatch = request.workflowInputs && declared.every((name) => input.inputs[name]?.textContent === (typeof request.workflowInputs[name] === "string" ? request.workflowInputs[name] : canonicalJson(request.workflowInputs[name] ?? null)));
+    if (request.workspaceId !== input.workspaceId || input.step.operation.identity !== expectedOperation || !request.intentId || !request.userId || !Array.isArray(request.sourceAssetIds) || !typedInputsMatch) return { kind: "failed_known", failureCode: "CONTENT_DISPATCH_REQUEST_INVALID", retryable: false, providerOperationRef: null };
+    const { executeAdmittedGeneration } = await import("@/lib/model-routing/execute-admitted-generation");
+    const result = await executeAdmittedGeneration({ ...request, contentWorkflowRunId: input.runId });
+    if (!result.ok) return { kind: "failed_known", failureCode: result.code, retryable: result.status === 503, providerOperationRef: request.intentId };
+    const receipt = { schema: "content-workflow-dispatch-receipt/v1", intentId: request.intentId, operationId: result.result.operation.id, operationState: result.result.operation.state, providerState: result.result.provider.state };
+    return { kind: "generated", providerOperationRef: request.intentId, outputs: { receipt: { kind: "text", mediaType: "application/json", bytes: Buffer.from(JSON.stringify(receipt), "utf8") } } };
+  }
+  async reconcile(input: Parameters<NonNullable<WorkflowStepExecutor["reconcile"]>>[0]): ReturnType<NonNullable<WorkflowStepExecutor["reconcile"]>> {
+    const result = await this.execute(input);
+    return result.kind === "legacy"
+      ? { kind: "failed_known", failureCode: "CONTENT_DISPATCH_RECEIPT_INVALID", retryable: false, providerOperationRef: null }
+      : result;
   }
 }
 
@@ -347,6 +404,7 @@ export class WorkflowRunExecutorRegistry
     }
     const registry = new WorkflowRunExecutorRegistry();
     registry.register(digest.identity, digest.contractDigest, new DigestTextExecutor());
+    for (const operation of CONTENT_GENERATION_DISPATCH_OPERATIONS) registry.register(operation.identity, operation.contractDigest, new ContentGenerationDispatchExecutor(operation.identity, operation.contractDigest));
     registry.registerProviderAdapter(
       "gemini/generate-content",
       text.identity,

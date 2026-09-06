@@ -44,7 +44,7 @@ function responseStatus(category: string): number {
 }
 
 export const POST = withStudioAuth<undefined>(
-  { route: "/api/studio/observability/capabilities", action: "write" },
+  { route: "/api/studio/observability/capabilities", action: "write", permission: "workspaces:write" },
   async (request: NextRequest, authz) => {
     const humanContext = credentialHumanContext(request, authz);
     if (!humanContext) {

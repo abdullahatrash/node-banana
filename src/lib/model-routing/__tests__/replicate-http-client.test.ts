@@ -1,0 +1,49 @@
+import { describe, expect, it, vi } from "vitest";
+import { ReplicateHttpClient } from "../replicate-http-client";
+
+describe("ReplicateHttpClient", () => {
+  it("uses the pinned version and bearer credential without a live call", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(
+      JSON.stringify({ id: "prediction", status: "starting", version: "exact-version" }),
+      { status: 201, headers: { "Content-Type": "application/json" } },
+    ));
+    const client = new ReplicateHttpClient(
+      () => "test-token", fetcher, "https://replicate.invalid/v1",
+    );
+    expect(await client.create({
+      endpoint: "versioned", model: "owner/model", version: "exact-version", input: { aspect_ratio: "9:16" }, cancelAfterSeconds: 900,
+    })).toMatchObject({ id: "prediction", status: "starting" });
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://replicate.invalid/v1/predictions",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          version: "exact-version", input: { aspect_ratio: "9:16" },
+        }),
+      }),
+    );
+    const headers = fetcher.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer test-token");
+    expect(headers["Cancel-After"]).toBe("900s");
+  });
+
+  it("fails closed without a credential", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    await expect(new ReplicateHttpClient(() => null, fetcher).get("prediction"))
+      .rejects.toThrow("REPLICATE_CREDENTIAL_UNAVAILABLE");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("uses the stable owner/name identifier for an official model", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(
+      JSON.stringify({ id: "prediction", model: "owner/official-model", status: "starting", version: "hidden" }),
+      { status: 201, headers: { "Content-Type": "application/json" } },
+    ));
+    const client = new ReplicateHttpClient(() => "test-token", fetcher, "https://replicate.invalid/v1");
+    await client.create({ endpoint: "official", model: "owner/official-model", version: "owner/official-model", input: { prompt: "brand" }, cancelAfterSeconds: 120 });
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://replicate.invalid/v1/predictions",
+      expect.objectContaining({ body: JSON.stringify({ version: "owner/official-model", input: { prompt: "brand" } }) }),
+    );
+  });
+});

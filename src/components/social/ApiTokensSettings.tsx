@@ -1,6 +1,7 @@
 "use client"
 
 import { useRef, useState } from "react"
+import { useFormatter, useTranslations } from "next-intl"
 import { CopyIcon, KeyRoundIcon, Loader2Icon, PlusIcon } from "lucide-react"
 import { useToast } from "@/components/Toast"
 import { Button } from "@/components/ui/button"
@@ -13,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { StudioApiError } from "@/lib/studio/client"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 import {
   createApiTokenRequest,
   listApiTokensRequest,
@@ -22,18 +23,17 @@ import {
   type CreatedApiTokenView,
 } from "@/lib/api-tokens/client"
 
-function formatDate(value: string | null): string {
-  if (!value) return "Never"
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return "—"
-  return date.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  })
-}
-
 export function ApiTokensSettings() {
+  const t = useTranslations("social.settings.tokens")
+  const { show: showClientError } = useClientErrorPresentation()
+  const formatValue = useFormatter()
+  const formatDate = (value: string | null) => {
+    if (!value) return t("never")
+    const date = new Date(value)
+    return Number.isNaN(date.getTime())
+      ? "—"
+      : formatValue.dateTime(date, { year: "numeric", month: "short", day: "numeric" })
+  }
   const { show: showToast } = useToast()
   const [tokens, setTokens] = useState<ApiTokenSummaryView[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -50,12 +50,7 @@ export function ApiTokensSettings() {
     try {
       setTokens(await listApiTokensRequest())
     } catch (error) {
-      showToast(
-        error instanceof StudioApiError
-          ? error.message
-          : "Failed to load API tokens",
-        "error",
-      )
+      showClientError(showToast, error, t("errors.load"))
     } finally {
       setIsLoading(false)
     }
@@ -77,15 +72,10 @@ export function ApiTokensSettings() {
       const created = await createApiTokenRequest(trimmed)
       setCreatedToken(created)
       setName("")
-      showToast("API token created", "success")
+      showToast(t("toast.created"), "success")
       await loadTokens()
     } catch (error) {
-      showToast(
-        error instanceof StudioApiError
-          ? error.message
-          : "Failed to create API token",
-        "error",
-      )
+      showClientError(showToast, error, t("errors.create"))
     } finally {
       setIsCreating(false)
     }
@@ -100,14 +90,9 @@ export function ApiTokensSettings() {
           token.id === tokenId ? { ...token, revoked: true } : token,
         ),
       )
-      showToast("Token revoked", "success")
+      showToast(t("toast.revoked"), "success")
     } catch (error) {
-      showToast(
-        error instanceof StudioApiError
-          ? error.message
-          : "Failed to revoke token",
-        "error",
-      )
+      showClientError(showToast, error, t("errors.revoke"))
     } finally {
       setRevokingId(null)
     }
@@ -117,9 +102,9 @@ export function ApiTokensSettings() {
     if (!createdToken) return
     try {
       await navigator.clipboard.writeText(createdToken.token)
-      showToast("Token copied to clipboard", "success")
+      showToast(t("toast.copied"), "success")
     } catch {
-      showToast("Could not copy — copy it manually", "warning")
+      showToast(t("errors.copy"), "warning")
     }
   }
 
@@ -128,11 +113,10 @@ export function ApiTokensSettings() {
       <div>
         <h2 className="flex items-center gap-2 text-lg font-semibold">
           <KeyRoundIcon className="size-5" />
-          API Tokens
+          {t("title")}
         </h2>
         <p className="text-sm text-muted-foreground">
-          Create workspace-scoped tokens for the public API, MCP server, and
-          CLI. Tokens are shown once at creation and can be revoked at any time.
+          {t("description")}
         </p>
       </div>
 
@@ -141,12 +125,12 @@ export function ApiTokensSettings() {
         className="flex flex-col gap-2 sm:flex-row sm:items-end"
       >
         <div className="flex-1">
-          <Label htmlFor="token-name">Token name</Label>
+          <Label htmlFor="token-name">{t("name")}</Label>
           <Input
             id="token-name"
             value={name}
             onChange={(event) => setName(event.target.value)}
-            placeholder="e.g. CI pipeline, Claude agent"
+            placeholder={t("namePlaceholder")}
             maxLength={80}
           />
         </div>
@@ -156,27 +140,26 @@ export function ApiTokensSettings() {
           ) : (
             <PlusIcon className="size-4" />
           )}
-          Create token
+          {t("create")}
         </Button>
       </form>
 
       <div className="rounded-lg border">
         <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-4 border-b px-4 py-2.5 text-xs font-medium text-muted-foreground">
-          <span>Name</span>
-          <span className="hidden sm:block">Created</span>
-          <span className="hidden sm:block">Last used</span>
-          <span className="text-end">Actions</span>
+          <span>{t("name")}</span>
+          <span className="hidden sm:block">{t("created")}</span>
+          <span className="hidden sm:block">{t("lastUsed")}</span>
+          <span className="text-end">{t("actions")}</span>
         </div>
 
         {isLoading ? (
           <div className="flex items-center justify-center gap-2 px-4 py-8 text-sm text-muted-foreground">
             <Loader2Icon className="size-4 animate-spin" />
-            Loading tokens…
+            {t("loading")}
           </div>
         ) : tokens.length === 0 ? (
           <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-            No API tokens yet. Create one to start driving this workspace
-            programmatically.
+            {t("empty")}
           </div>
         ) : (
           tokens.map((token) => (
@@ -189,7 +172,7 @@ export function ApiTokensSettings() {
                   {token.name}
                   {token.revoked && (
                     <span className="ms-2 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                      revoked
+                      {t("revoked")}
                     </span>
                   )}
                 </p>
@@ -214,7 +197,7 @@ export function ApiTokensSettings() {
                     {revokingId === token.id ? (
                       <Loader2Icon className="size-3.5 animate-spin" />
                     ) : (
-                      "Revoke"
+                      t("revoke")
                     )}
                   </Button>
                 )}
@@ -232,10 +215,9 @@ export function ApiTokensSettings() {
       >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Copy your API token</DialogTitle>
+            <DialogTitle>{t("copyTitle")}</DialogTitle>
             <DialogDescription>
-              This is the only time the full token is shown. Store it somewhere
-              safe — you can revoke it later, but you can’t view it again.
+              {t("copyDescription")}
             </DialogDescription>
           </DialogHeader>
           <div className="flex items-center gap-2">
@@ -244,7 +226,7 @@ export function ApiTokensSettings() {
             </code>
             <Button variant="outline" size="sm" onClick={copySecret}>
               <CopyIcon className="size-4" />
-              Copy
+              {t("copy")}
             </Button>
           </div>
         </DialogContent>

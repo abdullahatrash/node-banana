@@ -8,9 +8,12 @@ import {
   consumeOAuthSelectionSession,
   getOAuthSelectionSession,
   upsertSocialAccount,
+  SocialAccountQuotaExceededError,
   OAuthSelectionSessionNotFoundError,
   OAuthSelectionSessionExpiredError,
 } from "@/lib/social/repository";
+import { getWorkspaceChannelEntitlement } from "@/lib/commercial/channel-entitlement";
+import { quotaExceededPayload } from "@/lib/social/limits";
 import { withLinkedInAuthorKind } from "@/lib/social/linkedin-author-kind";
 import type { SocialPlatform } from "@/lib/db/schema";
 import { logger } from "@/utils/logger";
@@ -25,6 +28,11 @@ interface SelectPageResponse {
   success: boolean;
   account?: Record<string, unknown>;
   error?: string;
+  code?: string;
+  billingUrl?: string;
+  section?: string;
+  current?: number;
+  limit?: number;
 }
 
 export async function POST(
@@ -102,6 +110,7 @@ export async function POST(
       ? encryptToken(selectedPage.accessToken)
       : consumedSession.accessTokenEncrypted;
 
+    const entitlement = await getWorkspaceChannelEntitlement(result.session.workspace.id);
     const account = await upsertSocialAccount({
       workspaceId: result.session.workspace.id,
       platform: body.platform as SocialPlatform,
@@ -118,6 +127,7 @@ export async function POST(
           ? withLinkedInAuthorKind(undefined, "organization")
           : undefined,
       createdByUserId: result.session.user.id,
+      maxActiveChannels: entitlement.connectedChannels,
     });
     logger.info("system", "Social page selection completed", {
       workspaceId: result.session.workspace.id,
@@ -137,6 +147,12 @@ export async function POST(
 
     return NextResponse.json({ success: true, account: safeAccount });
   } catch (error) {
+    if (error instanceof SocialAccountQuotaExceededError) {
+      return NextResponse.json(
+        quotaExceededPayload({ section: "channels", current: error.current, limit: error.limit }),
+        { status: 402 },
+      );
+    }
     if (
       error instanceof OAuthSelectionSessionNotFoundError ||
       error instanceof OAuthSelectionSessionExpiredError

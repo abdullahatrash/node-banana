@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useTranslations } from "next-intl"
 import {
   Dialog,
   DialogContent,
@@ -12,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useToast } from "@/components/Toast"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 interface BlueskyConnectModalProps {
   open: boolean
@@ -22,17 +24,19 @@ export function BlueskyConnectModal({
   open,
   onOpenChange,
 }: BlueskyConnectModalProps) {
+  const t = useTranslations("social.channels.connect")
   const [handle, setHandle] = useState("")
   const [appPassword, setAppPassword] = useState("")
   const [isConnecting, setIsConnecting] = useState(false)
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const { fetchAccounts } = useSocialAccountsStore()
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
 
     if (!handle.trim() || !appPassword.trim()) {
-      showToast("Handle and app password are required.", "error")
+      showToast(t("bluesky.required"), "error")
       return
     }
 
@@ -50,19 +54,16 @@ export function BlueskyConnectModal({
       const data = await response.json()
 
       if (!response.ok || !data.success) {
-        throw new Error(data.error || "Failed to connect Bluesky account")
+        throw new Error("BLUESKY_CONNECT_FAILED")
       }
 
-      showToast("Bluesky channel connected!", "success")
+      showToast(t("bluesky.connected"), "success")
       fetchAccounts()
       onOpenChange(false)
       setHandle("")
       setAppPassword("")
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : "Failed to connect",
-        "error",
-      )
+      showClientError(showToast, error, t("bluesky.errors.connect"))
     } finally {
       setIsConnecting(false)
     }
@@ -72,16 +73,16 @@ export function BlueskyConnectModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Connect Bluesky</DialogTitle>
+          <DialogTitle>{t("bluesky.title")}</DialogTitle>
           <DialogDescription>
-            Enter your Bluesky handle and an{" "}
+            {t("bluesky.descriptionPrefix")}{" "}
             <a
               href="https://bsky.app/settings/app-passwords"
               target="_blank"
               rel="noopener noreferrer"
               className="text-blue-400 underline"
             >
-              App Password
+              {t("bluesky.appPasswordLink")}
             </a>
             .
           </DialogDescription>
@@ -92,11 +93,12 @@ export function BlueskyConnectModal({
               htmlFor="bluesky-handle"
               className="text-[11px] font-medium text-muted-foreground"
             >
-              Handle
+              {t("bluesky.handle")}
             </label>
             <Input
               id="bluesky-handle"
-              placeholder="alice.bsky.social"
+              dir="ltr"
+              placeholder={t("bluesky.handlePlaceholder")}
               value={handle}
               onChange={(e) => setHandle(e.target.value)}
               disabled={isConnecting}
@@ -107,19 +109,20 @@ export function BlueskyConnectModal({
               htmlFor="bluesky-password"
               className="text-[11px] font-medium text-muted-foreground"
             >
-              App Password
+              {t("bluesky.appPassword")}
             </label>
             <Input
               id="bluesky-password"
               type="password"
-              placeholder="xxxx-xxxx-xxxx-xxxx"
+              dir="ltr"
+              placeholder={t("bluesky.passwordPlaceholder")}
               value={appPassword}
               onChange={(e) => setAppPassword(e.target.value)}
               disabled={isConnecting}
             />
           </div>
           <Button type="submit" disabled={isConnecting}>
-            {isConnecting ? "Connecting..." : "Connect"}
+            {isConnecting ? t("connecting") : t("action")}
           </Button>
         </form>
       </DialogContent>

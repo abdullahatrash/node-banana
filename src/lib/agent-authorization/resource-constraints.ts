@@ -36,6 +36,11 @@ export const AGENT_RESOURCE_DESCRIPTOR_BY_KIND = {
     constraintKey: "automationIds",
     label: "Automation IDs",
   },
+  studio_asset: {
+    kind: "studio_asset",
+    constraintKey: "studioAssetIds",
+    label: "Studio Asset IDs",
+  },
   artifact: {
     kind: "artifact",
     constraintKey: "artifactIds",

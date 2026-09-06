@@ -1,0 +1,3 @@
+# Product Telemetry Never Captures Customer Content
+
+Tasmeemai Product Telemetry uses versioned first-party event schemas with purpose, retention, consent, and regional classification. Events contain minimized allowlisted dimensions and never prompts, generated copy, media, credentials, consent evidence, arbitrary metadata, or user-authored fields. Product Experiments must be owned, time-bounded, recorded, and guarded, and may not vary security, billing, authorization, Approval, safety, retention, accessibility, or audit semantics. Operational diagnostics and explicitly consented Support Bundles remain separate governed systems.

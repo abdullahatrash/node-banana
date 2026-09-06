@@ -22,9 +22,9 @@ export function TikTokPreview({ displayName, username, content, media }: TikTokP
       {/* Overlay content */}
       <div className="absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/80 to-transparent p-3">
         <p className="text-[10px] font-medium text-white">
-          @{username || displayName}
+          <bdi dir={username ? "ltr" : "auto"}>@{username || displayName}</bdi>
         </p>
-        <p className="mt-0.5 line-clamp-3 text-[10px] leading-relaxed text-white/80">
+        <p dir="auto" className="mt-0.5 line-clamp-3 text-[10px] leading-relaxed text-white/80">
           {content}
         </p>
       </div>

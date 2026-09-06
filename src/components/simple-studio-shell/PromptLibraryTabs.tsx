@@ -10,6 +10,7 @@ import {
 } from "@/store/simpleStudioStore";
 import { useSimpleStudioShellStore } from "@/store/simpleStudioShellStore";
 import { MODE_TO_URL_SEGMENT } from "./urlToMode";
+import { useTranslations } from "next-intl";
 
 function PromptCard({
   prompt,
@@ -18,20 +19,21 @@ function PromptCard({
   prompt: SavedPrompt;
   onUse: (p: SavedPrompt) => void;
 }) {
+  const t = useTranslations("studioUi.promptLibrary");
   return (
     <div className="flex flex-col gap-2 rounded-lg border p-4">
       <div className="flex items-start justify-between gap-2">
-        <div className="font-medium text-sm">{prompt.name}</div>
+        <div dir="auto" className="font-medium text-sm">{prompt.name}</div>
         <span className="text-xs rounded-full border px-2 py-0.5 text-muted-foreground">
-          {prompt.mode}
+          {t(`mode.${prompt.mode}`)}
         </span>
       </div>
-      <div className="text-xs text-muted-foreground line-clamp-3">
+      <div dir="auto" className="text-xs text-muted-foreground line-clamp-3">
         {prompt.promptText}
       </div>
       <div className="pt-2">
         <Button size="sm" onClick={() => onUse(prompt)}>
-          Use
+          {t("use")}
         </Button>
       </div>
     </div>
@@ -39,6 +41,7 @@ function PromptCard({
 }
 
 export function PromptLibraryTabs() {
+  const t = useTranslations("studioUi.promptLibrary");
   const router = useRouter();
   const tab = useSimpleStudioShellStore((s) => s.promptLibraryTab);
   const setTab = useSimpleStudioShellStore((s) => s.setPromptLibraryTab);
@@ -60,17 +63,17 @@ export function PromptLibraryTabs() {
   };
 
   return (
-    <div className="p-6">
+    <main className="p-6">
       <Tabs value={tab} onValueChange={(v) => setTab(v as "templates" | "saved")}>
         <TabsList>
-          <TabsTrigger value="templates">Templates</TabsTrigger>
-          <TabsTrigger value="saved">Saved</TabsTrigger>
+          <TabsTrigger value="templates">{t("templates")}</TabsTrigger>
+          <TabsTrigger value="saved">{t("saved")}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="templates">
           {publicPrompts.length === 0 ? (
             <div className="rounded-lg border p-12 text-center text-sm text-muted-foreground">
-              No templates yet.
+              {t("emptyTemplates")}
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -84,7 +87,7 @@ export function PromptLibraryTabs() {
         <TabsContent value="saved">
           {savedPrompts.length === 0 ? (
             <div className="rounded-lg border p-12 text-center text-sm text-muted-foreground">
-              No saved prompts yet. Save one from any creation page.
+              {t("emptySaved")}
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -95,6 +98,6 @@ export function PromptLibraryTabs() {
           )}
         </TabsContent>
       </Tabs>
-    </div>
+    </main>
   );
 }

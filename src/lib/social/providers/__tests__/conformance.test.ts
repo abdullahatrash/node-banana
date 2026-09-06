@@ -109,6 +109,11 @@ describe("social provider conformance", () => {
     expect(typeof provider.getCapabilities).toBe("function");
   });
 
+  it("advertises metrics support only for adapters with a verified implementation", () => {
+    expect([instagramProvider, tikTokProvider, youTubeProvider].every((provider) => typeof provider.getPostMetrics === "function")).toBe(true);
+    expect([linkedInProvider, xProvider, facebookProvider, redditProvider, threadsProvider, pinterestProvider, blueskyProvider, mastodonProvider].every((provider) => provider.getPostMetrics === undefined)).toBe(true);
+  });
+
   it.each(providers)(
     "%s classifies token/content/retry errors predictably",
     (provider) => {

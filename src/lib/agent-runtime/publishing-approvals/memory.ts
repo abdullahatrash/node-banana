@@ -179,7 +179,7 @@ export class InMemoryPublishingApprovalRepository
         !/^[A-Za-z0-9_-]{1,200}$/.test(input.authoritySession.id) ||
         input.authoritySession.workspaceId !== request.workspaceId ||
         input.authoritySession.userId !== input.decision.decidedByUserId ||
-        (input.authoritySession.subjectRole !== "owner" && input.authoritySession.subjectRole !== "admin") ||
+        !["owner", "admin", "member"].includes(input.authoritySession.subjectRole) ||
         input.authoritySession.action !== request.action ||
         canonicalDigest(input.authoritySession.channelIds) !== canonicalDigest(request.channelIds) ||
         new Set(input.authoritySession.channelIds).size !== input.authoritySession.channelIds.length ||

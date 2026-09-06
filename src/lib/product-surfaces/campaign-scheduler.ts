@@ -1,0 +1,128 @@
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import type { RunAdmissionPreview } from "@/lib/agent-runtime/budgets/types";
+import type { WorkflowRunAcceptedDto } from "@/lib/agent-runtime/runs/types";
+import { campaignPayloadSchema } from "./definitions";
+import { issueCampaignAcceptedQuote, type CampaignQuoteCodec } from "./campaign-quote";
+import { planCampaignOccurrences } from "./campaign-schedule-policy";
+
+export interface ScheduledCampaignSnapshot {
+  workspaceId: string;
+  campaignId: string;
+  campaignRevision: number;
+  campaignDigest: string;
+  scheduledAt: Date;
+  occurrenceKey: string;
+  format: string;
+  timezone: string;
+  channels: string[];
+  approvalMode: "request_human" | "evaluate_policy";
+  autoPublishGrantId: string | null;
+  fundingMode: "byok" | "managed";
+  budgetCeilingCents: number;
+  creditCeiling: number;
+  workflow: { workflowId: string; workflowRevisionId: string; inputs: Record<string, string>; inputArtifactIds: string[] };
+  actor: { principalId: string; keyId: string; authorizationEvidenceRef: string };
+}
+
+export interface ClaimedCampaignOccurrence extends ScheduledCampaignSnapshot { id: string; leaseToken: string }
+
+export interface CampaignSchedulerRepository {
+  schedule(workspaceId: string, plans: ScheduledCampaignSnapshot[]): Promise<{ inserted: number; replayed: number }>;
+  cancelFuture(workspaceId: string, campaignId: string, after: Date): Promise<number>;
+  claimDue(input: { workerId: string; now: Date; leaseUntil: Date; limit: number }): Promise<ClaimedCampaignOccurrence[]>;
+  reserveAndMarkSubmitting(input: { occurrence: ClaimedCampaignOccurrence; quoteId: string; quotedAmount: string; quotedAmountCents: number; reservedCreditUnits: number; creditUnitPriceUsd: string | null; currency: "USD"; now: Date }): Promise<"reserved" | "budget_exceeded" | "credit_exceeded" | "conflict">;
+  bindRun(input: { occurrence: ClaimedCampaignOccurrence; runId: string; startSnapshotDigest: string; quoteId: string; quotedAmount: string; currency: string; acceptedAt: Date }): Promise<void>;
+  fail(input: { occurrence: ClaimedCampaignOccurrence; code: string; outcomeUnknown: boolean; now: Date }): Promise<void>;
+}
+
+function decimalParts(value: string): { whole: bigint; fraction: string } | null {
+  const match = /^(0|[1-9][0-9]*)(?:\.([0-9]+))?$/.exec(value);
+  return match ? { whole: BigInt(match[1]), fraction: match[2] ?? "" } : null;
+}
+
+/** Converts an exact USD decimal to cents by conservatively rounding upward. */
+export function campaignQuoteCents(value: string): number | null {
+  const parts = decimalParts(value); if (!parts) return null;
+  const hundredths = parts.fraction.padEnd(2, "0").slice(0, 2);
+  const remainder = parts.fraction.slice(2);
+  const cents = parts.whole * BigInt(100) + BigInt(hundredths || "0") + (/[1-9]/.test(remainder) ? BigInt(1) : BigInt(0));
+  return cents <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(cents) : null;
+}
+
+/** Converts exact quote/rate decimals to credits without floating-point or count approximations. */
+export function campaignCreditUnits(input: { quotedUsd: string; fundingMode: "byok" | "managed"; usdPerCredit: string | null }): number | null {
+  if (input.fundingMode === "byok") return 0;
+  const amount = decimalParts(input.quotedUsd); const rate = input.usdPerCredit ? decimalParts(input.usdPerCredit) : null;
+  if (!amount || !rate) return null;
+  const scale = Math.max(amount.fraction.length, rate.fraction.length);
+  const toScaled = (parts: { whole: bigint; fraction: string }) => parts.whole * (BigInt(10) ** BigInt(scale)) + BigInt(parts.fraction.padEnd(scale, "0") || "0");
+  const amountScaled = toScaled(amount); const rateScaled = toScaled(rate);
+  if (amountScaled <= BigInt(0) || rateScaled <= BigInt(0)) return null;
+  const units = (amountScaled + rateScaled - BigInt(1)) / rateScaled;
+  return units <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(units) : null;
+}
+
+export function campaignCeilingDecision(input: { committedAmountCents: string; committedCreditUnits: string; nextAmountCents: number; nextCreditUnits: number; amountCeilingCents: number; creditCeiling: number }): "admitted" | "budget_exceeded" | "credit_exceeded" {
+  if (BigInt(input.committedAmountCents) + BigInt(input.nextAmountCents) > BigInt(input.amountCeilingCents)) return "budget_exceeded";
+  if (BigInt(input.committedCreditUnits) + BigInt(input.nextCreditUnits) > BigInt(input.creditCeiling)) return "credit_exceeded";
+  return "admitted";
+}
+
+export interface ScheduledCampaignWorkflowRuntime {
+  preview(input: { workspaceId: string; workflowId: string; revisionId: string; inputs: Record<string, unknown>; principalId: string; inputArtifactIds: string[] }): Promise<RunAdmissionPreview>;
+  start(input: { workspaceId: string; workflowId: string; revisionId: string; inputs: Record<string, unknown>; principalId: string; keyId: string; authorizationEvidenceRef: string; idempotencyKey: string; inputArtifactIds: string[]; capability: "workflow_runs.start@2"; acceptedSpendQuoteRef: string }): Promise<WorkflowRunAcceptedDto>;
+}
+
+export function campaignScheduleSnapshots(input: {
+  workspaceId: string;
+  campaign: { id: string; revision: number; state: string; payload: unknown };
+  actor: ScheduledCampaignSnapshot["actor"];
+  from: Date;
+  through: Date;
+}) {
+  if (input.campaign.state !== "active") return [];
+  const campaign = campaignPayloadSchema.parse(input.campaign.payload);
+  const workflow = campaign.execution.workflow;
+  if (!workflow) throw new Error("CAMPAIGN_WORKFLOW_BINDING_REQUIRED");
+  const campaignDigest = canonicalDigest({ revision: input.campaign.revision, payload: campaign });
+  return planCampaignOccurrences({ campaignId: input.campaign.id, campaignRevision: input.campaign.revision, cadence: { ...campaign.cadence, weekStart: campaign.cadence.weekStart }, formatMix: campaign.formatMix, from: input.from, through: input.through }).map((plan) => ({
+    workspaceId: input.workspaceId, campaignId: input.campaign.id, campaignRevision: input.campaign.revision, campaignDigest, scheduledAt: plan.scheduledAt, occurrenceKey: plan.occurrenceKey, format: plan.format, timezone: campaign.cadence.timezone,
+    channels: [...campaign.channelIds], approvalMode: campaign.reviewMode, autoPublishGrantId: campaign.autoPublishGrantId, fundingMode: campaign.execution.mode, budgetCeilingCents: campaign.execution.budgetCents, creditCeiling: campaign.execution.creditCeiling,
+    workflow: structuredClone(workflow), actor: structuredClone(input.actor),
+  }));
+}
+
+export class CampaignOccurrenceScheduler {
+  constructor(private readonly repository: CampaignSchedulerRepository, private readonly runtime: ScheduledCampaignWorkflowRuntime, private readonly codec: CampaignQuoteCodec, private readonly clock = () => new Date(), private readonly managedCreditRate = () => process.env.MANAGED_GENERATION_USD_PER_CREDIT?.trim() || null) {}
+
+  async processDue(input: { workerId: string; limit?: number }) {
+    const now = this.clock(); const claimed = await this.repository.claimDue({ workerId: input.workerId, now, leaseUntil: new Date(now.getTime() + 120_000), limit: Math.min(50, Math.max(1, input.limit ?? 20)) });
+    const summary = { claimed: claimed.length, started: 0, denied: 0, outcomeUnknown: 0 };
+    for (const occurrence of claimed) {
+      try {
+        const runtimeInputs = { ...occurrence.workflow.inputs, contentFormat: occurrence.format, scheduledAt: occurrence.scheduledAt.toISOString(), channelIds: JSON.stringify(occurrence.channels), approvalMode: occurrence.approvalMode, autoPublishGrantId: occurrence.autoPublishGrantId ?? "" };
+        const preview = await this.runtime.preview({ workspaceId: occurrence.workspaceId, workflowId: occurrence.workflow.workflowId, revisionId: occurrence.workflow.workflowRevisionId, inputs: runtimeInputs, principalId: occurrence.actor.principalId, inputArtifactIds: occurrence.workflow.inputArtifactIds });
+        const quotedAmount = preview.ceiling.amount;
+        const creditUnitPriceUsd = occurrence.fundingMode === "managed" ? this.managedCreditRate() : null;
+        const amountCents = quotedAmount === null ? null : campaignQuoteCents(quotedAmount);
+        const creditUnits = quotedAmount === null ? null : campaignCreditUnits({ quotedUsd: quotedAmount, fundingMode: occurrence.fundingMode, usdPerCredit: creditUnitPriceUsd });
+        if (!preview.admissible || preview.ceiling.currency !== "USD" || quotedAmount === null || amountCents === null || creditUnits === null || amountCents > occurrence.budgetCeilingCents) { await this.repository.fail({ occurrence, code: creditUnits === null ? "CAMPAIGN_OCCURRENCE_CREDIT_PRICING_UNAVAILABLE" : "CAMPAIGN_OCCURRENCE_BUDGET_DENIED", outcomeUnknown: false, now: this.clock() }); summary.denied++; continue; }
+        const acceptedQuote = issueCampaignAcceptedQuote({ preview, binding: occurrence.workflow, workspaceId: occurrence.workspaceId, userId: occurrence.actor.principalId, keyId: occurrence.actor.keyId, campaignId: occurrence.campaignId, campaignRevision: occurrence.campaignRevision, now, codec: this.codec });
+        const reservation = await this.repository.reserveAndMarkSubmitting({ occurrence, quoteId: acceptedQuote.quote.quoteId, quotedAmount, quotedAmountCents: amountCents, reservedCreditUnits: creditUnits, creditUnitPriceUsd, currency: "USD", now: this.clock() });
+        if (reservation === "budget_exceeded" || reservation === "credit_exceeded") { await this.repository.fail({ occurrence, code: reservation === "budget_exceeded" ? "CAMPAIGN_CUMULATIVE_BUDGET_EXCEEDED" : "CAMPAIGN_CUMULATIVE_CREDIT_EXCEEDED", outcomeUnknown: false, now: this.clock() }); summary.denied++; continue; }
+        if (reservation === "conflict") continue;
+        try {
+        const accepted = await this.runtime.start({ workspaceId: occurrence.workspaceId, workflowId: occurrence.workflow.workflowId, revisionId: occurrence.workflow.workflowRevisionId, inputs: runtimeInputs, principalId: occurrence.actor.principalId, keyId: occurrence.actor.keyId, authorizationEvidenceRef: occurrence.actor.authorizationEvidenceRef, idempotencyKey: occurrence.occurrenceKey, inputArtifactIds: occurrence.workflow.inputArtifactIds, capability: "workflow_runs.start@2", acceptedSpendQuoteRef: acceptedQuote.ref });
+        await this.repository.bindRun({ occurrence, runId: accepted.run.id, startSnapshotDigest: accepted.run.startSnapshotDigest, quoteId: acceptedQuote.quote.quoteId, quotedAmount: acceptedQuote.quote.amount, currency: acceptedQuote.quote.currency, acceptedAt: new Date(accepted.run.acceptedAt) }); summary.started++;
+        } catch (error) {
+          const code = error instanceof Error ? error.message : "CAMPAIGN_OCCURRENCE_START_UNKNOWN";
+          await this.repository.fail({ occurrence, code, outcomeUnknown: true, now: this.clock() }); summary.outcomeUnknown++;
+        }
+      } catch (error) {
+        const code = error instanceof Error ? error.message : "CAMPAIGN_OCCURRENCE_ADMISSION_FAILED";
+        await this.repository.fail({ occurrence, code, outcomeUnknown: false, now: this.clock() }); summary.denied++;
+      }
+    }
+    return summary;
+  }
+}

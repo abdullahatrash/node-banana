@@ -1,18 +1,12 @@
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
-import { getServerAuthSession } from "@/lib/auth/session";
 import { SocialLayout } from "@/components/social/SocialLayout";
+import { getProductShellContext } from "@/lib/product-shell/server";
 
 export default async function SocialRootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const session = await getServerAuthSession(await headers());
+  const shellContext = await getProductShellContext("/social/calendar");
 
-  if (!session?.user) {
-    redirect("/sign-in?next=%2Fsocial%2Fcalendar");
-  }
-
-  return <SocialLayout>{children}</SocialLayout>;
+  return <SocialLayout shellContext={shellContext}>{children}</SocialLayout>;
 }

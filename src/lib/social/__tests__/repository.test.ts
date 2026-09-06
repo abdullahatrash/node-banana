@@ -5,8 +5,11 @@ import {
   OAuthSelectionSessionExpiredError,
   OAuthSelectionSessionNotFoundError,
   SocialAccountNotFoundError,
+  SocialAccountQuotaExceededError,
   SocialPostNotFoundError,
+  SocialPostMediaBindingError,
   SocialPostStateTransitionError,
+  bindStableSocialMedia,
 } from "@/lib/social/repository";
 
 // Mock the database module
@@ -23,6 +26,8 @@ const mockWhere = vi.fn();
 const mockOrderBy = vi.fn();
 const mockLimit = vi.fn();
 const mockOffset = vi.fn();
+const mockExecute = vi.fn();
+const mockTransaction = vi.fn();
 
 function setupChainableMock(returnValue: unknown[] = []) {
   mockReturning.mockResolvedValue(returnValue);
@@ -52,16 +57,23 @@ function setupChainableMock(returnValue: unknown[] = []) {
 }
 
 vi.mock("@/lib/db", () => ({
-  getDb: () => ({
-    insert: mockInsert,
-    select: mockSelect,
-    update: mockUpdate,
-    delete: mockDelete,
-  }),
+  getDb: () => {
+    const database = {
+      insert: mockInsert,
+      select: mockSelect,
+      update: mockUpdate,
+      delete: mockDelete,
+      execute: mockExecute,
+    };
+    return {
+      ...database,
+      transaction: (callback: (tx: typeof database) => unknown) => mockTransaction(callback, database),
+    };
+  },
 }));
 
 vi.mock("@/lib/db/schema", () => ({
-  socialAccounts: { workspaceId: "workspace_id", id: "id", platform: "platform", platformUserId: "platform_user_id" },
+  socialAccounts: { workspaceId: "workspace_id", id: "id", platform: "platform", platformUserId: "platform_user_id", disabled: "disabled" },
   socialPosts: { workspaceId: "workspace_id", id: "id", status: "status", socialAccountId: "social_account_id", retryCount: "retry_count", createdAt: "created_at" },
   socialOAuthStates: { id: "id", state: "state", expiresAt: "expires_at" },
   socialOAuthSelectionSessions: { id: "id", expiresAt: "expires_at", workspaceId: "workspace_id", platform: "platform" },
@@ -70,6 +82,7 @@ vi.mock("@/lib/db/schema", () => ({
 describe("social/repository", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockTransaction.mockImplementation((callback, database) => callback(database));
   });
 
   describe("error classes", () => {
@@ -112,6 +125,31 @@ describe("social/repository", () => {
     it("OAuthSelectionSessionExpiredError has correct name", () => {
       const error = new OAuthSelectionSessionExpiredError();
       expect(error.name).toBe("OAuthSelectionSessionExpiredError");
+    });
+  });
+
+  describe("stable social media binding", () => {
+    const resources = new Map([
+      ["studio_asset:asset-a", { resourceKind: "studio_asset" as const, id: "asset-a", digest: `sha256:${"a".repeat(64)}`, type: "image" }],
+      ["artifact:artifact-b", { resourceKind: "artifact" as const, id: "artifact-b", digest: `sha256:${"b".repeat(64)}`, type: "image" }],
+    ]);
+
+    it("pins every canonical resource and preserves exact order and alt text", () => {
+      expect(bindStableSocialMedia({
+        mediaUrls: [{ type: "image", url: "one", alt: "First" }, { type: "image", url: "two", alt: "Second" }],
+        references: [{ resourceKind: "studio_asset", id: "asset-a" }, { resourceKind: "artifact", id: "artifact-b", digest: `sha256:${"b".repeat(64)}` }],
+        resources,
+      })).toEqual([
+        { resourceKind: "studio_asset", assetId: "asset-a", assetDigest: `sha256:${"a".repeat(64)}`, order: 0, alt: "First" },
+        { resourceKind: "artifact", assetId: "artifact-b", assetDigest: `sha256:${"b".repeat(64)}`, order: 1, alt: "Second" },
+      ]);
+    });
+
+    it("rejects an incomplete, duplicated, or caller-digest-mismatched relation", () => {
+      expect(() => bindStableSocialMedia({ mediaUrls: [{ type: "image", url: "one" }], references: [], resources })).toThrow(SocialPostMediaBindingError);
+      expect(() => bindStableSocialMedia({ mediaUrls: [{ type: "image", url: "one" }, { type: "image", url: "two" }], references: [{ resourceKind: "studio_asset", id: "asset-a" }, { resourceKind: "studio_asset", id: "asset-a" }], resources })).toThrow(SocialPostMediaBindingError);
+      expect(() => bindStableSocialMedia({ mediaUrls: [{ type: "image", url: "one" }], references: [{ resourceKind: "studio_asset", id: "asset-a", digest: `sha256:${"c".repeat(64)}` }], resources })).toThrow(SocialPostMediaBindingError);
+      expect(() => bindStableSocialMedia({ mediaUrls: [{ type: "image", url: "one" }], references: [{ resourceKind: "studio_asset", id: "asset-a" }], resources: new Map([["studio_asset:asset-a", { resourceKind: "studio_asset", id: "asset-a", digest: "metadata-only", type: "image" }]]) })).toThrow("verified SHA-256 digest");
     });
   });
 
@@ -253,6 +291,49 @@ describe("social/repository", () => {
       expect(mockInsert).toHaveBeenCalled();
       expect(result).toEqual(mockAccount);
     });
+
+    it("serializes final admission and rejects a new account at the immutable Plan limit", async () => {
+      const { upsertSocialAccount } = await import("@/lib/social/repository");
+      mockWhere
+        .mockReturnValueOnce({ limit: vi.fn().mockResolvedValue([]) })
+        .mockResolvedValueOnce([{ count: 2 }]);
+
+      await expect(upsertSocialAccount({
+        workspaceId: "ws_1",
+        platform: "linkedin",
+        platformUserId: "new-user",
+        displayName: "New user",
+        accessTokenEncrypted: "enc_token",
+        createdByUserId: "user_1",
+        maxActiveChannels: 2,
+      })).rejects.toEqual(new SocialAccountQuotaExceededError(2, 2));
+
+      expect(mockExecute).toHaveBeenCalledOnce();
+      expect(mockInsert).not.toHaveBeenCalled();
+    });
+
+    it("allows an existing active Channel to reauthorize while the allowance is full", async () => {
+      const account = { id: "sacct_existing", platform: "linkedin", displayName: "Existing" };
+      setupChainableMock([account]);
+      mockWhere.mockReturnValueOnce({
+        limit: vi.fn().mockResolvedValue([{ id: "sacct_existing", disabled: false }]),
+      });
+      const { upsertSocialAccount } = await import("@/lib/social/repository");
+
+      await expect(upsertSocialAccount({
+        workspaceId: "ws_1",
+        platform: "linkedin",
+        platformUserId: "existing-user",
+        displayName: "Existing",
+        accessTokenEncrypted: "new_token",
+        createdByUserId: "user_1",
+        maxActiveChannels: 2,
+      })).resolves.toEqual(account);
+
+      expect(mockExecute).toHaveBeenCalledOnce();
+      expect(mockSelect).toHaveBeenCalledOnce();
+      expect(mockInsert).toHaveBeenCalledOnce();
+    });
   });
 
   describe("getSocialAccount", () => {
@@ -319,24 +400,16 @@ describe("social/repository", () => {
       );
     });
 
-    it("requeues publishing post on scheduled-only update", async () => {
+    it("rejects a concurrent reschedule once provider publishing has started", async () => {
       const scheduledAt = new Date("2026-05-01T12:15:00.000Z");
       setupChainableMock([
         { id: "spost_1", status: "publishing", workspaceId: "ws_1" },
       ]);
 
       const { updateSocialPost } = await import("@/lib/social/repository");
-      await updateSocialPost("ws_1", "spost_1", { scheduledAt });
-
-      expect(mockSet).toHaveBeenCalledWith(
-        expect.objectContaining({
-          status: "queued",
-          scheduledAt,
-          dispatchStatus: "pending",
-          nextDispatchAt: scheduledAt,
-          lockedAt: null,
-        }),
-      );
+      await expect(updateSocialPost("ws_1", "spost_1", { scheduledAt }))
+        .rejects.toThrow(SocialPostStateTransitionError);
+      expect(mockSet).not.toHaveBeenCalled();
     });
   });
 

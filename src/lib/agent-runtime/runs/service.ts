@@ -28,8 +28,9 @@ import type {
   WorkflowRunProviderResolution,
   WorkflowRunBudgetPort,
   WorkflowRunQuotaPort,
+  WorkflowRunStudioAssetPort,
 } from "./types";
-import type { BudgetAdmissionInput, RunStepExposure } from "../budgets/types";
+import type { BudgetAdmissionInput, BudgetAdmissionPlan, RunStepExposure } from "../budgets/types";
 import type { RunAdmissionPreview } from "../budgets/types";
 import { BudgetServiceError } from "../budgets/service";
 import type {
@@ -46,6 +47,12 @@ import {
   providerFamily,
   quotaReasonFamily,
 } from "../operational-metrics";
+import {
+  WorkflowRunSpendQuoteCodec,
+  workflowRunQuoteCeilingDigest,
+  workflowRunQuoteInputDigest,
+  type WorkflowRunAcceptedSpendQuote,
+} from "./spend-quote";
 
 const ID = /^[a-zA-Z0-9_-]{1,200}$/;
 const IDEMPOTENCY_KEY = /^[\x21-\x7e]{8,200}$/;
@@ -98,6 +105,23 @@ function usageQuotaSubjectId(input: {
     schema: "workflow-run-usage-quota-subject/v1",
     ...input,
   }).slice(7, 39)}`;
+}
+
+function matchesAcceptedSpendQuote(quote: WorkflowRunAcceptedSpendQuote, plan: BudgetAdmissionPlan): boolean {
+  const providerModels = plan.stepExposures.map((exposure) => ({
+    provider: exposure.provider,
+    model: exposure.model,
+    pricePerAttempt: exposure.amountPerAttempt ?? "",
+    automaticAttempts: exposure.automaticAttempts,
+    pricingSnapshotIds: [...exposure.pricingSnapshotIds].sort(),
+  }));
+  const pricingSnapshotIds = [...new Set(providerModels.flatMap((item) => item.pricingSnapshotIds))].sort();
+  return plan.reservations.length > 0 &&
+    plan.reservations.every((reservation) => reservation.currency === quote.currency && reservation.reservedAmount === quote.amount) &&
+    quote.ceiling.maximumAmount === quote.amount &&
+    quote.ceiling.currency === quote.currency &&
+    quote.ceiling.maximumProviderAttempts === providerModels.reduce((total, model) => total + model.automaticAttempts, 0) &&
+    workflowRunQuoteCeilingDigest({ amount: quote.amount, currency: quote.currency, providerModels, pricingSnapshotIds, ceiling: quote.ceiling }) === quote.ceilingDigest;
 }
 
 function usageQuotaReconciliationId(input: {
@@ -206,6 +230,16 @@ function eligibleWorkflowExecutors(
     Object.values(revision.definition.inputs).filter(
       (definition) => definition.kind === "image",
     ).length === 1;
+  const isContentDispatch =
+    steps.length === 2 &&
+    steps[0]?.operation.identity === "runtime.digest_text@1" &&
+    /^runtime\.dispatch_content_[a-z_]+@[12]$/.test(steps[1]?.operation.identity ?? "") &&
+    steps[1]?.inputs.recipe?.from === "workflow_input" &&
+    steps[1]?.inputs.guard?.from === "step_output" &&
+    steps[1]?.inputs.guard.step === steps[0]?.id &&
+    steps[1]?.inputs.guard.output === "textDigest" &&
+    revision.definition.outputs.receipt?.binding.step === steps[1]?.id &&
+    revision.definition.outputs.receipt?.binding.output === "receipt";
   const resolved = steps.map((step) =>
     registry.resolve
       ? registry.resolve(
@@ -215,7 +249,7 @@ function eligibleWorkflowExecutors(
         )
       : registry.get(step.operation.identity, step.operation.contractDigest),
   );
-  if ((!isLegacy && !isGolden) || resolved.some((executor) => !executor)) {
+  if ((!isLegacy && !isGolden && !isContentDispatch) || resolved.some((executor) => !executor)) {
     throw new WorkflowRunError(
       "WORKFLOW_RUN_UNSUPPORTED_WORKFLOW",
       "This runtime slice accepts the exact deterministic digest or frozen two-step golden Workflow.",
@@ -582,6 +616,8 @@ export class WorkflowRunService {
     private readonly usage?: UsageSettlementPort,
     private readonly budgets?: WorkflowRunBudgetPort,
     private readonly quotas?: WorkflowRunQuotaPort,
+    private readonly spendQuotes: WorkflowRunSpendQuoteCodec = new WorkflowRunSpendQuoteCodec(null),
+    private readonly studioAssets?: WorkflowRunStudioAssetPort,
   ) {}
 
   private quotaRunClaim(input: {
@@ -951,7 +987,9 @@ export class WorkflowRunService {
     authorizationEvidenceRef: string;
     idempotencyKey: string;
     inputArtifactIds?: string[];
-    capability?: "workflow_runs.start@1" | "workflow_runs.start@2";
+    inputStudioAssetIds?: string[];
+    capability?: "workflow_runs.start@1" | "workflow_runs.start@2" | "workflow_runs.start@3";
+    acceptedSpendQuoteRef?: string;
   }): Promise<WorkflowRunAcceptedDto> {
     const capability = input.capability ?? "workflow_runs.start@1";
     const workflowId = identifier(input.workflowId, "Workflow ID");
@@ -978,10 +1016,10 @@ export class WorkflowRunService {
     const steps = revision.definition.steps;
     const { executors: resolvedExecutors, isGolden } =
       eligibleWorkflowExecutors(revision, this.executors);
-    if (isGolden && capability !== "workflow_runs.start@2") {
+    if (isGolden && capability !== "workflow_runs.start@2" && capability !== "workflow_runs.start@3") {
       throw new WorkflowRunError(
         "WORKFLOW_RUN_INVALID_INPUT",
-        "Artifact-backed Workflow Runs require workflow_runs.start@2.",
+        "Artifact-backed Workflow Runs require workflow_runs.start@2 or workflow_runs.start@3.",
       );
     }
 
@@ -1082,8 +1120,85 @@ export class WorkflowRunService {
       );
     }
 
-    const snapshot: WorkflowRunStartSnapshot = {
-      schema: "workflow-run-start-snapshot/v2",
+    if (capability !== "workflow_runs.start@3" && input.inputStudioAssetIds !== undefined) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_INVALID_INPUT",
+        "Studio Asset bindings require workflow_runs.start@3.",
+      );
+    }
+    const declaredStudioAssetIds = (input.inputStudioAssetIds ?? []).map((value) =>
+      identifier(value, "Input Studio Asset ID"),
+    );
+    if (declaredStudioAssetIds.length > 100 || new Set(declaredStudioAssetIds).size !== declaredStudioAssetIds.length) {
+      throw new WorkflowRunError(
+        "WORKFLOW_RUN_INVALID_INPUT",
+        "inputStudioAssetIds must be unique.",
+      );
+    }
+    let studioAssetReferences: import("./types").WorkflowRunStudioAssetReference[] = [];
+    if (capability === "workflow_runs.start@3") {
+      if (!this.studioAssets) {
+        throw new WorkflowRunError(
+          "WORKFLOW_RUN_PERSISTENCE_UNAVAILABLE",
+          "Studio Asset snapshot resolution is unavailable.",
+        );
+      }
+      try {
+        studioAssetReferences = await this.studioAssets.resolveStudioAssets({
+          workspaceId: input.workspaceId,
+          assetIds: declaredStudioAssetIds,
+        });
+      } catch {
+        throw new WorkflowRunError(
+          "WORKFLOW_RUN_UNAVAILABLE",
+          "A Studio Asset is unavailable.",
+        );
+      }
+      const validReference = (reference: import("./types").WorkflowRunStudioAssetReference, index: number) =>
+        reference.assetId === declaredStudioAssetIds[index] &&
+        /^sha256:[a-f0-9]{64}$/.test(reference.digest) &&
+        ["image", "video", "audio", "model3d", "workflow"].includes(reference.type) &&
+        reference.mediaType.length > 0 && reference.mediaType.length <= 200 &&
+        Number.isSafeInteger(reference.sizeBytes) && reference.sizeBytes >= 0 &&
+        (reference.width === null || (Number.isInteger(reference.width) && reference.width > 0)) &&
+        (reference.height === null || (Number.isInteger(reference.height) && reference.height > 0)) &&
+        (reference.durationSeconds === null || (Number.isInteger(reference.durationSeconds) && reference.durationSeconds >= 0));
+      if (studioAssetReferences.length !== declaredStudioAssetIds.length || studioAssetReferences.some((reference, index) => !validReference(reference, index))) {
+        throw new WorkflowRunError(
+          "WORKFLOW_RUN_UNAVAILABLE",
+          "Studio Asset bindings could not be resolved exactly.",
+        );
+      }
+      studioAssetReferences = structuredClone(studioAssetReferences);
+    }
+
+    const acceptedSpendQuote = input.acceptedSpendQuoteRef
+      ? this.spendQuotes.open(input.acceptedSpendQuoteRef)
+      : null;
+    if (input.acceptedSpendQuoteRef && !acceptedSpendQuote) {
+      throw new WorkflowRunError("WORKFLOW_RUN_INVALID_INPUT", "The accepted provider-spend quote is invalid.");
+    }
+    if (acceptedSpendQuote) {
+      const quoteInputDigest = workflowRunQuoteInputDigest({
+        workflowId,
+        revisionId,
+        inputs,
+        inputArtifactIds: resolvedArtifactIds,
+        ...(capability === "workflow_runs.start@3" ? { studioAssetReferences } : {}),
+      });
+      if (
+        acceptedSpendQuote.capability !== capability ||
+        acceptedSpendQuote.targetWorkspaceId !== input.workspaceId ||
+        acceptedSpendQuote.delegatedPrincipalId !== principalId ||
+        acceptedSpendQuote.delegatedKeyId !== keyId ||
+        acceptedSpendQuote.workflowId !== workflowId ||
+        acceptedSpendQuote.workflowRevisionId !== revisionId ||
+        acceptedSpendQuote.inputDigest !== quoteInputDigest
+      ) throw new WorkflowRunError("WORKFLOW_RUN_INVALID_INPUT", "The provider-spend quote does not match this exact Run request.");
+    }
+
+    const snapshot = {
+      schema: capability === "workflow_runs.start@3" ? "workflow-run-start-snapshot/v3" : "workflow-run-start-snapshot/v2",
       workflowId,
       workflowRevisionId: revision.id,
       workflowRevision: revision.revision,
@@ -1101,6 +1216,7 @@ export class WorkflowRunService {
         ...executorResolution(resolvedExecutors[index]!, step),
       })),
       artifactReferences,
+      ...(capability === "workflow_runs.start@3" ? { studioAssetReferences } : {}),
       credentialReferences: steps.flatMap((step) =>
         Object.entries(step.credentials).map(([requirement, slotName]) => ({
           stepId: step.id,
@@ -1114,7 +1230,8 @@ export class WorkflowRunService {
         keyId,
         evidenceRef,
       },
-    };
+      ...(acceptedSpendQuote ? { acceptedSpendQuote } : {}),
+    } as WorkflowRunStartSnapshot;
     // Admission evidence is deliberately outside the caller-intent
     // fingerprint: a retry receives fresh evidence but must replay the same
     // durable acceptance.
@@ -1130,6 +1247,11 @@ export class WorkflowRunService {
       })),
       inputs: normalizedInputs,
       inputArtifactIds: resolvedArtifactIds,
+      ...(capability === "workflow_runs.start@3" ? {
+        inputStudioAssetIds: declaredStudioAssetIds,
+        studioAssetReferences,
+      } : {}),
+      acceptedSpendQuoteId: acceptedSpendQuote?.quoteId ?? null,
     });
     const replay = await this.repository.getMutationReceipt({
       workspaceId: input.workspaceId,
@@ -1147,6 +1269,12 @@ export class WorkflowRunService {
       return acceptance(replay.run, replay.receipt.initialEventCursor);
     }
     const now = this.clock.now();
+    if (acceptedSpendQuote && (
+      !Number.isFinite(new Date(acceptedSpendQuote.expiresAt).getTime()) ||
+      new Date(acceptedSpendQuote.expiresAt) <= now ||
+      !Number.isFinite(new Date(acceptedSpendQuote.quotedAt).getTime()) ||
+      new Date(acceptedSpendQuote.quotedAt) > now
+    )) throw new WorkflowRunError("WORKFLOW_RUN_INVALID_INPUT", "The accepted provider-spend quote is stale.");
     const runId = `run_${randomUUID().replaceAll("-", "")}`;
     const run: WorkflowRunRecord = {
       id: runId,
@@ -1204,6 +1332,16 @@ export class WorkflowRunService {
             : "BUDGET_LIMIT_EXCEEDED";
       throw new WorkflowRunError(code, message);
     }
+    if (acceptedSpendQuote && (!budgetAdmissionPlan || !matchesAcceptedSpendQuote(acceptedSpendQuote, budgetAdmissionPlan))) {
+      throw new WorkflowRunError("RUN_COST_UNKNOWN", "The current provider-spend reservation no longer matches the accepted fixed quote.");
+    }
+    if (acceptedSpendQuote && budgetAdmissionPlan) {
+      budgetAdmissionPlan = {
+        ...budgetAdmissionPlan,
+        acceptedSpendQuote,
+        requestDigest: canonicalDigest({ baseAdmissionDigest: budgetAdmissionPlan.requestDigest, acceptedSpendQuote }),
+      };
+    }
     const initialEventCursor = this.cursors.seal({
       workspaceId: input.workspaceId,
       principalId,
@@ -1256,6 +1394,8 @@ export class WorkflowRunService {
       budgetAdmissionPlan,
       quotaAdmissionPlan,
       quotaWaitEventId: quotaAdmissionPlan ? randomUUID() : null,
+      acceptedSpendQuote,
+      acceptedSpendQuoteRef: input.acceptedSpendQuoteRef ?? null,
     });
     if (result.kind === "conflict") {
       throw new WorkflowRunError(

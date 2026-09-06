@@ -1,12 +1,32 @@
 const PRODUCT_PATH_PREFIXES = [
   "/agents",
+  "/ai-studio",
+  "/analytics",
+  "/approvals",
+  "/automations",
+  "/billing",
+  "/blitz",
+  "/brand",
+  "/calendar",
+  "/channels",
+  "/compose",
+  "/content",
   "/dashboard",
+  "/deliveries",
   "/editor",
+  "/influencers",
+  "/inspiration",
+  "/library",
+  "/onboarding",
+  "/r",
+  "/refer-and-earn",
   "/sign-in",
   "/sign-up",
   "/simple-studio",
   "/social",
+  "/settings",
   "/studio",
+  "/verify-email",
 ] as const;
 
 type SiteSurface = "marketing" | "product" | "neutral";
@@ -92,7 +112,7 @@ export function getSiteRedirect(input: SiteRoutingInput): string | null {
 
   if (surface === "product" && requestUrl.pathname === "/") {
     return new URL(
-      "/simple-studio/images",
+      "/onboarding",
       input.appOrigin || requestUrl.origin,
     ).toString();
   }

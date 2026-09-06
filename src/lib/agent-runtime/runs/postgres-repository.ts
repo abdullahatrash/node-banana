@@ -12,6 +12,7 @@ import {
 import type { getDb } from "@/lib/db";
 import {
   agentAuthorizationDecisions,
+  contentWorkflows,
   contentWorkflowRevisions,
   workflowRunEvents,
   workflowRunExecutionLeases,
@@ -20,6 +21,7 @@ import {
   workflowRuns,
   workflowStepAttempts,
   runtimeQuotaWaits,
+  runtimeWorkflowRunSpendQuoteRedemptions,
 } from "@/lib/db/schema";
 import { canonicalDigest } from "@/lib/agent-tools/canonical";
 import {
@@ -56,6 +58,7 @@ import type {
   WorkflowRunStartSnapshot,
   WorkflowStepAttemptRecord,
 } from "./types";
+import { WorkflowRunSpendQuoteCodec, workflowRunQuoteCeilingDigest, type WorkflowRunAcceptedSpendQuote } from "./spend-quote";
 
 function sameQuotaResumeActor(
   left: QuotaWait["resumedBy"],
@@ -362,8 +365,12 @@ function mapStepAttempt(
 
 function capabilityVersion(
   capability: WorkflowRunMutationReceiptRecord["capability"],
-): 1 | 2 {
-  return capability === "workflow_runs.start@2" ? 2 : 1;
+): 1 | 2 | 3 {
+  return capability === "workflow_runs.start@3"
+    ? 3
+    : capability === "workflow_runs.start@2"
+      ? 2
+      : 1;
 }
 
 function validStartInput(
@@ -388,7 +395,8 @@ function validStartInput(
     run.workspaceId === receipt.workspaceId &&
     run.id === receipt.runId &&
     (receipt.capability === "workflow_runs.start@1" ||
-      receipt.capability === "workflow_runs.start@2") &&
+      receipt.capability === "workflow_runs.start@2" ||
+      receipt.capability === "workflow_runs.start@3") &&
     receipt.result === null &&
     run.startSnapshot.workflowId === run.workflowId &&
     run.startSnapshot.workflowRevisionId === run.workflowRevisionId &&
@@ -404,6 +412,40 @@ function validStartInput(
     outboxIntent.claimedAt === null &&
     outboxIntent.deliveredAt === null
   );
+}
+
+function quoteMatchesAdmission(input: {
+  quote: WorkflowRunAcceptedSpendQuote;
+  run: WorkflowRunRecord;
+  receipt: WorkflowRunMutationReceiptRecord;
+  budgetAdmissionPlan: import("../budgets/types").BudgetAdmissionPlan | null | undefined;
+}): boolean {
+  const plan = input.budgetAdmissionPlan;
+  if (!plan || !input.run.startSnapshot.acceptedSpendQuote) return false;
+  const providerModels = plan.stepExposures.map((exposure) => ({
+    provider: exposure.provider,
+    model: exposure.model,
+    pricePerAttempt: exposure.amountPerAttempt ?? "",
+    automaticAttempts: exposure.automaticAttempts,
+    pricingSnapshotIds: [...exposure.pricingSnapshotIds].sort(),
+  }));
+  const pricingSnapshotIds = [...new Set(providerModels.flatMap((item) => item.pricingSnapshotIds))].sort();
+  return canonicalDigest(input.quote) === canonicalDigest(input.run.startSnapshot.acceptedSpendQuote) &&
+    input.quote.targetWorkspaceId === input.run.workspaceId &&
+    input.quote.delegatedPrincipalId === input.receipt.principalId &&
+    input.quote.delegatedKeyId === input.receipt.keyId &&
+    input.quote.workflowId === input.run.workflowId &&
+    input.quote.workflowRevisionId === input.run.workflowRevisionId &&
+    input.quote.expiresAt > input.run.acceptedAt.toISOString() &&
+    input.quote.quotedAt <= input.run.acceptedAt.toISOString() &&
+    input.quote.pricingSnapshotIds.length === pricingSnapshotIds.length &&
+    input.quote.pricingSnapshotIds.every((id, index) => id === pricingSnapshotIds[index]) &&
+    plan.reservations.length > 0 &&
+    plan.reservations.every((reservation) => reservation.currency === input.quote.currency && reservation.reservedAmount === input.quote.amount) &&
+    input.quote.ceiling.maximumAmount === input.quote.amount &&
+    input.quote.ceiling.currency === input.quote.currency &&
+    input.quote.ceiling.maximumProviderAttempts === providerModels.reduce((total, model) => total + model.automaticAttempts, 0) &&
+    workflowRunQuoteCeilingDigest({ amount: input.quote.amount, currency: input.quote.currency, providerModels, pricingSnapshotIds, ceiling: input.quote.ceiling }) === input.quote.ceilingDigest;
 }
 
 async function findRun(
@@ -458,6 +500,7 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
     private readonly usageWriter?: UsageCommitWriter<Tx>,
     private readonly budgetWriter?: BudgetCommitWriter<Tx>,
     private readonly quotaWriter?: QuotaCommitWriter<Tx>,
+    private readonly spendQuotes: WorkflowRunSpendQuoteCodec = new WorkflowRunSpendQuoteCodec(null),
   ) {}
 
   private async commitQuotaClaim(tx: Tx, plan: QuotaClaimPlan | null | undefined) {
@@ -700,6 +743,20 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
             : { kind: "unavailable" as const };
         }
 
+        const quote = input.acceptedSpendQuoteRef ? this.spendQuotes.open(input.acceptedSpendQuoteRef) : null;
+        if (
+          Boolean(input.acceptedSpendQuoteRef) !== Boolean(input.acceptedSpendQuote) ||
+          (input.acceptedSpendQuote && (!quote || !quoteMatchesAdmission({ quote, run: input.run, receipt: input.receipt, budgetAdmissionPlan: input.budgetAdmissionPlan })))
+        ) return { kind: "unavailable" as const };
+        if (quote) {
+          const redeemed = await tx.select({ runId: runtimeWorkflowRunSpendQuoteRedemptions.runId })
+            .from(runtimeWorkflowRunSpendQuoteRedemptions)
+            .where(eq(runtimeWorkflowRunSpendQuoteRedemptions.quoteId, quote.quoteId))
+            .limit(1)
+            .for("update");
+          if (redeemed[0]) return { kind: "unavailable" as const };
+        }
+
         const revisionRows = await tx
           .select({
             revision: contentWorkflowRevisions.revision,
@@ -741,6 +798,14 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
         ) {
           return { kind: "unavailable" as const };
         }
+        if (quote) {
+          const [workflow] = await tx.select({ id: contentWorkflows.id, currentRevision: contentWorkflows.currentRevision, updatedAt: contentWorkflows.updatedAt })
+            .from(contentWorkflows)
+            .where(and(eq(contentWorkflows.workspaceId, input.run.workspaceId), eq(contentWorkflows.id, input.run.workflowId)))
+            .limit(1)
+            .for("share");
+          if (!workflow || canonicalDigest(workflow) !== quote.targetStateDigest) return { kind: "unavailable" as const };
+        }
 
         const evidenceRows = await tx
           .select({
@@ -779,13 +844,27 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           .limit(1)
           .for("share");
         const evidence = evidenceRows[0];
+        const authorizedArtifactIds = evidence?.resources
+          .filter((resource) => resource.kind === "artifact")
+          .map((resource) => resource.id) ?? [];
+        const authorizedStudioAssetIds = evidence?.resources
+          .filter((resource) => resource.kind === "studio_asset")
+          .map((resource) => resource.id) ?? [];
+        const snapshottedArtifactIds = input.run.startSnapshot.artifactReferences.map((reference) => reference.artifactId);
+        const snapshottedStudioAssetIds = input.run.startSnapshot.schema === "workflow-run-start-snapshot/v3"
+          ? input.run.startSnapshot.studioAssetReferences.map((reference) => reference.assetId)
+          : [];
         if (
           !evidence ||
           !evidence.resources.some(
             (resource) =>
               resource.kind === "workflow" &&
               resource.id === input.run.workflowId,
-          )
+          ) ||
+          (input.receipt.capability === "workflow_runs.start@3" && (
+            canonicalDigest([...authorizedArtifactIds].sort()) !== canonicalDigest([...snapshottedArtifactIds].sort()) ||
+            canonicalDigest([...authorizedStudioAssetIds].sort()) !== canonicalDigest([...snapshottedStudioAssetIds].sort())
+          ))
         ) {
           return { kind: "unavailable" as const };
         }
@@ -796,6 +875,20 @@ export class DrizzleWorkflowRunRepository implements WorkflowRunRepository {
           keyId: input.run.startSnapshot.authorization.keyId,
           authorizationEvidenceRef:
             input.run.startSnapshot.authorization.evidenceRef,
+        });
+        if (quote) await tx.insert(runtimeWorkflowRunSpendQuoteRedemptions).values({
+          quoteId: quote.quoteId,
+          workspaceId: input.run.workspaceId,
+          runId: input.run.id,
+          principalId: input.receipt.principalId,
+          keyId: input.receipt.keyId,
+          amount: quote.amount,
+          currency: quote.currency,
+          pricingSnapshotIds: quote.pricingSnapshotIds,
+          targetStateDigest: quote.targetStateDigest,
+          ceilingDigest: quote.ceilingDigest,
+          quote,
+          redeemedAt: input.run.acceptedAt,
         });
         await appendRunContractEvidence(tx, {
           workspaceId: input.run.workspaceId,

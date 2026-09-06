@@ -1,12 +1,132 @@
-# Node Banana
+# Tasmeemai
 
-Node Banana includes a Social Hub for planning, composing, and publishing generated media and written posts to external social platforms.
+Tasmeemai is the customer-facing product for planning, creating, reviewing, and publishing content. Node Banana is its legacy repository codename and is not used as a product name in new customer-facing language.
 
 ## Language
+
+**Reference Feature Parity**:
+A commitment that every user-observable capability, state, interaction, and supporting workflow in an adopted reference surface has a Tasmeemai counterpart. It preserves Tasmeemai's product identity, domain language, and architecture rather than copying proprietary wording, branding, assets, or implementation.
+_Avoid_: Clone, pixel parity, MVP parity, screen copy
+
+**Parity Baseline**:
+A dated, versioned inventory of the reference capabilities and states committed under **Reference Feature Parity**. Later reference-product changes enter a deliberate parity-change review rather than silently moving the accepted destination.
+_Avoid_: Latest Fastlane, moving target, feature checklist
+
+**Workspace**:
+The customer-owned isolation and collaboration boundary for one brand's people, Brand Profile, content, provider access, Channels, policies, commercial state, and audit evidence. A person's identity may belong to multiple Workspaces, but no resource or active operation silently moves between them.
+_Avoid_: Account, organization, tenant, project
+
+**Workspace Role**:
+A versioned named bundle of Application Capability eligibility used to make common human access understandable. Built-in roles are Owner, Admin, Billing Admin, Creator, Approver, Analyst, and Viewer; a Workspace may define Custom Roles from the same stable capabilities. Effective authority remains the intersection of role bundle, exact resource grants, policy, Entitlement, and resource state, so no role alone grants Publishing Approval, credential use, or provider spend.
+_Avoid_: Permission, approval authority, entitlement, hardcoded role check
+
+**Portfolio**:
+A coordination boundary that groups independently owned client Workspaces for agency navigation, reporting, templates, and explicitly authorized bulk operations. It never owns, merges, transfers, or lends Workspace resources, subscriptions, Generation Credits, credentials, policies, or audit history.
+_Avoid_: Multi-brand Workspace, parent tenant, agency Workspace, shared billing account
+
+**Portfolio Assignment**:
+A person's explicit, revocable authorization to perform named cross-Workspace coordination capabilities over an allowlist of Workspaces in one Portfolio. Every invocation still resolves and displays one exact target Workspace and rechecks that Workspace's own membership, role, resource grants, policy, and Entitlements.
+_Avoid_: Global admin, agency member, cross-tenant role, inherited Workspace access
+
+**Workspace Subscription**:
+The Workspace-owned commercial agreement that grants plan Entitlements and recurring Generation Credit allowances. Human roles govern purchase and administration, but the subscription never belongs to an individual identity.
+_Avoid_: User plan, billing account, membership tier
+
+**Plan Definition**:
+A versioned commercial catalog entry that composes Entitlements, recurring Generation Credit allowance, storage, seats, Channels, Automations, API and Agent access, analytics, and support level. Product enforcement resolves these stable components rather than hardcoded plan labels or marketing prices.
+_Avoid_: Pricing page, plan name, feature flags, subscription row
+
+**Trial Grant**:
+A temporary Workspace entitlement and expiring-credit grant whose abuse eligibility is evaluated across verified customer or payment identity. Creating another Workspace does not reset or multiply the underlying trial benefit.
+_Avoid_: User trial, free plan, signup credits, workspace loophole
+
+**Merchant-of-Record Adapter**:
+A replaceable commercial integration that performs payment collection, tax calculation, compliant invoicing, refunds, and disputes where contracted to do so. Tasmeemai retains provider-neutral Subscription, Entitlement, Generation Credit, and invoice projections rather than delegating product authority to the merchant.
+_Avoid_: Billing source of truth, payment database, Stripe wrapper, tax authority
+
+**Entitlement**:
+A Workspace Subscription-derived allowance to access a product capability or bounded capacity. It is distinct from authorization, Budget Policy, Quota Policy, and a Generation Credit balance, all of which must independently permit the operation.
+_Avoid_: Permission, feature flag, quota, credit balance
+
+**Subscription Grace Period**:
+A disclosed interval after payment failure during which existing Workspace data remains readable while new paid effects may be blocked. It preserves neither expired Entitlements nor an entitlement to new provider spend.
+_Avoid_: Free extension, retry window, suspended account
+
+**Workspace Activation**:
+A read-only projection of durable Workspace milestones such as accepted Brand context, reusable media, connected Channels, accepted Content Pieces, and scheduled publishing. It reflects operational readiness and is never a manually checked onboarding list.
+_Avoid_: Quickstart checklist, onboarding progress, user tutorial
+
+**User Guidance Progress**:
+A person's Workspace-specific record of viewed, completed, or dismissed product education. It never changes Workspace Activation or another member's guidance state.
+_Avoid_: Workspace readiness, onboarding status, activation checklist
+
+**Dashboard Next Action**:
+The single deterministic, explainable recommendation projected from Workspace Activation, failures, expiring approvals or consent, scheduled work, Generation Credit capacity, and stale metrics. Copilot may explain or help execute it but never secretly ranks or mutates the recommendation.
+_Avoid_: AI recommendation, next-best-action model, Copilot decision
+
+**Inspiration Item**:
+A rights-aware reference to externally successful content and its time-stamped metadata, used to inform original Tasmeemai content. It retains source, capture time, metric freshness, rights status, and permitted remix behavior without pretending the referenced media is a Workspace-owned Artifact.
+_Avoid_: Scraped video, viral asset, template, copied post
+
+**Remix Brief**:
+A transformation plan derived from an **Inspiration Item** that identifies reusable topic, hook, pacing, structural, and performance insights while excluding protected expression. It retains source attribution, permitted-use evidence, Brand Profile alignment, and originality constraints for the resulting Content Piece.
+_Avoid_: Copy instructions, cloned post, inspiration prompt, source asset
+
+**Blitz Queue**:
+A bounded Workspace-owned queue of Brand-aligned content proposals produced under an explicit replenishment configuration and spend ceiling. Viewing the queue creates no provider work; scheduled or manual replenishment admits durable Runs only until the configured queue capacity is satisfied.
+_Avoid_: Infinite feed, swipe feed, background generation, idea list
+
+**Content Preference Proposal**:
+A reviewable suggestion to change future content selection based on repeated explicit creator feedback, such as structured Blitz rejection reasons. Accepting it creates the applicable preference or Brand Profile revision; it never silently mutates accepted Brand context or turns one rejection into a permanent rule.
+_Avoid_: Learned preference, implicit profile update, rejection memory
+
+**Brand Source**:
+User-approved source material used to derive a Workspace's Brand Profile, such as a public website or a manual company description. It is evidence for the profile, not the canonical profile itself.
+_Avoid_: Scraped data, company input, website context
+
+**Brand Profile**:
+The Workspace-owned, user-reviewable structured understanding of a brand that guides content strategy and generation across the product. It may be derived from one or more Brand Sources but remains editable independently of them.
+_Avoid_: Brand kit, company profile, AI output, scraped profile
+
+**Interface Language**:
+The language and reading direction used by Tasmeemai's product interface for a person. It does not determine the language of generated content.
+_Avoid_: App language, content locale, prompt language
+
+**Message Catalog**:
+The versioned, typed collection of stable semantic keys and qualified-human-authored messages for one supported Interface Language. The same catalog contract resolves product, validation, capability-error, notification, billing, consent, security, publishing, and guidance copy on server and client; released copy is never sourced from runtime machine translation or component-local language branches.
+_Avoid_: Translation file, copy object, locale condition, string dictionary
+
+**Interface Locale Preference**:
+A person's Workspace-specific durable selection of Interface Language, numeral system, and optional calendar presentation. Resolution prefers an explicit current-session choice, then this preference, the Workspace default, a supported browser preference, and finally Arabic; it never changes Content Language or Arabic Variety.
+_Avoid_: Locale cookie, Workspace language, Arabic mode, browser locale
+
+**Localization Incident**:
+A high-severity structured event emitted when released customer-facing copy cannot resolve in the requested Message Catalog. It identifies the route, semantic key, catalog/template version, and requested locale without leaking interpolated customer data; emergency rendering uses another authored catalog rather than a raw key.
+_Avoid_: Missing translation log, raw key, translation fallback string
+
+**Content Language**:
+The Workspace's default language for generated content, overridable for a specific brief or generation. Arabic is the product default for MENA onboarding, not a restriction on English or other output languages.
+_Avoid_: Interface language, detected language, Arabic mode
+
+**Arabic Variety**:
+The requested regional variety for Arabic generation, speech, captions, and persona expression, separate from the broader **Content Language**. A provider may support MSA or only specific regional varieties, and any fallback must be explicit.
+_Avoid_: Arabic accent, locale, dialect mode, language
 
 **Channel**:
 A connected social publishing destination inside a workspace, backed by one platform account, page, or channel and its auth credentials.
 _Avoid_: Integration, social account, provider account
+
+**Managed Channel Onboarding**:
+A compliant service that helps a Workspace establish, prepare, and connect a publish-ready **Channel** it is authorized to control. It never sells aged identities or simulates activity intended to evade a Platform's enforcement.
+_Avoid_: Warmed account, aged account, burner account, account farming
+
+**Channel Onboarding Order**:
+A Workspace-owned commercial request to establish and connect one compliant publish-ready Channel, pinning Platform, region, service scope, quote, partner, timing, customer actions, and compliance evidence. Its lifecycle covers draft, quote, payment, accepted work, customer and partner action, readiness review, connection, blocking, cancellation, refund, and failure.
+_Avoid_: Warmed-account purchase, Channel, support ticket, provisioning job
+
+**Partner Service Assignment**:
+A time-bounded, purpose-specific authorization for a vetted provider to perform declared work on one Channel Onboarding Order without receiving reusable customer credentials or implicit publishing authority. It ends automatically when the order completes or expires.
+_Avoid_: Partner account access, shared login, outsourced publishing, admin role
 
 **Platform**:
 An external social network or publishing surface, such as YouTube, TikTok, Reddit, Instagram, X, or LinkedIn.
@@ -56,12 +176,40 @@ _Avoid_: CW, spoiler text, sensitive flag
 A **Publishing Setting** that controls the audience reach of a post on federated platforms. Mastodon supports public, unlisted, private, and direct.
 _Avoid_: Privacy setting, audience
 
-**Social Copilot**:
-A human-in-the-loop conversational assistant inside the Social Hub that helps a creator draft and rewrite post content, generate and attach media, select **Channels**, run **Publish Validation**, and create a scheduled draft **Post**. It proposes actions and edits drafts, but never schedules or publishes without explicit creator confirmation. Distinct from **Automation** (the rules-and-tasks engine on the existing `/social/agents` page).
-_Avoid_: Agent, AI agent, copilot bot, assistant, bot
+**Tasmeemai Copilot**:
+The single in-product, Workspace- and route-aware conversational assistant that advises across the product and invokes the same **Application Capabilities** as other clients. Its conversations and durable mutations are persisted against canonical resources; it never creates hidden state or substitutes conversational confirmation for required authorization or Approval.
+_Avoid_: Social Copilot, second assistant, AI agent, copilot bot, support bot
+
+**Notification Preference**:
+A person's Workspace-specific choice of delivery channel, quiet hours, Interface Language, digest cadence, and optional event categories. It changes delivery of eligible notifications, not whether operational events exist, and cannot suppress mandatory security, billing, consent-expiry, or public-delivery-failure notice obligations.
+_Avoid_: Workspace notification settings, event policy, mute all, email toggle
+
+**Notification Delivery**:
+One recipient- and channel-specific attempt to communicate a semantic product event. It pins the intended recipient, Message Catalog/template version, Interface Language snapshot, delivery channel, and idempotency identity so retries render deterministically; a scheduled digest selects the recipient's latest preference only when its Delivery is created.
+_Avoid_: Email, notification row, template send, event
+
+**Client Draft Recovery**:
+A non-authoritative local recovery copy of non-secret form state used after navigation, refresh, or network interruption. It exposes unsynced and conflict state, cannot represent server acceptance, and must never contain provider credentials, payment authorization, publishing authorization, or sensitive consent evidence.
+_Avoid_: Offline mode, autosave, browser source of truth, accepted draft
+
+**Feedback Case**:
+A trackable support resource containing the reporter, Workspace, category, description, consented attachments, product/version context, correspondence, state, and retention policy. It gives the reporter a stable reference and observable resolution instead of acting as an untracked email submission.
+_Avoid_: Feedback email, issue, contact form, attachment upload
+
+**Roadmap Item**:
+A non-binding, status-bearing communication of a planned product outcome. It is distinct from a Release Note and never makes an estimated date contractual.
+_Avoid_: Promise, release, changelog item, delivery commitment
+
+**Release Note**:
+A localized record of shipped behavior tied to an exact product version and affected routes or capabilities. It describes released facts rather than planned intent.
+_Avoid_: Roadmap item, update toast, marketing announcement
+
+**Guide Entry**:
+A versioned learning resource bound to exact feature and route identifiers, Interface Language, media and transcript versions, minimum product version, and review status. It is current only while those references remain valid.
+_Avoid_: Help video, tooltip, static documentation link, onboarding step
 
 **External Agent**:
-A BYO-agent harness running on the customer's own machine/infra (e.g., Claude Code, Codex, OpenClaw, Hermes) that supplies goals, judgment, and orchestration through the **Agent Interface**. It can define, validate, start, inspect, and resume content workflows and manage publishing work; durable execution belongs to the **Content Operations Runtime**. Distinct from **Social Copilot** (in-app, BYOK, runs server-side) and from **Automation** (trigger and policy rules).
+A BYO-agent harness running on the customer's own machine/infra (e.g., Claude Code, Codex, OpenClaw, Hermes) that supplies goals, judgment, and orchestration through the **Agent Interface**. It can define, validate, start, inspect, and resume content workflows and manage publishing work; durable execution belongs to the **Content Operations Runtime**. Distinct from **Tasmeemai Copilot** (in-product and human-directed) and from **Automation** (trigger and policy rules).
 _Avoid_: AI agent, bot, copilot, the agent
 
 **Principal**:
@@ -71,6 +219,10 @@ _Avoid_: user context, auth object, session user, caller
 **Human Principal**:
 A **Principal** representing a real signed-in person whose identity and Workspace membership come from the human authentication system.
 _Avoid_: user ID, session, approver (unless making an Approval)
+
+**Review Guest**:
+A verified external recipient granted time-bounded, revocable, single-purpose access to inspect and decide an exact Render Proof or Publishing Plan Revision. A Review Guest is not a Workspace member and cannot browse other resources, alter Channels, use source media, or approve a later revision; verified email plus step-up code protects the review link.
+_Avoid_: Guest member, public share, anonymous approver, client account
 
 **Agent Principal**:
 A distinct, Workspace-bound **Principal** representing one External Agent installation or operational identity. An owner or administrator creates it with an accountable human sponsor. It is `active`, reversibly `suspended`, or terminally `revoked`; sponsor loss automatically suspends it until an Owner reassigns accountability and reviews its grants. Audit evidence distinguishes the acting Agent Principal from that sponsor; the Agent never impersonates the human.
@@ -241,8 +393,16 @@ The deny-by-default set of capability scopes and explicit resource allow-lists a
 _Avoid_: role, permissions object, API-key access, superadmin
 
 **Approval Authority**:
-An explicit human-only grant to decide **Publishing Approvals** for bounded Channels and publishing actions. Workspace Owners receive it by default; other Human Principals require an explicit grant. It is distinct from `publishing:release`, which only permits invoking release after valid Approval.
+An explicit human-only grant to participate in **Publishing Approvals** for bounded Channels and publishing actions under an exact Approval Policy. Owner, Admin, and Approver Workspace Roles may administer or establish eligibility as separately authorized, but no membership role itself grants a decision. It is distinct from `publishing:release`, which only permits invoking release after valid Approval.
 _Avoid_: publish permission, approver role, admin approval
+
+**Approval Policy**:
+An immutable versioned rule for one decision scope that declares eligible Approval Authorities, single, any-of, sequential, quorum, or separation-of-duty requirements, deadlines, escalation, and expiry. Each decision pins the exact policy and resource revision; Content Acceptance and Publishing Approval use distinct policies, and a content edit always requires a new decision.
+_Avoid_: Approver list, workflow status, role permission, reusable approval
+
+**Step-Up Authentication**:
+Recent proof of a Human Principal's identity required immediately before a bounded high-risk capability such as ownership transfer, Workspace Closure, authentication-factor change, credential replacement, Agent Principal creation, unbounded spend, payout change, exceptional credit/refund action, or bulk public release. It strengthens authentication but never replaces authorization, Approval, or idempotency.
+_Avoid_: Confirmation dialog, password prompt, approval, admin permission
 
 **Authorization Decision**:
 Durable evidence of an authorization evaluation at command admission or immediately before an external or irreversible effect. It records the requesting Principal, non-secret Agent Key identity when applicable, required scope, resource constraints, policy versions, result, reason, and time. Runtime workers act from persisted authorized intent without holding the caller's key or impersonating that Principal.
@@ -252,6 +412,18 @@ _Avoid_: permission check, middleware result, auth log
 An immutable, access-controlled audit event for Principal, authentication, Agent Key, grant, Credential Profile, policy, authorization, or Approval activity. It identifies the Workspace, acting Principal, affected non-secret references, action, result, structured reason, time, and correlation/idempotency reference without retaining secret material. Exact retention belongs to Workspace telemetry policy.
 _Avoid_: application log, auth log, analytics event
 
+**Workspace Audit Trail**:
+The role-filtered customer projection of append-only Security Events and durable membership, grant, credential, billing, content-acceptance, Approval, Automation, generation, publishing, deletion, export, and support-access evidence. It is queryable and exportable without exposing secrets, operator-only traces, another Workspace, or data beyond the viewer's authority.
+_Avoid_: Server logs, activity feed, analytics, operator console
+
+**Safety Decision**:
+Immutable evidence that an exact generation, Inspiration, Persona, content, or publishing action was allowed, blocked, or constrained under a named policy version. It carries a stable reason code, safe explanation, affected intent/resource, evidence reference, allowed remediation, and appeal eligibility without exposing detection internals.
+_Avoid_: Moderation error, provider refusal, content warning, hidden risk score
+
+**Safety Appeal**:
+A trackable request for authorized human review of an eligible Safety Decision. A successful appeal changes only the disposition of the exact blocked intent and resumes it only after current authorization, policy, commercial, and provider readiness are revalidated; it never creates a general bypass.
+_Avoid_: Support ticket, override, retry, policy exemption
+
 **Durable Contract Evidence**:
 The canonical non-content facts required to inspect, authorize, meter, audit, reconcile, or reproduce a domain resource, including safe identities, state, events, effect evidence, Usage Records, policy decisions, and provenance. It follows the owning resource's retention and is never reconstructed from operational telemetry.
 _Avoid_: audit log, telemetry, trace, debug metadata
@@ -259,6 +431,34 @@ _Avoid_: audit log, telemetry, trace, debug metadata
 **Operational Metric**:
 A non-authoritative low-cardinality aggregate of runtime health or demand, such as latency, queue depth, throughput, structured error counts, retry rate, quota pressure, storage growth, or projected spend. It contains no prompt, generated content, secret, signed URL, or raw resource payload.
 _Avoid_: usage record, business event, analytics event, diagnostic log
+
+**Product Telemetry Event**:
+A versioned, purpose- and retention-classified first-party observation of product interaction or experience health. It contains only minimized allowlisted dimensions and never prompt text, generated content, media, credentials, consent evidence, or arbitrary customer properties; regional consent and Data Region Policy govern collection.
+_Avoid_: Analytics payload, tracking event, log, customer behavior dump
+
+**Product Experiment**:
+A time-bounded comparison over eligible, consented product traffic with an accountable owner, hypothesis, exposure record, success and guardrail measures, expiry, and documented outcome. It may not alter or weaken security, billing, authorization, Approval, safety, retention, accessibility, or audit semantics.
+_Avoid_: Feature flag, A/B test forever, rollout, analytics segment
+
+**Release Flag**:
+A temporary, owned control for rolling a complete vertical slice to an explicit cohort with declared dependencies, evidence, observability, rollback behavior, and expiry. Both flag states use canonical Application Capabilities; a flag never exposes dead navigation, forks business authority, or converts an incomplete slice into parity.
+_Avoid_: Feature toggle, beta excuse, hidden route, permanent configuration
+
+**Service Incident**:
+A time-bounded degradation or outage linked to affected capabilities, providers, regions, and Workspaces. Customer communication distinguishes delayed, blocked, failed-known, and outcome-unknown work plus reservation or publishing risk, while public status history remains localized and discloses no other customer's data or unsafe provider detail.
+_Avoid_: Error toast, provider error, support case, internal alert
+
+**Recovery Objective**:
+The verified recovery point and recovery time target for one data class under its Data Region Policy and Retention Class. Restore drills prove canonical database, Artifact, audit, and external-effect reconciliation behavior; a backup that cannot meet deletion obligations is not compliant recovery.
+_Avoid_: Backup schedule, availability target, disaster-recovery claim, restore estimate
+
+**Platform Metric Observation**:
+An immutable time-stamped observation of one audience-performance metric using the source Platform's exact definition, scope, capture window, and freshness evidence. Cross-Platform normalization is allowed only where definitions are demonstrably comparable; otherwise observations remain separately labeled rather than forced into a universal total.
+_Avoid_: Analytics total, universal views, engagement counter, current metric
+
+**Platform Metric Refresh**:
+A durable idempotent request to acquire new Platform Metric Observations for an exact Channel or resource set. Each source advances independently under provider limits, preserving prior observations and reporting its own progress, freshness, failure, and retry eligibility.
+_Avoid_: Refresh button, blocking sync, replace metrics, page reload
 
 **Diagnostic Trace**:
 A short-lived operator-only correlation of sanitized logs and spans for one runtime path. It may retain timing, component and version, allowlisted status metadata, retry decisions, and stack traces, but never credentials, authorization material, prompts, generated content, media bytes, signed URLs, arbitrary headers, or raw provider bodies.
@@ -288,6 +488,42 @@ _Avoid_: support role, admin access, observability permission, debug mode
 The immutable versioned durations and expiry rules for canonical resources, Durable Contract Evidence, Operational Metrics, Diagnostic Traces, orchestrator history, Support Bundles, and acceptance evidence in one Workspace. It may shorten inactive history but never remove evidence required by active safety, idempotency, approval, delivery, reservation, or reconciliation obligations.
 _Avoid_: log retention, cleanup schedule, data lifecycle config, TTL settings
 
+**Retention Class**:
+A versioned category within a Workspace Retention Policy that gives one kind of content or evidence its default duration, legal floor, configurable bounds, hold behavior, deletion receipt, and tombstone rules. Recoverable drafts/media, published lineage, consent, security, billing/tax, provider diagnostics, and support attachments remain distinct classes.
+_Avoid_: One deletion period, table TTL, soft-delete flag, storage lifecycle
+
+**Data Region Policy**:
+A Workspace-pinned rule describing where supported storage and processing occur and which provider routes or cross-region transfers are allowed. Product claims exist only for verified infrastructure, contracts, subprocessors, backups, logging, and deletion behavior; unsupported providers are excluded rather than silently violating the policy.
+_Avoid_: MENA hosted, region dropdown, cloud region, provider location
+
+**Workspace Closure**:
+The recoverable process that blocks new Workspace effects, settles subscriptions and refunds, permits required ownership transfer or export, and later erases eligible content under retention policy. It is distinct from deleting a person's identity, leaving a membership, or deleting one resource.
+_Avoid_: Delete account, leave team, drop tenant, cascade delete
+
+**Bulk Operation**:
+A durable, previewable job that applies one existing single-resource Application Capability to an explicit target set with pinned Workspace, authorization, quote, conflict, and effect evidence. It supports dry-run, bounded concurrency, per-item outcomes, safe cancellation, and retry of only known-safe failures; an ambiguous external effect is never replayed blindly.
+_Avoid_: Select all handler, loop in the browser, batch endpoint, mass action
+
+**Workspace Export**:
+An asynchronous, access-controlled, encrypted, expiring package of eligible canonical Workspace data and a signed machine-readable manifest describing scope, hashes, timestamps, schema versions, and exclusions. Secrets, non-transferable licensed assets, and evidence that must legally remain are excluded with explicit reasons.
+_Avoid_: Database dump, download all, backup, audit export
+
+**Parity Matrix**:
+The versioned verification record keyed by reference route, capability, role, Entitlement, viewport, direction, and state. Each required cell links sanitized observation evidence, Tasmeemai behavior, acceptance tests, screenshots, capability contracts, deliberate adaptations, and sign-off.
+_Avoid_: Feature checklist, QA spreadsheet, screenshot folder, parity claim
+
+**Experience Performance Budget**:
+A versioned release limit for Tasmeemai-controlled latency and responsiveness on a named surface, client, network profile, and representative MENA or provider region. It separates provider execution time from shell, navigation, query, search, preview, upload-initiation, command-acceptance, and status-propagation overhead.
+_Avoid_: Lighthouse score, provider latency, best effort, average page speed
+
+**Supported Client Matrix**:
+The release-tested set of browser/version, operating system, viewport, input modality, Interface Language, direction, zoom/reflow, reduced-motion, and assistive-technology combinations. An unsupported client receives a localized explanation rather than silently broken controls.
+_Avoid_: Responsive design, browser list, latest Chrome, screenshot sizes
+
+**Contract Migration**:
+A resumable idempotent expand/migrate/contract transition for durable data or a versioned capability, format, catalog, policy, or Automation contract. Active Runs and accepted revisions retain pinned old definitions through a declared compatibility window; dry-run, progress, rollback, and failure evidence prevent silent reinterpretation.
+_Avoid_: Database migration, breaking deploy, backfill script, schema bump
+
 **Retention Tombstone**:
 The minimal non-content identity, digest, terminal state, and idempotency evidence preserved after an eligible canonical resource expires or is deleted. It prevents identity reuse and duplicate effects without retaining prompts, generated content, Artifact bytes, diagnostics, or secrets.
 _Avoid_: soft delete, archived resource, deletion marker, audit copy
@@ -305,7 +541,7 @@ The submission payload an **External Agent** sends through the **Agent Interface
 _Avoid_: payload, submission, content blob
 
 **Agency Recipe**:
-A distributable agent-company package (e.g., a Paperclip `COMPANY.md`) defining a team of **External Agents** and their goals, configured to target a Node Banana **Workspace** through the **Agent Interface**. This is what a customer means by "a marketing agency" — the importable recipe, not Node Banana itself and not the harness that runs it.
+A distributable agent-company package (e.g., a Paperclip `COMPANY.md`) defining a team of **External Agents** and their goals, configured to target a Tasmeemai **Workspace** through the **Agent Interface**. This is what a customer means by "a marketing agency" — the importable recipe, not Tasmeemai itself and not the harness that runs it.
 _Avoid_: company, marketing agency (for the hub), template
 
 **Auto-publish Grant**:
@@ -321,7 +557,7 @@ The human-facing surface adjacent to the **Content Operations Runtime**. It lets
 _Avoid_: dashboard, the app, frontend
 
 **Content Operations Runtime**:
-Node Banana's headless, durable execution core. It owns versioned workflow definitions, workflow runs, artifacts, approval gates, publishing plans, and scheduling. The **Agent Interface** and **Cockpit** are equal clients of this runtime; an **External Agent** supplies intent and judgment but does not replace the runtime.
+Tasmeemai's headless, durable execution core. It owns versioned workflow definitions, workflow runs, artifacts, approval gates, publishing plans, and scheduling. The **Agent Interface** and **Cockpit** are equal clients of this runtime; an **External Agent** supplies intent and judgment but does not replace the runtime.
 _Avoid_: Content Engine, backend, workflow UI, the engine
 
 **Runtime Kernel**:
@@ -341,7 +577,7 @@ A replaceable infrastructure adapter that durably schedules and resumes Runtime 
 _Avoid_: workflow authority, run database, domain runtime, job owner
 
 **Workflow SDK Adapter**:
-The initial **Durable Orchestrator** implementation. It uses Vercel World for hosted production, Local World for development only, and Postgres World only for a self-hosted deployment with its required long-lived worker. Its exact SDK version is pinned, all SDK imports remain outside `packages/runtime`, and its run identifiers, deployment history, and event history never enter public Node Banana contracts.
+The initial **Durable Orchestrator** implementation. It uses Vercel World for hosted production, Local World for development only, and Postgres World only for a self-hosted deployment with its required long-lived worker. Its exact SDK version is pinned, all SDK imports remain outside `packages/runtime`, and its run identifiers, deployment history, and event history never enter public Tasmeemai contracts.
 _Avoid_: Workflow Run, Runtime Kernel, canonical scheduler, product event log
 
 **Content Workflow**:
@@ -456,6 +692,10 @@ _Avoid_: test timeout, arbitrary sleep, CI timeout, best-effort wait
 The transport-neutral acceptance contract for watching asynchronous domain work through authoritative resource snapshots and retained cursor-paged events. Each Durable Acceptance supplies the resource reference, exact inspect and event capabilities, and initial cursor; immutable per-resource event sequences can be resumed after agent-process loss without logs, database access, or mandatory live streaming.
 _Avoid_: log tailing, WebSocket contract, progress spinner, polling internal tables
 
+**Durable Operation Status**:
+The shared customer-facing projection for generation, ingestion, Persona training, metric refresh, export, Bulk Operation, and publishing work: `queued`, `admitted`, `running` with named stage, `waiting_user`, `waiting_provider`, `waiting_quota`, `waiting_time`, `blocked`, `cancelling`, `cancelled`, `succeeded`, `failed_known`, or `outcome_unknown`. It includes timestamps, honest progress confidence, reservation/cost evidence, safe reason, next action, and resumable event observation without inventing percentages or replacing the owning resource's canonical lifecycle.
+_Avoid_: Job status, spinner, percent complete, workflow state
+
 **Cross-Transport Continuation**:
 The operation of one canonical resource chain by the same Agent Principal across CLI and stdio MCP without export, import, duplicated client state, resource recreation, or human-supplied identifiers. Authorization, Capability Idempotency, snapshots, event cursors, errors, and effects remain properties of the shared Capability Entrypoint rather than either transport session.
 _Avoid_: transport migration, CLI fallback, MCP session resume, state synchronization
@@ -489,12 +729,32 @@ A stable, Workspace-scoped, human-managed identity for provider access whose sec
 _Avoid_: API key, environment variable, provider setting, secret record
 
 **BYOK Provider Execution**:
-A provider effect performed with a credential supplied and owned by the Workspace operator through a Credential Profile. The external provider bills the operator's account directly; Node Banana meters and constrains execution but does not buy, resell, or mark up inference.
-_Avoid_: managed inference, platform credits, included AI, Node Banana billing
+A provider effect performed with a credential supplied and owned by the Workspace operator through a Credential Profile. The external provider bills the operator's account directly; Tasmeemai meters and constrains execution but does not buy, resell, or mark up inference.
+_Avoid_: managed inference, platform credits, included AI, Tasmeemai billing
+
+**Managed Provider Execution**:
+A provider effect performed through a provider account funded and controlled by Tasmeemai, with the customer charged under Tasmeemai's own commercial contract. It is a distinct execution and billing mode from **BYOK Provider Execution**, even when both use the same provider operation.
+_Avoid_: BYOK, free generation, provider pass-through, estimated external spend
 
 **External Provider Spend**:
-The provider usage cost attributable to BYOK Provider Execution under provider evidence or a Pricing Snapshot. It is an operational estimate or reported external charge for guardrails and analysis, never a Node Banana invoice, wallet debit, or promise of the provider's final bill.
+The provider usage cost attributable to BYOK Provider Execution under provider evidence or a Pricing Snapshot. It is an operational estimate or reported external charge for guardrails and analysis, never a Tasmeemai invoice, wallet debit, or promise of the provider's final bill.
 _Avoid_: platform charge, inference revenue, credits, customer billing
+
+**Generation Credit**:
+A non-cash consumption unit for **Managed Provider Execution**, held in separate expiring plan-allowance and non-expiring purchased buckets. Reservations, debits, releases, refunds, and audited adjustments reconcile to managed provider usage evidence, while purchase prices remain currency-denominated and separate from the credit balance.
+_Avoid_: Currency, cash balance, External Provider Spend, Usage Record, token
+
+**Managed Execution Quote**:
+The immutable Generation Credit price disclosed for one exact managed operation before Durable Acceptance. Acceptance reserves exactly that amount, success settles no more than it, known failure before usable output releases it, and an outcome-unknown effect retains the visible reservation until reconciliation.
+_Avoid_: Cost estimate, variable debit, provider price, Run Cost Ceiling
+
+**Referral Recipient**:
+The verified person or legal entity entitled to receive rewards for attributable referrals. It is distinct from the referred or referring Workspace and owns payout identity, tax documentation, and cash-payment instructions.
+_Avoid_: Referring Workspace, affiliate user, billing contact
+
+**Referral Reward**:
+An attributable benefit owed to a Referral Recipient as either Generation Credits directed to an eligible Workspace or a cash payout. It retains earning, fraud-hold, refund, clawback, availability, payment, and currency-conversion evidence in a ledger separate from Workspace billing.
+_Avoid_: Coupon, commission counter, free credits, Workspace revenue
 
 **Credential Spend Grant**:
 The explicit human decision allowing one Agent Principal to cause BYOK Provider Execution through one Credential Profile in bounded or deliberately unbounded mode. A bounded grant names applicable per-Run and calendar-period Budget Policies; absence of a grant permits inspection but no provider effect.
@@ -513,8 +773,68 @@ A human-action flow through which a model key, OAuth consent, account selection,
 _Avoid_: agent-provided key, credential tool argument, OAuth tool
 
 **Artifact**:
-An immutable, typed content resource produced by a **Content Workflow** step or imported from outside Node Banana. Postgres is authoritative for its Workspace ownership, media type, content hash, immutable storage reference, explicit origin, and lineage; the bytes live behind the **Artifact Store** port. Imported Artifacts record import provenance and never invent a Workflow Run; generated Artifacts record the Run, step, attempt, and output port that produced them.
+An immutable, typed content resource produced by a **Content Workflow** step or imported from outside Tasmeemai. Postgres is authoritative for its Workspace ownership, media type, content hash, immutable storage reference, explicit origin, and lineage; the bytes live behind the **Artifact Store** port. Imported Artifacts record import provenance and never invent a Workflow Run; generated Artifacts record the Run, step, attempt, and output port that produced them.
 _Avoid_: output blob, generated file, media item, fake run output
+
+**Content Piece**:
+A stable Workspace-owned creative work in one declared content format, spanning its editable configuration, revisions, source references, executions, and produced Artifacts. Its lifecycle is `active`, `archived`, or terminally `deleted`; it is the Library's canonical editable-content item, while execution and publishing states remain on their owning resources.
+_Avoid_: Content item, generation, project, Artifact, Post
+
+**Content Piece Draft**:
+A mutable autosaved working copy based on one exact Content Piece Revision and owned by one active editor. It uses optimistic versioning, is never executable or publishable, and becomes shared immutable history only when explicit Save, Preview, or Generate validation promotes it to a new Revision.
+_Avoid_: Current revision, unpublished Artifact, shared mutable document, form state
+
+**Model Policy**:
+The versioned rule a Content Format Definition uses to select compatible provider operations and defaults by capability, Content Language, Arabic Variety, quality, latency, execution mode, and price. Advanced user overrides remain constrained to compatible operations, and exact provider/model/version identity stays inspectable.
+_Avoid_: Model dropdown, hidden router, Fastlane-style model alias, provider default
+
+**Model Fallback Authorization**:
+A creator- or Workspace-approved ordered set of operations a Model Policy may select after degradation, constrained by compatible capability, quality, Content Language, Arabic Variety, Data Region Policy, execution mode, and a Managed Execution Quote ceiling. Each attempted and selected provider/model/version is recorded; absence of applicable authorization pauses the Run for a decision.
+_Avoid_: Automatic model switch, retry policy, provider failover, cheapest model
+
+**Content Format Definition**:
+A versioned product-owned contract for one guided content format, declaring inputs, compatible languages and Arabic Varieties, media constraints, preview schema, Workflow Revision, provider capabilities, caption rules, duration and aspect limits, Managed Execution Quote policy, and editor handoff. UI controls and validation derive from it rather than re-encoding format behavior.
+_Avoid_: React form, template, workflow, format name, generation preset
+
+**Candidate Output**:
+An immutable Artifact produced as one of several alternatives for the same Content Piece Revision or AI Studio request. Candidate status is a relationship to the originating context and selection decision, not a separate media type or Content Piece.
+_Avoid_: Variant project, draft Artifact, batch item, duplicate content
+
+**Media Set**:
+A named Workspace-owned selection of canonical media references used by content formats, Automations, or Creator Personas. A Content Piece Revision or Automation Revision pins the exact membership it used so later set edits cannot rewrite history or duplicate blobs.
+_Avoid_: Media folder, copied assets, playlist, demo-video table
+
+**Content Theme**:
+A versioned, licensed presentation definition for visual composition, typography, caption styling, and reusable format defaults. Content Piece Revisions pin its exact version; a Theme contains no copied Workspace media or executable provider logic.
+_Avoid_: Template, CSS preset, media set, workflow
+
+**Layout Preview**:
+An immediate deterministic approximation of Content Piece composition that may use placeholders for ungenerated media. It is clearly labeled and never claims pixel or timing identity with production output.
+_Avoid_: Final preview, render, generated video, proof
+
+**Render Proof**:
+A reviewable output produced by the production rendering stack with the pinned fonts, bidi shaping, captions, timing, and platform safe areas used for release. Required Arabic or provider incompatibility blocks proof creation unless the creator explicitly selects a supported fallback.
+_Avoid_: Browser mock, thumbnail, layout preview, final publish
+
+**Content Piece Revision**:
+An immutable snapshot of a Content Piece's authored script, scenes, format configuration, source and Creator Persona references, and selected Artifact inputs or outputs. Editing creates a new revision, and any Publishing Plan references the exact revision it distributes.
+_Avoid_: Draft state, current content, mutable Artifact, generation result
+
+**Creator Persona**:
+A reusable Workspace-owned creative identity used to generate consistent visual appearance, voice, language variety, and disclosure behavior. It is explicitly a **Synthetic Persona** or **Consented Likeness Persona**, carries training and rights provenance, and never owns or impersonates a Channel.
+_Avoid_: AI Influencer, social account, character model, avatar
+
+**Synthetic Persona**:
+A Creator Persona designed as a wholly fictional identity without representing a real person. Its source and generated media still retain provenance and disclosure policy.
+_Avoid_: Fake person, virtual account, anonymous likeness
+
+**Consented Likeness Persona**:
+A Creator Persona representing a real person under recorded authority, consent scope, permitted uses, and retention terms. It may not outlive or exceed that authority, and deletion revokes future use while preserving legally required audit evidence.
+_Avoid_: Face model, celebrity clone, employee avatar, uploaded person
+
+**Creator Persona State**:
+The lifecycle `draft`, `consent_review`, `ready_to_train`, `training`, `review`, `active`, `training_failed`, `suspended`, `consent_expired`, or terminally `deleted`. Only `active` Creator Personas may enter new Content Piece Revisions; suspension, expiry, and deletion never rewrite historical Artifacts.
+_Avoid_: Training status, enabled flag, model state, influencer status
 
 **Artifact Store**:
 The replaceable Runtime Kernel port that stores and retrieves immutable Artifact bytes by stable storage reference and verified content hash. A local adapter may use the filesystem and a hosted adapter may use object storage without changing Artifact or capability contracts. It never owns Artifact identity, lineage, authorization, or lifecycle.
@@ -543,6 +863,10 @@ _Avoid_: channel list, multi-channel post, destination config
 **Publishing Approval**:
 A durable, bounded-lifetime, single-use decision that authorizes a specific scheduling or publishing action against one exact **Publishing Plan Revision**. Its decision basis is either the real human approver or an exact policy version and evaluation; policy authorization never impersonates a human. It may be revoked, expire, or be superseded by a newer Plan Revision before release. Releasing the approved work consumes the decision while atomically creating the corresponding **Publishing Deliveries**; a consumed Approval remains immutable audit history and never expires or becomes superseded retroactively. Repeating the same release returns the existing Deliveries, and retries never consume approval again. Approval never transfers to a later revision, even when the edit appears minor.
 _Avoid_: approval flag, confirmation prompt, approved post
+
+**Content Acceptance**:
+A creator's decision to keep a proposed content concept or Content Piece Revision and make it available for editing, planning, or reuse. It never authorizes scheduling or public distribution and is distinct from **Publishing Approval**.
+_Avoid_: Approve, publish approval, accepted post, release
 
 **Publishing Delivery**:
 A durable per-target record of scheduled and provider-facing publishing work created from one consumed **Publishing Approval**. It retains the exact approved **Publishing Plan Revision** and owns scheduling, cancellation, blocking, dispatch, retries, and provider outcome for one **Channel**. Readiness drift before provider publishing makes it blocked with a structured reason; restoring external readiness may resume the same Delivery without new Approval. It may be cancelled before provider publishing begins; afterward cancellation is not guaranteed.
@@ -627,6 +951,59 @@ _Avoid_: rank tracking, brand monitoring, mentions
 ## Relationships
 
 - A **Workspace** has zero or more **Channels**.
+- Built-in and Custom Workspace Roles are versioned capability bundles for human comprehension; exact resource grants, policies, Entitlements, and state still narrow effective authority, and no role alone grants Approval, credential use, or spend.
+- A Portfolio groups independently governed Workspaces and Portfolio Assignments coordinate across an explicit allowlist; no Portfolio action changes the selected target Workspace or borrows another Workspace's resources, credits, credentials, or authority.
+- A Review Guest can decide only the exact revision named by a verified, expiring review grant; edits, expiry, revocation, or scope mismatch require a new grant.
+- A **Workspace** owns its Workspace Subscription, Entitlements, recurring and purchased Generation Credits, storage allowance, and commercial history; a Human Principal's identity does not own or carry them between Workspaces.
+- A Workspace Subscription references an exact Plan Definition; a Trial Grant is Workspace-scoped but anti-abuse eligibility is not reset by creating another Workspace.
+- Merchant-of-Record callbacks are commercial evidence, while Tasmeemai's provider-neutral projections and idempotent application capabilities remain authoritative for Subscription, Entitlement, credit, invoice, refund, and dispute state.
+- Changing the active **Workspace** never rebinds an upload, conversation, Workflow Run, Content Piece, Creator Persona, Channel, Generation Credit, Publishing Plan, Approval, or Delivery that began in another Workspace.
+- A **Content Piece** has immutable Content Piece Revisions; a Publishing Plan that distributes it references one exact revision.
+- A Content Piece Draft is editor-owned mutable work based on an exact Revision; optimistic conflicts must be resolved before promotion, and a Publishing Plan can never reference the Draft.
+- Editing or regenerating a Content Piece appends a Revision, starts a distinct Workflow Run, and produces new immutable Artifacts; undo selects or derives from history rather than rewriting it.
+- A batch generation creates sibling Candidate Outputs under one originating request or Content Piece Revision rather than inventing one Content Piece per output.
+- Demo videos and other reusable collections are Media Sets over canonical media; Content Themes and set membership are version-pinned by the revisions that use them.
+- Layout Preview is approximate; Render Proof uses production fonts, bidi, captions, timing, and safe areas and is the review boundary before Content Acceptance or publishing.
+- Unreferenced drafts may be recoverably deleted, while active Plans, Approvals, Deliveries, Automations, Persona training, retention policy, or audit obligations block destructive removal and explain the dependency.
+- A **Creator Persona** belongs to one Workspace and may be referenced by Content Piece Revisions, but it never owns a Channel or authenticates publishing.
+- Only an `active` Creator Persona may be selected for new content; suspending, expiring, or deleting one blocks future effects without changing historical Content Pieces or Artifacts.
+- A **Remix Brief** references one or more Inspiration Items and records permitted structural influence without transferring ownership of their source media.
+- A **Blitz Queue** admits replenishment work only under its target capacity, format mix, Remix ratio, Brand constraints, language and Arabic Variety, provider mode, and spend ceiling; browsing never replenishes it.
+- Blitz rejection excludes the exact proposal and may contribute only to a reviewable Content Preference Proposal, never an implicit Brand Profile mutation.
+- Platform Metric Observations may be aggregated across Platforms only under a declared comparable definition; otherwise Analytics presents them separately with source and freshness.
+- A Platform Metric Refresh advances each source independently, retains prior observations, and never makes one unavailable Platform fail the entire Analytics view.
+- Entitlement visibility never grants authorization: gated capabilities remain discoverable with requirements and upgrade paths, while server-side policy independently enforces every operation.
+- Channel credentials enter only through official OAuth, app-password, API-credential, supported device-authorization, or vetted partner Credential Handoff; Tasmeemai never captures platform passwords or covertly automates interactive sessions.
+- A Channel Onboarding Order may assign bounded partner work, but a Partner Service Assignment grants neither reusable credentials nor publishing authority and ends with the order.
+- API and Agent Entitlements change discoverability or capacity only; every transport still invokes the same Application Capabilities and authorization, Approval, idempotency, and audit rules.
+- Notification Preferences are personal and Workspace-specific; mandatory security, billing, consent-expiry, and public-delivery-failure notices remain deliverable under legally safe channel rules.
+- Public indexable pages identify Interface Language in `/ar/...` or `/en/...` paths, while authenticated resources keep locale-neutral URLs and resolve each viewer's Interface Locale Preference independently.
+- Interface Locale Preference resolution is explicit session choice, then the person's Workspace-specific preference, Workspace default, supported browser preference, and finally Arabic; changing it never changes Content Language or Arabic Variety.
+- Message Catalog keys and interpolation schemas are identical across authored Arabic and English catalogs; a missing released key creates a Localization Incident and emergency authored-locale fallback, never raw-key rendering.
+- A Notification Delivery pins the recipient, Message Catalog/template version, and Interface Language snapshot; a later locale change affects new deliveries and newly instantiated digests, not deterministic retries.
+- User-authored mixed-direction text uses automatic direction at the content boundary, while URLs, handles, code, model identifiers, email, phone, and payment references use explicit isolated LTR presentation.
+- Search retains exact source values while using a shared discovery index that normalizes tatweel, optional diacritics, common Arabic alef/ya variants, Unicode form, and whitespace; identifiers, filenames, handles, quoted queries, and audit evidence retain exact-match semantics.
+- Interface Locale Preference may select Arabic-Indic or Latin numerals and an optional Hijri companion display; scheduling remains Gregorian, UTC-instant plus IANA-timezone authoritative, with explicit week-start and weekend configuration.
+- Client Draft Recovery may preserve non-secret form work and resumable-upload state, but generation, payment, Approval, and publishing exist only after confirmed idempotent server acceptance.
+- Approval Policies may require one, any-of, ordered, quorum, or separated authorities; every decision pins the policy and exact resource revision, while membership roles only establish separately governed eligibility or administration.
+- Step-Up Authentication is required before the configured high-risk human capabilities and expires independently of the session; it never widens the Principal's authority.
+- Workspace Audit Trail views and exports derive from append-only canonical evidence, apply viewer authorization and redaction on every access, and record the access itself when sensitive.
+- Data Region Policy is pinned per Workspace and filters storage, processing, backup, and provider routes; Tasmeemai makes no residency claim until every relevant subprocessor and lifecycle is verified.
+- Workspace Retention Policy applies explicit Retention Classes rather than one universal deletion period, and each deletion explains immediate erasure, delayed erasure, retained evidence, holds, receipts, and tombstones.
+- A Safety Appeal references one Safety Decision and may authorize re-evaluation of only its exact intent; successful review still revalidates current authorization, safety, commercial, and provider conditions.
+- A Bulk Operation invokes the same single-resource capability contract per target, preserves per-item idempotency and outcome, and never treats partial or ambiguous completion as atomic success.
+- Workspace Export preserves canonical revisions, media, captions, plans, observations, and authorized configuration with a signed manifest; import validates and dry-runs idempotently while retaining source provenance.
+- Model Policy may change provider operations after degradation only through a compatible Model Fallback Authorization; every attempted identity remains visible and Managed Provider Execution never exceeds the accepted quote.
+- Every long-running resource maps its native lifecycle into the shared Durable Operation Status and Structured Progress Observation contract without replacing canonical state or fabricating progress.
+- Experience Performance Budgets measure Tasmeemai overhead separately from provider execution and apply to representative MENA and provider-region conditions; a regression fails the affected slice's release evidence.
+- Supported Client Matrix and WCAG 2.2 AA evidence are required in Arabic RTL and English LTR for each parity surface, including touch, keyboard, screen-reader, zoom/reflow, reduced motion, captions/transcripts, and editable suggested alt text.
+- Product Telemetry Events are consent-aware, minimized, classified, and content-free; Product Experiments are expiring governed resources and cannot vary security, money, Approval, safety, retention, accessibility, or audit semantics.
+- A Release Flag can vary cohort exposure but never business authority; only complete vertical slices may enter controlled rollout, and expired flags are removed.
+- Service Incidents link operational truth to localized in-product and public status communication, including explicit provider degradation, reservation, and public-publishing risk.
+- Backups and restore drills satisfy Recovery Objectives, Data Region Policies, Retention Classes, and deletion obligations; restored state reconciles ambiguous external effects before resuming them.
+- Contract Migrations preserve pinned historical and active definitions through compatibility windows and require dry-run, resumable progress, rollback, and explicit failure evidence.
+- The Parity Matrix is the authority for a full-parity claim: every required route, feature, state, role, Entitlement, viewport, and direction cell must be known, passing, evidenced, and signed off by product, engineering, Arabic-language, accessibility, and security owners.
+- Identity deletion, membership departure, Workspace Closure, and resource deletion are separate processes; a final Owner must transfer ownership before leaving, and closure preserves minimal legal, financial, anti-fraud, idempotency, and public-delivery evidence after eligible content erasure.
 - A **Channel** belongs to exactly one **Platform**.
 - A **Provider Adapter** supports exactly one **Platform**.
 - A **Post** has **Publishing Settings** for each selected **Channel** when that platform needs extra publishing choices.
@@ -677,7 +1054,7 @@ _Avoid_: rank tracking, brand monitoring, mentions
 - Every runtime-calculated Cost Valuation binds to the exact **Pricing Snapshot** used; later pricing changes never rewrite historical usage or valuation.
 - Pricing Snapshots use exact decimal rates, an ISO currency, source reference, effective time, exact model or operation version, service tier, and applicable unit rules.
 - A Workflow Run pins its Pricing Snapshots when its Run Cost Ceiling is reserved; pricing updates affect only new reservations.
-- Node Banana's built-in provider-pricing catalog is versioned, source-referenced, and updated only by a product release or signed catalog update, never by scraping a pricing page during execution.
+- Tasmeemai's built-in provider-pricing catalog is versioned, source-referenced, and updated only by a product release or signed catalog update, never by scraping a pricing page during execution.
 - Monetary precedence is exact provider-reported cost, then **Workspace Pricing Override**, then built-in catalog valuation, then explicit unknown.
 - A Workspace Pricing Override is an immutable audited human revision for an exact provider, operation, model or version, service tier, or credit conversion and affects new Run previews and reservations only.
 - Human-only `pricing_overrides.get/list/create/revoke@1` capabilities manage Workspace Pricing Overrides through the shared Capability Entrypoint.
@@ -687,11 +1064,11 @@ _Avoid_: rank tracking, brand monitoring, mentions
 - A later exact provider-reported charge appends a superseding Cost Valuation and explicit variance without deleting the earlier estimate.
 - Actual provider spend above the reserved ceiling remains honestly recorded, releases no fictional capacity, and blocks subsequent effects even though the runtime cannot undo the external charge.
 - Runtime v1 uses **BYOK Provider Execution** only: the Workspace operator supplies each model-provider credential and the provider bills that external account directly.
-- **External Provider Spend** is recorded for transparency, planning, and enforcement guardrails; it never creates a Node Banana invoice, credit balance, markup, or billing obligation.
+- **External Provider Spend** is recorded for transparency, planning, and enforcement guardrails; it never creates a Tasmeemai invoice, credit balance, markup, or billing obligation.
 - A Budget Reservation reserves internal authorization to cause bounded External Provider Spend and never reserves funds or credits with the provider.
-- The provider's billing system remains final invoice authority; when exact billed cost is unavailable, Node Banana retains a clearly labeled valuation rather than claiming an actual charge.
+- The provider's billing system remains final invoice authority; when exact billed cost is unavailable, Tasmeemai retains a clearly labeled valuation rather than claiming an actual charge.
 - Hosted storage, bandwidth, and concurrency capacity remain Quota dimensions and are not disguised as BYOK inference spend.
-- Managed inference, bundled credits, resale, or markup are outside runtime v1 and require a separate future contract.
+- The product supports both **BYOK Provider Execution** and **Managed Provider Execution** as explicit modes; managed execution has a separate commercial contract and never reinterprets BYOK usage as a Tasmeemai charge.
 - Granting an Agent Principal visibility of a Credential Profile never implies permission to cause External Provider Spend.
 - Before an Agent Principal may use a Credential Profile for a provider effect, a human administrator creates a **Credential Spend Grant** in bounded or explicitly unbounded mode.
 - A bounded Credential Spend Grant applies both a maximum Run Cost Ceiling and a calendar-period Budget Policy; an unbounded grant still records complete usage and remains subject to Quota Policies and Emergency Spend Suspension.
@@ -1085,7 +1462,7 @@ _Avoid_: rank tracking, brand monitoring, mentions
 > **Domain expert:** "Yes. A draft **Post** can be incomplete, but scheduling or publishing it must pass **Publish Validation**."
 >
 > **Dev:** "Should YouTube default to public because Postiz does?"
-> **Domain expert:** "No. Node Banana uses **Safe Defaults** so generated or experimental work is not published publicly by accident."
+> **Domain expert:** "No. Tasmeemai uses **Safe Defaults** so generated or experimental work is not published publicly by accident."
 >
 > **Dev:** "If a post targets YouTube and Reddit, can one readiness state cover both?"
 > **Domain expert:** "No. Each selected **Channel** has its own **Publishing Readiness** because each may require different **Publishing Settings**."
@@ -1098,4 +1475,4 @@ _Avoid_: rank tracking, brand monitoring, mentions
 - "integration" was used to mean a connected publishing destination; resolved: use **Channel** for the destination and reserve "integration" for broader third-party product integrations.
 - "settings" was used broadly; resolved: use **Publishing Settings** for platform-specific options attached to publishing a **Post** through a **Channel**.
 - Existing code and database fields may still use `socialAccountId` and `platformSettings`; resolved: keep those implementation names for now while using **Channel** and **Publishing Settings** in product/domain language and new domain-facing code.
-- Node Banana was previously described as only a **Cockpit** backed by a separate Flowleap **Content Engine**; resolved: Node Banana owns the **Content Operations Runtime**, while the **Cockpit** and **Agent Interface** are clients of it.
+- Tasmeemai was previously described as only a **Cockpit** backed by a separate Flowleap **Content Engine**; resolved: Tasmeemai owns the **Content Operations Runtime**, while the **Cockpit** and **Agent Interface** are clients of it.

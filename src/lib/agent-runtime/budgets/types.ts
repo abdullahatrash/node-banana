@@ -1,4 +1,5 @@
 import type { PricingSnapshot } from "../usage/types";
+import type { WorkflowRunAcceptedSpendQuote } from "../runs/spend-quote";
 
 export type BudgetScope = "workspace" | "principal";
 export type BudgetPeriodKind = "calendar_day" | "calendar_week" | "calendar_month" | "lifetime";
@@ -177,6 +178,7 @@ export interface BudgetAdmissionPlan {
     currency: string;
   }>;
   createdAt: Date;
+  acceptedSpendQuote?: WorkflowRunAcceptedSpendQuote;
 }
 
 export interface BudgetSettlementPlan {

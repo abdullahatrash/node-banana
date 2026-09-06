@@ -88,6 +88,57 @@ S3_FORCE_PATH_STYLE=false                  # R2 default
 For non-development environments, `BETTER_AUTH_SECRET` is required and you must provide either `BETTER_AUTH_URL` or `NEXT_PUBLIC_APP_URL` so auth origin validation works correctly.
 For production/staging-like deployments, `DATABASE_URL` is required for Better Auth (memory adapter fallback is local-only).
 
+#### AI credential modes
+
+`BYOK_KEY_ENCRYPTION_KEY` is **not** an AI-provider credential. It is the
+64-character hexadecimal AES-256-GCM master key that encrypts Workspace BYOK
+credentials at rest. Generate it once with `openssl rand -hex 32`, keep it
+server-side, and do not rotate it without a key-reencryption procedure.
+
+There are two admitted ways to pay for provider execution:
+
+- **Workspace BYOK:** configure `BYOK_KEY_ENCRYPTION_KEY`, then sign in and use
+  Settings → Provider credentials to store the Workspace's real Replicate key.
+  The save flow requires an exact-scope step-up and performs a free account
+  validation before encrypting the key.
+- **Platform-managed:** configure `REPLICATE_MANAGED_API_TOKEN` and a stable
+  `REPLICATE_MANAGED_KEY_REVISION` on the server. Managed runs debit the
+  Workspace Generation Credit ledger; the managed token is never exposed to
+  the browser.
+
+Legacy provider variables such as `REPLICATE_API_KEY` can still support model
+catalog discovery paths, but they do not make the admitted production
+generation pipeline executable. Real execution also requires a signed model
+qualification and verified processing-region evidence. Run
+`pnpm doctor:local -- --workspace seed_ws_alice` to see the exact remaining
+gates without calling a provider or spending credits. The report keeps backend
+infrastructure readiness separate from the signed release-parity matrix; an
+empty, stale, or partially signed matrix is always reported as blocked.
+
+Once a reviewed qualification plan exists, validate it and the operator trust
+configuration without network access or provider spend:
+
+```bash
+pnpm qualify:replicate:check reviewed-plan.json
+```
+
+This command rejects the paid-execution flag. The separate
+`qualify:replicate` command remains the only explicitly paid path.
+
+For a repeatable, operator-attended local setup, run:
+
+```bash
+pnpm setup:replicate:qualification
+```
+
+The wizard writes local-only values to `.env.local`, opens the current Replicate
+and processing-region documentation, creates separate spend and model-signing
+keys, configures the local observer routes, and runs the no-spend preflight. It
+cannot cross the paid boundary without a final explicit confirmation of the
+exact reviewed matrix and its strict account-wide ceiling below USD 0.40.
+
+Verified email signup and the Arabic-first onboarding rollout also require the `AUTH_*`, `RESEND_*`, and `ONBOARDING_*` values documented in [`.env.example`](.env.example). Apply the onboarding migrations and legacy backfill in the order described by [`docs/onboarding-rollout.md`](docs/onboarding-rollout.md) before enabling product gates.
+
 ### Marketing and product domains
 
 Attach the marketing apex/`www` domain and the `app` subdomain to the same deployment, then configure:
@@ -130,6 +181,84 @@ Stop local Postgres:
 ```bash
 pnpm db:down
 ```
+
+### Local PostgreSQL + canonical media storage
+
+Real image and video generation must copy provider output into Workspace-owned
+S3-compatible storage before an operation can succeed. Start PostgreSQL and the
+included MinIO service together:
+
+```bash
+pnpm infra:up
+```
+
+Use this local-only profile in `.env.local`:
+
+```env
+STORAGE_BACKEND=s3
+S3_BUCKET_NAME=node-banana
+S3_REGION=us-east-1
+S3_ENDPOINT=http://localhost:9000
+S3_ACCESS_KEY_ID=node-banana-local
+S3_SECRET_ACCESS_KEY=node-banana-local-secret
+S3_FORCE_PATH_STYLE=true
+```
+
+MinIO serves the S3 API at `http://localhost:9000` and its local console at
+`http://localhost:9001`. The initializer creates the bucket idempotently and
+allows browser uploads from the documented local app origins only. These
+development credentials must never be reused outside the local Docker stack.
+
+Validate the complete auth, Workspace, presigned upload, finalize, list, and
+delete lifecycle after the app is running:
+
+```bash
+APP_BASE_URL=http://localhost:3002 SMOKE_STORAGE_MODE=s3 pnpm smoke:infra
+```
+
+Inspect the remaining real-generation prerequisites for the seeded Workspace
+without starting a provider run or spending credits:
+
+```bash
+pnpm doctor:local -- --workspace seed_ws_alice
+```
+
+The report checks the database, canonical storage, BYOK encryption and
+step-up delivery, accepted Brand and region evidence, executable model
+qualification, Workspace Replicate credentials, plan/pack catalog, credits,
+and the optional Merchant-of-Record adapter. Use `--json` for machine-readable
+output.
+
+To test the rights-safe Inspiration trend loop against the real local backend,
+follow [Workspace winning-content trends](docs/operations/workspace-winning-content.md).
+
+For the complete no-spend-first route matrix and the exact point where real
+provider or publishing side effects begin, follow
+[Local real-backend validation](docs/operations/local-real-backend-validation.md).
+
+To verify the primary authenticated shell and public pricing surface in both
+Arabic RTL and English LTR against the real local auth and Workspace backend:
+
+```bash
+APP_BASE_URL=http://localhost:3002 pnpm smoke:i18n-shell
+```
+
+This no-spend smoke persists each Interface Language through the production
+preference route, renders the thirteen primary product routes plus pricing in
+both directions, rejects missing localization markers, and restores the
+seeded user's original preference. It verifies server-rendered semantics and
+route reachability; the release screenshot matrix remains the authority for
+visual overflow, focus order, and responsive composition.
+
+Generate that real-Chrome screenshot matrix, including every Settings section,
+at 390, 768, and 1440 CSS pixels with:
+
+```bash
+APP_BASE_URL=http://localhost:3002 pnpm smoke:rtl-visual
+```
+
+Review the ignored captures and report under `renders/rtl-layout/`; a green
+geometry report does not replace the required human visual review.
 
 ### Installation
 
@@ -201,6 +330,8 @@ pnpm test:gate-a
 pnpm smoke:infra
 SMOKE_STORAGE_MODE=s3 pnpm smoke:infra
 ```
+
+Provider processing geography is verified independently from Workspace storage residency. To configure the exact signed route manifest used by local and production readiness gates, follow [Provider processing-region evidence](docs/operations/provider-region-evidence.md).
 
 ### Build
 

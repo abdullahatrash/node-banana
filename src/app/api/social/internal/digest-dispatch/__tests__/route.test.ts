@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { defaultSocialNotificationPreferences } from "@/lib/social/notification-preferences";
 
 const mockIsDatabaseConfigured = vi.fn(() => true);
 const mockSelect = vi.fn();
@@ -86,8 +87,8 @@ describe("/api/social/internal/digest-dispatch", () => {
       {
         id: "sevt_3",
         workspaceId: "ws_1",
-        eventType: "dispatch.failed",
-        message: "Dispatch failed",
+        eventType: "token.refreshed",
+        message: "Token refreshed",
         createdByUserId: "user_2",
         createdAt: new Date(),
         dispatchKey: "dispatch:3",
@@ -116,8 +117,10 @@ describe("/api/social/internal/digest-dispatch", () => {
       expect.objectContaining({
         recipientKey: "user:user_1",
         userId: "user_1",
-        channels: ["in_app"],
+        channels: ["in_app", "email"],
         count: 2,
+        deliveryLocale: "ar",
+        digestCadence: "daily",
       }),
     ]);
   });
@@ -159,5 +162,39 @@ describe("/api/social/internal/digest-dispatch", () => {
       eventId: "sevt_1",
       userId: "user_1",
     });
+  });
+
+  it("does not reuse one user's preferences across Workspaces", async () => {
+    mockEvents([
+      { id: "sevt_1", workspaceId: "ws_1", eventType: "post.published", message: "Published one", createdByUserId: "user_1", createdAt: new Date(), dispatchKey: "dispatch:1" },
+      { id: "sevt_2", workspaceId: "ws_2", eventType: "post.published", message: "Published two", createdByUserId: "user_1", createdAt: new Date(), dispatchKey: "dispatch:2" },
+    ]);
+    mockGetSocialNotificationPreferences
+      .mockResolvedValueOnce({ muteAll: false, inAppEnabled: true, emailEnabled: false, preferences: null })
+      .mockResolvedValueOnce({ muteAll: true, inAppEnabled: true, emailEnabled: true, preferences: null });
+
+    const { GET } = await import("../route");
+    const data = await (await GET(createRequest())).json();
+    expect(mockGetSocialNotificationPreferences).toHaveBeenNthCalledWith(1, "ws_1", "user_1");
+    expect(mockGetSocialNotificationPreferences).toHaveBeenNthCalledWith(2, "ws_2", "user_1");
+    expect(data.digests).toHaveLength(1);
+    expect(data.digests[0].workspaceId).toBe("ws_1");
+  });
+
+  it("keeps optional events unread until the selected weekly email tick is due", async () => {
+    mockEvents([{ id: "sevt_1", workspaceId: "ws_1", eventType: "post.published", message: "Published", createdByUserId: "user_1", createdAt: new Date(), dispatchKey: "dispatch:1" }]);
+    const preferences = defaultSocialNotificationPreferences({ locale: "en", timeZone: "UTC" });
+    preferences.digestCadence = "weekly";
+    preferences.weeklyDigestDay = 1;
+    preferences.quietHours.enabled = false;
+    mockGetSocialNotificationPreferences.mockResolvedValue({ muteAll: false, inAppEnabled: true, emailEnabled: true, preferences });
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-06T13:00:00.000Z"));
+    try {
+      const { POST } = await import("../route");
+      const request = new NextRequest("http://localhost:3000/api/social/internal/digest-dispatch?consume=true", { method: "POST", headers: { "x-social-internal-secret": "secret_123" } });
+      const data = await (await POST(request)).json();
+      expect(data.digests).toEqual([]);
+      expect(mockMarkSocialEventReadForUser).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
   });
 });

@@ -5,22 +5,13 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { authClient } from "@/lib/auth/client";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
-
-function getErrorMessage(error: unknown, fallback: string): string {
-  if (
-    error &&
-    typeof error === "object" &&
-    "message" in error &&
-    typeof (error as { message?: unknown }).message === "string"
-  ) {
-    return (error as { message: string }).message;
-  }
-  return fallback;
-}
+import { useTranslations } from "next-intl";
 
 export default function SignUpPage() {
   const router = useRouter();
   const { data: session, isPending } = authClient.useSession();
+  const t = useTranslations("auth.signUp");
+  const common = useTranslations("common");
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -30,7 +21,7 @@ export default function SignUpPage() {
 
   useEffect(() => {
     if (session?.user) {
-      router.replace("/simple-studio/images");
+      router.replace("/onboarding");
     }
   }, [router, session]);
 
@@ -44,16 +35,17 @@ export default function SignUpPage() {
         name: name.trim(),
         email: email.trim(),
         password,
+        callbackURL: new URL("/onboarding", window.location.origin).toString(),
       });
 
       if (result.error) {
-        setError(getErrorMessage(result.error, "Sign up failed."));
+        setError(t("failed"));
         return;
       }
 
-      router.replace("/simple-studio/images");
-    } catch (submitError) {
-      setError(getErrorMessage(submitError, "Sign up failed."));
+      router.replace(`/verify-email?email=${encodeURIComponent(email.trim())}`);
+    } catch {
+      setError(t("failed"));
     } finally {
       setIsSubmitting(false);
     }
@@ -65,25 +57,27 @@ export default function SignUpPage() {
         <LanguageSwitcher />
       </div>
       <div className="w-full max-w-md border border-neutral-800 bg-neutral-900 rounded-xl p-6">
-        <h1 className="text-xl font-semibold">Create account</h1>
-        <p className="text-sm text-neutral-400 mt-1">Create your workspace access account.</p>
+        <h1 className="text-xl font-semibold">{t("title")}</h1>
+        <p className="text-sm text-neutral-400 mt-1">{t("subtitle")}</p>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           <label className="block">
-            <span className="text-xs text-neutral-400">Name</span>
+            <span className="text-xs text-neutral-400">{t("name")}</span>
             <input
               type="text"
               autoComplete="name"
               required
+              minLength={2}
+              maxLength={128}
               value={name}
               onChange={(event) => setName(event.target.value)}
               className="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 outline-none focus:border-neutral-500"
-              placeholder="Jane Doe"
+              placeholder={t("namePlaceholder")}
             />
           </label>
 
           <label className="block">
-            <span className="text-xs text-neutral-400">Email</span>
+            <span className="text-xs text-neutral-400">{common("email")}</span>
             <input
               type="email"
               autoComplete="email"
@@ -91,12 +85,12 @@ export default function SignUpPage() {
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               className="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 outline-none focus:border-neutral-500"
-              placeholder="you@example.com"
+              placeholder={common("emailPlaceholder")}
             />
           </label>
 
           <label className="block">
-            <span className="text-xs text-neutral-400">Password</span>
+            <span className="text-xs text-neutral-400">{common("password")}</span>
             <input
               type="password"
               autoComplete="new-password"
@@ -119,14 +113,14 @@ export default function SignUpPage() {
             disabled={isSubmitting || isPending}
             className="w-full rounded-md bg-neutral-100 text-neutral-900 py-2 text-sm font-medium hover:bg-neutral-200 disabled:opacity-60"
           >
-            {isSubmitting ? "Creating account..." : "Sign up"}
+            {isSubmitting ? t("submitting") : t("submit")}
           </button>
         </form>
 
         <p className="mt-4 text-xs text-neutral-400">
-          Already have an account?{" "}
+          {t("existing")}{" "}
           <Link href="/sign-in" className="text-neutral-200 hover:text-white underline underline-offset-2">
-            Sign in
+            {t("signIn")}
           </Link>
         </p>
       </div>

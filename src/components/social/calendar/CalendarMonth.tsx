@@ -1,26 +1,33 @@
 "use client"
 
 import { useMemo } from "react"
+import { useTranslations } from "next-intl"
 import { useDrop } from "react-dnd"
 import { DndProvider } from "react-dnd"
 import { HTML5Backend } from "react-dnd-html5-backend"
 import {
   addDays,
   endOfMonth,
-  endOfWeek,
   format,
   isSameMonth,
   startOfMonth,
-  startOfWeek,
 } from "date-fns"
-import { useSocialCalendarStore } from "@/store/socialCalendarStore"
+import {
+  formatCalendarDayNumber,
+  getCalendarWeekEnd,
+  getCalendarWeekStart,
+  useSocialCalendarStore,
+} from "@/store/socialCalendarStore"
+import { useDirectionStore } from "@/store/directionStore"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
-import { rescheduleSocialPost, type SocialPost } from "@/lib/social/client"
+import type { CalendarItem, CanonicalCalendarBinding } from "@/lib/product-surfaces/calendar-projection"
 import { useToast } from "@/components/Toast"
 import { CalendarPostCard, POST_DND_TYPE } from "./CalendarPostCard"
 import type { SocialPlatform } from "@/lib/db/schema"
+import { canonicalCalendarReschedule } from "./canonical-reschedule"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
-const WEEK_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+const WEEK_DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const
 const MAX_VISIBLE_POSTS = 3
 
 interface CalendarDragItem {
@@ -29,14 +36,15 @@ interface CalendarDragItem {
   scheduledAt?: string | null
   publishedAt?: string | null
   createdAt?: string | null
+  source: CanonicalCalendarBinding | null
 }
 
-function getCalendarDate(post: SocialPost) {
+function getCalendarDate(post: CalendarItem) {
   return post.scheduledAt || post.publishedAt || post.createdAt
 }
 
 function canRescheduleItem(item: CalendarDragItem, targetTime: Date) {
-  if (item.status === "published" || targetTime.getTime() < Date.now()) {
+  if (!item.source || item.status === "published" || targetTime.getTime() < Date.now()) {
     return false
   }
   if (item.status !== "publishing") return true
@@ -48,17 +56,21 @@ function CalendarMonthDayCell({
   inCurrentMonth,
   posts,
   platformForPost,
+  locale,
 }: {
   day: Date
   inCurrentMonth: boolean
-  posts: SocialPost[]
-  platformForPost: (post: SocialPost) => SocialPlatform | undefined
+  posts: CalendarItem[]
+  platformForPost: (post: CalendarItem) => SocialPlatform | undefined
+  locale: "ar" | "en"
 }) {
+  const t = useTranslations("social.calendarUi")
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const setViewMode = useSocialCalendarStore((s) => s.setViewMode)
   const applyOptimisticReschedule = useSocialCalendarStore((s) => s.applyOptimisticReschedule)
   const restorePosts = useSocialCalendarStore((s) => s.restorePosts)
-  const replacePost = useSocialCalendarStore((s) => s.replacePost)
+  const fetchPosts = useSocialCalendarStore((s) => s.fetchPosts)
 
   const [{ isOver, canDrop }, dropRef] = useDrop(() => ({
     accept: POST_DND_TYPE,
@@ -80,7 +92,7 @@ function CalendarMonthDayCell({
       }
 
       if (!canRescheduleItem(item, target)) {
-        showToast("This post cannot be rescheduled.", "warning")
+        showToast(t("errors.cannotReschedule"), "warning")
         return
       }
 
@@ -88,22 +100,22 @@ function CalendarMonthDayCell({
       const previousPosts = applyOptimisticReschedule(item.postId, scheduledAt)
 
       try {
-        const updatedPost = await rescheduleSocialPost(item.postId, scheduledAt)
-        replacePost(updatedPost)
-        showToast("Post rescheduled", "success")
+        if (!item.source) return
+        const result = await canonicalCalendarReschedule({ source: item.source, scheduledAt, confirmReleasedDelivery: () => confirm(t("confirmCancelReleasedDelivery")) })
+        if (previousPosts) restorePosts(previousPosts)
+        await fetchPosts()
+        if (result.kind === "cancellation_not_guaranteed") showToast(t("errors.cancellationNotGuaranteed"), "warning")
+        else showToast(t("toast.approvalRequired"), "success")
       } catch (error) {
         if (previousPosts) restorePosts(previousPosts)
-        showToast(
-          error instanceof Error ? error.message : "Failed to reschedule",
-          "error",
-        )
+        showClientError(showToast, error, t("errors.reschedule"))
       }
     },
     collect: (monitor) => ({
       isOver: monitor.isOver(),
       canDrop: monitor.canDrop(),
     }),
-  }), [applyOptimisticReschedule, day, replacePost, restorePosts, showToast])
+  }), [applyOptimisticReschedule, day, fetchPosts, restorePosts, showClientError, showToast, t])
 
   const visiblePosts = posts.slice(0, MAX_VISIBLE_POSTS)
   const hiddenCount = Math.max(0, posts.length - visiblePosts.length)
@@ -129,7 +141,7 @@ function CalendarMonthDayCell({
         }}
         className="mb-1 text-xs font-medium"
       >
-        {format(day, "d")}
+        <span lang={locale}>{formatCalendarDayNumber(day, locale)}</span>
       </button>
       <div className="space-y-1">
         {visiblePosts.map((post) => (
@@ -148,7 +160,7 @@ function CalendarMonthDayCell({
               setViewMode("day")
             }}
           >
-            +{hiddenCount} more
+            {t("more", { count: hiddenCount })}
           </button>
         )}
       </div>
@@ -157,12 +169,19 @@ function CalendarMonthDayCell({
 }
 
 export function CalendarMonth() {
-  const { currentDate, posts } = useSocialCalendarStore()
+  const t = useTranslations("social.calendarUi")
+  const locale = useDirectionStore((state) => state.locale)
+  const { currentDate, posts, weekStartsOn } = useSocialCalendarStore()
   const accounts = useSocialAccountsStore((s) => s.accounts)
   const monthStart = startOfMonth(currentDate)
   const monthEnd = endOfMonth(currentDate)
-  const calendarStart = startOfWeek(monthStart, { weekStartsOn: 1 })
-  const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 1 })
+  const calendarStart = getCalendarWeekStart(monthStart, weekStartsOn)
+  const calendarEnd = getCalendarWeekEnd(monthEnd, weekStartsOn)
+  const firstWeekday = weekStartsOn
+  const weekdays = Array.from(
+    { length: 7 },
+    (_, offset) => WEEK_DAYS[(firstWeekday + offset) % 7]!,
+  )
 
   const days = useMemo(() => {
     const values: Date[] = []
@@ -175,7 +194,7 @@ export function CalendarMonth() {
   }, [calendarStart, calendarEnd])
 
   const postsByDate = useMemo(() => {
-    const map = new Map<string, SocialPost[]>()
+    const map = new Map<string, CalendarItem[]>()
     for (const post of posts) {
       const dateStr = getCalendarDate(post)
       if (!dateStr) continue
@@ -192,7 +211,7 @@ export function CalendarMonth() {
     return postsByDate.get(format(day, "yyyy-MM-dd")) ?? []
   }
 
-  function platformForPost(post: SocialPost) {
+  function platformForPost(post: CalendarItem) {
     return accounts.find((account) => account.id === post.socialAccountId)
       ?.platform as SocialPlatform | undefined
   }
@@ -201,12 +220,12 @@ export function CalendarMonth() {
     <DndProvider backend={HTML5Backend}>
       <div className="flex flex-1 flex-col overflow-auto">
         <div className="grid grid-cols-7 border-b">
-          {WEEK_DAYS.map((day) => (
+          {weekdays.map((day) => (
             <div
               key={day}
               className="p-2 text-center text-xs font-medium text-muted-foreground"
             >
-              {day}
+              {t(`weekdays.${day}`)}
             </div>
           ))}
         </div>
@@ -218,6 +237,7 @@ export function CalendarMonth() {
               inCurrentMonth={isSameMonth(day, currentDate)}
               posts={getPostsForDate(day)}
               platformForPost={platformForPost}
+              locale={locale}
             />
           ))}
         </div>

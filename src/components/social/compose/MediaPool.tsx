@@ -25,6 +25,8 @@ import {
   finalizeStudioAssetUpload,
 } from "@/lib/studio/client"
 import { useToast } from "@/components/Toast"
+import { useTranslations } from "next-intl"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 interface AssetItem {
   id: string
@@ -79,6 +81,7 @@ interface MediaPoolProps {
 }
 
 export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
+  const t = useTranslations("social.compose.mediaPool")
   const [assets, setAssets] = useState<AssetItem[]>(assetCache ?? [])
   const [isLoading, setIsLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<PoolTab>("library")
@@ -90,6 +93,7 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const initialized = useRef(false)
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
 
   // Fetch on open — no useEffect
   if (open && !initialized.current) {
@@ -131,6 +135,8 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
     const items: ComposerMediaItem[] = assets
       .filter((a) => selected.has(a.id))
       .map((a) => ({
+        assetId: a.id,
+        resourceKind: "studio_asset" as const,
         type: (a.type === "video" ? "video" : "image") as "image" | "video",
         url: a.storageKey,
         mimeType: a.mimeType,
@@ -150,7 +156,7 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
-        setUploadProgress(`Uploading ${i + 1} of ${files.length}...`)
+        setUploadProgress(t("uploadProgress", { current: i + 1, total: files.length }))
 
         const assetType = getAssetType(file.type)
         const ext = getFileExtension(file)
@@ -171,7 +177,7 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
         })
 
         if (!uploadRes.ok) {
-          throw new Error(`Upload failed for ${file.name}`)
+          throw new Error(t("fileUploadFailed", { fileName: file.name }))
         }
 
         // 3. Finalize
@@ -182,6 +188,8 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
         })
 
         uploaded.push({
+          assetId: presign.assetId,
+          resourceKind: "studio_asset",
           type: assetType === "video" ? "video" : "image",
           url: presign.downloadUrl,
           mimeType: file.type,
@@ -195,15 +203,12 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
       invalidateAssetCache()
 
       showToast(
-        `${uploaded.length} file${uploaded.length > 1 ? "s" : ""} uploaded`,
+        t("uploaded", { count: uploaded.length }),
         "success",
       )
       onOpenChange(false)
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : "Upload failed",
-        "error",
-      )
+      showClientError(showToast, error, t("uploadFailed"))
     } finally {
       setIsUploading(false)
       setUploadProgress(null)
@@ -214,18 +219,18 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
   }
 
   const FILTER_TABS: { value: FilterTab; label: string }[] = [
-    { value: "all", label: "All" },
-    { value: "image", label: "Images" },
-    { value: "video", label: "Videos" },
+    { value: "all", label: t("filters.all") },
+    { value: "image", label: t("filters.images") },
+    { value: "video", label: t("filters.videos") },
   ]
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Media Pool</DialogTitle>
+          <DialogTitle>{t("title")}</DialogTitle>
           <DialogDescription>
-            Browse your library or upload from your device
+            {t("description")}
           </DialogDescription>
         </DialogHeader>
 
@@ -240,7 +245,7 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
             }`}
           >
             <ImageIcon className="size-3.5" />
-            Library
+            {t("library")}
           </button>
           <button
             onClick={() => setActiveTab("upload")}
@@ -251,7 +256,7 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
             }`}
           >
             <UploadCloudIcon className="size-3.5" />
-            Upload
+            {t("upload")}
           </button>
         </div>
 
@@ -280,10 +285,10 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
                 <UploadCloudIcon className="size-8 text-muted-foreground" />
                 <div className="text-center">
                   <p className="text-sm font-medium">
-                    Click to upload files
+                    {t("clickToUpload")}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Images and videos supported
+                    {t("supported")}
                   </p>
                 </div>
               </button>
@@ -319,8 +324,8 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
                 <div className="py-12 text-center">
                   <p className="text-sm text-muted-foreground">
                     {assets.length === 0
-                      ? "No media assets yet"
-                      : "No matching assets"}
+                      ? t("empty")
+                      : t("noMatch")}
                   </p>
                   <Button
                     variant="outline"
@@ -329,7 +334,7 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
                     onClick={() => setActiveTab("upload")}
                   >
                     <UploadCloudIcon className="size-3.5" />
-                    Upload files
+                    {t("uploadFiles")}
                   </Button>
                 </div>
               ) : (
@@ -340,6 +345,7 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
                       <button
                         key={asset.id}
                         onClick={() => toggleSelect(asset.id)}
+                        aria-label={t("toggleAsset", { type: t(`assetType.${asset.type === "video" ? "video" : "image"}`) })}
                         className={`group relative aspect-square overflow-hidden rounded-lg border transition-all ${
                           isSelected
                             ? "border-primary ring-2 ring-primary/30"
@@ -374,7 +380,7 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
                           variant="secondary"
                           className="absolute bottom-1 right-1 px-1 py-0 text-[8px]"
                         >
-                          {asset.type}
+                          {t(`assetType.${asset.type === "video" ? "video" : "image"}`)}
                         </Badge>
                       </button>
                     )
@@ -389,14 +395,14 @@ export function MediaPool({ open, onOpenChange }: MediaPoolProps) {
           <DialogFooter>
             <div className="flex w-full items-center justify-between">
               <span className="text-xs text-muted-foreground">
-                {selected.size} selected
+                {t("selected", { count: selected.size })}
               </span>
               <Button
                 size="sm"
                 onClick={handleInsertSelected}
                 disabled={selected.size === 0}
               >
-                Insert Selected
+                {t("insertSelected")}
               </Button>
             </div>
           </DialogFooter>

@@ -2,18 +2,20 @@
 
 import { useDrop } from "react-dnd"
 import { useRouter } from "next/navigation"
+import { useTranslations } from "next-intl"
 import { isPast } from "date-fns"
 import { POST_DND_TYPE, CalendarPostCard } from "./CalendarPostCard"
-import { rescheduleSocialPost } from "@/lib/social/client"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
 import { useToast } from "@/components/Toast"
-import type { SocialPost } from "@/lib/social/client"
+import type { CalendarItem, CanonicalCalendarBinding } from "@/lib/product-surfaces/calendar-projection"
+import { canonicalCalendarReschedule } from "./canonical-reschedule"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 interface CalendarColumnProps {
   date: Date
   hour: number
   minute?: number
-  posts: SocialPost[]
+  posts: CalendarItem[]
 }
 
 interface CalendarDragItem {
@@ -22,20 +24,23 @@ interface CalendarDragItem {
   scheduledAt?: string | null
   publishedAt?: string | null
   createdAt?: string | null
+  source: CanonicalCalendarBinding | null
 }
 
 function canRescheduleItem(item: CalendarDragItem, isInPast: boolean) {
-  if (isInPast || item.status === "published") return false
+  if (!item.source || isInPast || item.status === "published") return false
   if (item.status !== "publishing") return true
   return item.scheduledAt ? new Date(item.scheduledAt).getTime() > Date.now() : false
 }
 
 export function CalendarColumn({ date, hour, minute = 0, posts }: CalendarColumnProps) {
   const router = useRouter()
+  const t = useTranslations("social.calendarUi")
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const applyOptimisticReschedule = useSocialCalendarStore((s) => s.applyOptimisticReschedule)
   const restorePosts = useSocialCalendarStore((s) => s.restorePosts)
-  const replacePost = useSocialCalendarStore((s) => s.replacePost)
+  const fetchPosts = useSocialCalendarStore((s) => s.fetchPosts)
 
   const slotTime = new Date(date)
   slotTime.setHours(hour, minute, 0, 0)
@@ -48,7 +53,7 @@ export function CalendarColumn({ date, hour, minute = 0, posts }: CalendarColumn
       if (isInPast) return
 
       if (!canRescheduleItem(item, isInPast)) {
-        showToast("This post cannot be rescheduled.", "warning")
+        showToast(t("errors.cannotReschedule"), "warning")
         return
       }
 
@@ -56,15 +61,15 @@ export function CalendarColumn({ date, hour, minute = 0, posts }: CalendarColumn
       const previousPosts = applyOptimisticReschedule(item.postId, scheduledAt)
 
       try {
-        const updatedPost = await rescheduleSocialPost(item.postId, scheduledAt)
-        replacePost(updatedPost)
-        showToast("Post rescheduled", "success")
+        if (!item.source) return
+        const result = await canonicalCalendarReschedule({ source: item.source, scheduledAt, confirmReleasedDelivery: () => confirm(t("confirmCancelReleasedDelivery")) })
+        if (previousPosts) restorePosts(previousPosts)
+        await fetchPosts()
+        if (result.kind === "cancellation_not_guaranteed") showToast(t("errors.cancellationNotGuaranteed"), "warning")
+        else showToast(t("toast.approvalRequired"), "success")
       } catch (error) {
         if (previousPosts) restorePosts(previousPosts)
-        showToast(
-          error instanceof Error ? error.message : "Failed to reschedule",
-          "error",
-        )
+        showClientError(showToast, error, t("errors.reschedule"))
       }
     },
     collect: (monitor) => ({

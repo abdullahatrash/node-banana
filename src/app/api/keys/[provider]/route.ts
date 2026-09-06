@@ -15,7 +15,7 @@ type ProviderContext = { params: Promise<{ provider: string }> };
 
 /** Delete the workspace's stored key for a provider. Takes effect immediately. */
 export const DELETE = withStudioAuth<ProviderContext>(
-  { route: ROUTE, action: "delete" },
+  { route: ROUTE, action: "delete", permission: "workspaces:delete" },
   async (
     _request: NextRequest,
     authz,

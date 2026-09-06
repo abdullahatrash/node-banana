@@ -7,21 +7,19 @@ import { FormInfoPanel } from "./FormInfoPanel";
 import { ModelSelect } from "./ModelSelect";
 import { LatestResultsInline } from "./LatestResultsInline";
 import { GenerateProgress } from "./GenerateProgress";
+import { GenerationAdmissionPanel } from "./GenerationAdmissionPanel";
+import { VideoDurationControl } from "./VideoDurationControl";
+import { useTranslations } from "next-intl";
 
 const ASPECT_RATIOS = [
-  { value: "16:9", label: "16:9" },
   { value: "9:16", label: "9:16" },
 ];
 
 const BATCH_PRESETS = [1, 2, 4, 8];
-const DURATIONS = [4, 5, 6, 8, 10];
-
-const DIALOGUE_LANGUAGES: { value: "en" | "ar"; label: string }[] = [
-  { value: "en", label: "English" },
-  { value: "ar", label: "عربي" },
-];
+const DIALOGUE_LANGUAGES = ["en", "ar"] as const;
 
 export function VideoForm() {
+  const t = useTranslations("simpleStudio.forms");
   const prompt = useSimpleStudioStore((s) => s.prompt);
   const setPrompt = useSimpleStudioStore((s) => s.setPrompt);
   const aspectRatio = useSimpleStudioStore((s) => s.aspectRatio);
@@ -29,12 +27,12 @@ export function VideoForm() {
   const batchCount = useSimpleStudioStore((s) => s.batchCount);
   const setBatchCount = useSimpleStudioStore((s) => s.setBatchCount);
   const videoDuration = useSimpleStudioStore((s) => s.videoDuration);
-  const setVideoDuration = useSimpleStudioStore((s) => s.setVideoDuration);
   const isGenerating = useSimpleStudioStore((s) => s.isGenerating);
   const isRewriting = useSimpleStudioStore((s) => s.isRewriting);
   const generate = useSimpleStudioStore((s) => s.generate);
   const sourceImage = useSimpleStudioStore((s) => s.sourceImage);
   const setSourceImage = useSimpleStudioStore((s) => s.setSourceImage);
+  const sourceMediaType = useSimpleStudioStore((s) => s.sourceMediaType);
   const rewriteEnabled = useSimpleStudioStore((s) => s.rewriteEnabled);
   const setRewriteEnabled = useSimpleStudioStore((s) => s.setRewriteEnabled);
   const rewrittenPrompt = useSimpleStudioStore((s) => s.rewrittenPrompt);
@@ -44,8 +42,10 @@ export function VideoForm() {
   const setDialogueLanguage = useSimpleStudioStore((s) => s.setDialogueLanguage);
   const dialogueText = useSimpleStudioStore((s) => s.dialogueText);
   const setDialogueText = useSimpleStudioStore((s) => s.setDialogueText);
+  const selectedModelId = useSimpleStudioStore((s) => s.selectedModelId);
+  const rightsConfirmed = useSimpleStudioStore((s) => s.rightsConfirmed);
 
-  const disabled = isGenerating || isRewriting || prompt.trim().length === 0;
+  const disabled = isGenerating || isRewriting || prompt.trim().length === 0 || !selectedModelId || !rightsConfirmed;
 
   const handleSourceImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -53,7 +53,7 @@ export function VideoForm() {
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === "string") {
-        setSourceImage(reader.result);
+        setSourceImage(reader.result, file.type.startsWith("video/") ? "video" : "image");
       }
     };
     reader.readAsDataURL(file);
@@ -70,23 +70,24 @@ export function VideoForm() {
           onAspectRatioChange={setAspectRatio}
           currentBatchCount={batchCount}
           onBatchCountChange={setBatchCount}
-          estimatedCost={<span>{batchCount} video{batchCount > 1 ? "s" : ""}</span>}
+          estimatedCost={<span>{t("video.count", { count: batchCount })}</span>}
           outputExample={
-            <div className="aspect-video w-full rounded-md border bg-muted" />
+            <div className="aspect-[9/16] w-full rounded-md border bg-muted" />
           }
-          tips={<p>Describe the motion and scene. Videos take longer to generate.</p>}
+          tips={<p>{t("video.tip")}</p>}
         />
       }
     >
       <div className="space-y-4">
         <div>
           <label htmlFor="video-prompt" className="mb-2 block text-sm font-medium">
-            Prompt
+            {t("prompt")}
           </label>
           <textarea
             id="video-prompt"
+            dir="auto"
             className="min-h-32 w-full resize-y rounded-md border bg-background p-3 text-sm"
-            placeholder="Describe the video you want to generate…"
+            placeholder={t("video.placeholder")}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
           />
@@ -94,13 +95,15 @@ export function VideoForm() {
 
         <div className="flex items-center justify-between">
           <label htmlFor="video-rewrite" className="text-sm font-medium">
-            AI Prompt Enhance
+            {t("enhance")}
           </label>
           <button
             id="video-rewrite"
             type="button"
             role="switch"
             aria-checked={rewriteEnabled}
+            disabled
+            title={t("enhancePaused")}
             onClick={() => setRewriteEnabled(!rewriteEnabled)}
             className={`relative h-5 w-9 rounded-full transition-colors ${
               rewriteEnabled ? "bg-primary" : "bg-muted"
@@ -117,7 +120,7 @@ export function VideoForm() {
         {rewriteEnabled && rewrittenPrompt && (
           <div className="rounded-md border bg-muted/40 p-3">
             <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-primary">
-              Enhanced prompt
+              {t("enhanced")}
             </div>
             <p className="text-xs leading-relaxed" dir="auto">
               {rewrittenPrompt}
@@ -127,19 +130,17 @@ export function VideoForm() {
 
         <div>
           <label className="mb-2 block text-sm font-medium">
-            Source image (optional, for image-to-video)
+            {t("video.source")}
           </label>
           {sourceImage ? (
-            <div className="relative h-24 w-24 overflow-hidden rounded-md border">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={sourceImage}
-                alt="Source"
-                className="h-full w-full object-cover"
-              />
+            <div className="relative aspect-[9/16] w-24 overflow-hidden rounded-md border bg-black">
+              {sourceMediaType === "video" ? <video src={sourceImage} aria-label={t("video.sourceVideoAlt")} className="h-full w-full object-contain" muted playsInline controls /> : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={sourceImage} alt={t("video.sourceImageAlt")} className="h-full w-full object-contain" />
+              )}
               <button
                 type="button"
-                aria-label="Remove source image"
+                aria-label={t("video.removeSource")}
                 onClick={() => setSourceImage(null)}
                 className="absolute end-0 top-0 flex h-5 w-5 items-center justify-center rounded-bl bg-destructive text-xs text-destructive-foreground"
               >
@@ -147,12 +148,12 @@ export function VideoForm() {
               </button>
             </div>
           ) : (
-            <label className="flex h-24 w-24 cursor-pointer items-center justify-center rounded-md border border-dashed text-muted-foreground transition-colors hover:border-foreground/40">
+            <label className="flex aspect-[9/16] w-24 cursor-pointer items-center justify-center rounded-md border border-dashed text-muted-foreground transition-colors hover:border-foreground/40">
               <span className="text-lg">+</span>
               <input
                 type="file"
-                accept="image/*"
-                aria-label="Add source image"
+                accept="image/*,video/mp4,video/webm,video/quicktime"
+                aria-label={t("video.addSource")}
                 className="hidden"
                 onChange={handleSourceImageUpload}
               />
@@ -160,32 +161,11 @@ export function VideoForm() {
           )}
         </div>
 
-        <div>
-          <label className="mb-2 block text-sm font-medium">Duration</label>
-          <div className="flex gap-2">
-            {DURATIONS.map((d) => (
-              <button
-                key={d}
-                type="button"
-                className={`rounded-md border px-3 py-1 text-xs ${
-                  videoDuration === d
-                    ? "border-primary bg-primary/10"
-                    : "border-border hover:bg-muted"
-                }`}
-                onClick={() => setVideoDuration(d)}
-              >
-                {d}s
-              </button>
-            ))}
-          </div>
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            Duration depends on model (Veo: 4-8s, Kling: 5-10s).
-          </p>
-        </div>
+        <VideoDurationControl />
 
         <div className="flex items-center justify-between">
           <label htmlFor="video-dialogue" className="text-sm font-medium">
-            Include dialogue
+            {t("video.includeDialogue")}
           </label>
           <button
             id="video-dialogue"
@@ -209,21 +189,21 @@ export function VideoForm() {
           <>
             <div>
               <label className="mb-2 block text-sm font-medium">
-                Dialogue language
+                {t("video.dialogueLanguage")}
               </label>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {DIALOGUE_LANGUAGES.map((lang) => (
                   <button
-                    key={lang.value}
+                    key={lang}
                     type="button"
                     className={`flex-1 rounded-md border px-3 py-1 text-xs ${
-                      dialogueLanguage === lang.value
+                      dialogueLanguage === lang
                         ? "border-primary bg-primary/10"
                         : "border-border hover:bg-muted"
                     }`}
-                    onClick={() => setDialogueLanguage(lang.value)}
+                    onClick={() => setDialogueLanguage(lang)}
                   >
-                    {lang.label}
+                    {t(`languages.${lang}`)}
                   </button>
                 ))}
               </div>
@@ -231,22 +211,20 @@ export function VideoForm() {
 
             <div>
               <label htmlFor="video-dialogue-text" className="mb-2 block text-sm font-medium">
-                Dialogue text
+                {t("video.dialogueText")}
               </label>
               <textarea
                 id="video-dialogue-text"
                 className="min-h-20 w-full resize-y rounded-md border bg-background p-3 text-sm"
                 placeholder={
-                  dialogueLanguage === "ar"
-                    ? "اكتب ما يقوله الشخص..."
-                    : "Write what the character says…"
+                  t(`video.dialoguePlaceholder.${dialogueLanguage}`)
                 }
                 value={dialogueText}
                 onChange={(e) => setDialogueText(e.target.value)}
                 dir="auto"
               />
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Works best with Veo 3.1 and Kling 2.6. Dialogue is injected into the prompt.
+                {t("video.dialogueHint")}
               </p>
             </div>
           </>
@@ -254,10 +232,12 @@ export function VideoForm() {
 
         <div>
           <label htmlFor="video-model" className="mb-2 block text-sm font-medium">
-            Model
+            {t("model")}
           </label>
           <ModelSelect mode="video" id="video-model" />
         </div>
+
+        <GenerationAdmissionPanel runs={batchCount} quantityPerRun={videoDuration} />
 
         {isGenerating ? (
           <GenerateProgress />
@@ -270,7 +250,7 @@ export function VideoForm() {
               void generate();
             }}
           >
-            {isRewriting ? "Enhancing prompt…" : "Generate"}
+            {isRewriting ? t("enhancing") : t("generate")}
           </Button>
         )}
 

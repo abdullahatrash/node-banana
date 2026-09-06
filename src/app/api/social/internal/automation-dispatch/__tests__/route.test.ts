@@ -10,6 +10,10 @@ const mockUpdatePostStatus = vi.fn();
 const mockUpdateAutomationTask = vi.fn();
 const mockIncrementAutomationRuleRunCount = vi.fn();
 const mockCreateAutomationTask = vi.fn();
+const mockListSocialPosts = vi.fn();
+const mockInspectApproval = vi.fn();
+const mockConsumeApproval = vi.fn();
+const mockVerifyConsumedApproval = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   isDatabaseConfigured: (...args: unknown[]) => mockIsDatabaseConfigured(...(args as [])),
@@ -25,6 +29,7 @@ vi.mock("@/lib/social/repository", () => ({
   incrementAutomationRuleRunCount: (...args: unknown[]) =>
     mockIncrementAutomationRuleRunCount(...args),
   createAutomationTask: (...args: unknown[]) => mockCreateAutomationTask(...args),
+  listSocialPosts: (...args: unknown[]) => mockListSocialPosts(...args),
   buildAutomationTaskKey: ({
     workspaceId,
     ruleId,
@@ -34,6 +39,11 @@ vi.mock("@/lib/social/repository", () => ({
     ruleId: string;
     runIndex: number;
   }) => `${workspaceId}:${ruleId}:${runIndex}`,
+}));
+vi.mock("@/lib/agent-tools/social-publishing-approval", () => ({
+  governedPublishingMarker: (input: unknown) => `approved:${JSON.stringify(input)}`,
+  socialPublishingApprovalEvidenceSchema: { safeParse: (value: unknown) => value ? { success: true, data: value } : { success: false } },
+  PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION: { inspect: mockInspectApproval, consume: mockConsumeApproval, verifyConsumed: mockVerifyConsumedApproval },
 }));
 
 vi.mock("@/utils/logger", () => ({
@@ -66,6 +76,8 @@ describe("/api/social/internal/automation-dispatch POST", () => {
       id: "sacct_1",
       workspaceId: "ws_1",
     });
+    mockListSocialPosts.mockResolvedValue([]);
+    mockConsumeApproval.mockResolvedValue("consumed");
   });
 
   it("returns 401 for unauthorized request", async () => {
@@ -98,9 +110,10 @@ describe("/api/social/internal/automation-dispatch POST", () => {
       triggerSource: "schedule",
       triggerFilters: null,
       actionType: "create_social_post",
-      actionConfig: { socialAccountId: "sacct_1", content: "hello" },
+      actionConfig: { socialAccountId: "sacct_1", content: "hello", publishingApproval: { approvalRequestId: "par_1", targetId: "target_1", targetEvidenceDigest: `sha256:${"a".repeat(64)}`, consumingPrincipalId: "user_1", consumingKeyId: "key_1", authorizationEvidenceRef: "auth_1", authorizationIssuedAt: "2026-03-27T11:00:00.000Z", authorizationExpiresAt: "2026-03-27T13:00:00.000Z" } },
       createdByUserId: "user_1",
     });
+    mockInspectApproval.mockResolvedValue({ requestId: "par_1", decisionId: "dec_1", evidence: { consumingPrincipalId: "user_1" }, channelIds: ["sacct_1"], artifactIds: [], target: { targetId: "target_1", targetEvidenceDigest: `sha256:${"a".repeat(64)}`, content: { text: "hello" }, media: [], settings: { type: "person" }, timing: { kind: "scheduled", publishAt: now.toISOString() } } });
     mockCreateSocialPost.mockResolvedValue({
       id: "spost_1",
     });

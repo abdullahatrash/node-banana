@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, beforeEach, vi } from "vitest";
+vi.mock("next-intl", () => ({ useTranslations: () => (key: string) => ({ generating: "Generating…", cancel: "Cancel", progress: "Generation progress" })[key] ?? key }));
 import { GenerateProgress } from "../GenerateProgress";
 import {
   useSimpleStudioStore,

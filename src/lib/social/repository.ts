@@ -5,6 +5,7 @@ import {
   desc,
   eq,
   gte,
+  inArray,
   isNotNull,
   isNull,
   lt,
@@ -13,9 +14,17 @@ import {
   sql,
 } from "drizzle-orm";
 import { getDb } from "@/lib/db";
+import {
+  verifyAndResolveSocialMediaDelivery,
+  type OwnedSocialMediaResource,
+  type StableSocialMediaReference,
+} from "@/lib/social/media-delivery";
 import { isRecord } from "@/lib/social/utils";
 import { preserveLinkedInAuthorKind } from "@/lib/social/linkedin-author-kind";
 import {
+  artifactContents,
+  artifacts,
+  assets,
   socialAutomationRules,
   socialAutomationTasks,
   socialAccounts,
@@ -40,6 +49,7 @@ import {
   type SocialTokenRefreshLeaseState,
   type SocialWebhookDeadLetterReplayState,
 } from "@/lib/db/schema";
+import { buildSocialNotificationPreferenceUpdate } from "@/lib/social/notification-preferences";
 
 // ---------------------------------------------------------------------------
 // Error classes
@@ -49,6 +59,16 @@ export class SocialAccountNotFoundError extends Error {
   constructor(id?: string) {
     super(id ? `Social account "${id}" not found.` : "Social account not found.");
     this.name = "SocialAccountNotFoundError";
+  }
+}
+
+export class SocialAccountQuotaExceededError extends Error {
+  constructor(
+    readonly current: number,
+    readonly limit: number,
+  ) {
+    super("Connected Channel entitlement exhausted.");
+    this.name = "SocialAccountQuotaExceededError";
   }
 }
 
@@ -71,6 +91,66 @@ export class SocialPostStateTransitionError extends Error {
     this.currentStatus = currentStatus;
     this.targetStatus = targetStatus;
   }
+}
+
+export class SocialPostMediaBindingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SocialPostMediaBindingError";
+  }
+}
+
+export interface SocialPostMediaReference {
+  resourceKind: "studio_asset" | "artifact";
+  id: string;
+  digest?: string;
+}
+
+export interface SocialPostStableMediaReference {
+  resourceKind: "studio_asset" | "artifact";
+  assetId: string;
+  assetDigest: string;
+  order: number;
+  alt?: string;
+}
+
+function socialStorageKeyMatchesUrl(storageKey: string, url: string): boolean {
+  if (storageKey === url) return true;
+  try {
+    return decodeURIComponent(new URL(url).pathname).endsWith(`/${storageKey}`);
+  } catch {
+    return false;
+  }
+}
+
+function socialAssetDigest(asset: {
+  type: string;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  width: number | null;
+  height: number | null;
+  durationSeconds: number | null;
+  checksum: string | null;
+}): string {
+  if (asset.checksum && /^sha256:[a-f0-9]{64}$/.test(asset.checksum)) return asset.checksum;
+  throw new SocialPostMediaBindingError("Canonical social media is missing a verified SHA-256 checksum.");
+}
+
+export function bindStableSocialMedia(input: {
+  mediaUrls: Array<{ type: string; url: string; alt?: string }>;
+  references: SocialPostMediaReference[];
+  resources: ReadonlyMap<string, { resourceKind: "studio_asset" | "artifact"; id: string; digest: string; type: string }>;
+}): SocialPostStableMediaReference[] {
+  if (input.mediaUrls.length !== input.references.length) throw new SocialPostMediaBindingError("Every social media item requires one ordered canonical media reference.");
+  if (new Set(input.references.map((reference) => `${reference.resourceKind}:${reference.id}`)).size !== input.references.length) throw new SocialPostMediaBindingError("A social media resource may appear only once in a post.");
+  return input.references.map((reference, order) => {
+    const resource = input.resources.get(`${reference.resourceKind}:${reference.id}`);
+    if (!resource) throw new SocialPostMediaBindingError(`Canonical media resource is unavailable in this Workspace: ${reference.id}.`);
+    if (!/^sha256:[a-f0-9]{64}$/.test(resource.digest)) throw new SocialPostMediaBindingError(`Canonical media resource is missing a verified SHA-256 digest: ${reference.id}.`);
+    if (resource.type !== input.mediaUrls[order]?.type) throw new SocialPostMediaBindingError(`Media type does not match canonical resource ${reference.id}.`);
+    if (reference.digest && reference.digest !== resource.digest) throw new SocialPostMediaBindingError(`Media digest does not match canonical resource ${reference.id}.`);
+    return { resourceKind: reference.resourceKind, assetId: reference.id, assetDigest: resource.digest, order, ...(input.mediaUrls[order]?.alt ? { alt: input.mediaUrls[order].alt } : {}) };
+  });
 }
 
 export class OAuthStateNotFoundError extends Error {
@@ -487,39 +567,47 @@ export async function upsertSocialAccount(input: {
   tokenExpiresAt?: Date;
   additionalSettings?: Record<string, unknown>;
   createdByUserId: string;
+  maxActiveChannels?: number;
 }) {
   const db = getDb();
   const id = `sacct_${randomUUID()}`;
   const now = new Date();
 
-  const [row] = await db
-    .insert(socialAccounts)
-    .values({
-      id,
-      workspaceId: input.workspaceId,
-      platform: input.platform,
-      platformUserId: input.platformUserId,
-      displayName: input.displayName,
-      username: input.username ?? null,
-      avatarUrl: input.avatarUrl ?? null,
-      accessTokenEncrypted: input.accessTokenEncrypted,
-      refreshTokenEncrypted: input.refreshTokenEncrypted ?? null,
-      accessTokenSecret: input.accessTokenSecret ?? null,
-      tokenExpiresAt: input.tokenExpiresAt ?? null,
-      additionalSettings: input.additionalSettings ?? null,
-      requiresReauth: false,
-      disabled: false,
-      createdByUserId: input.createdByUserId,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: [
-        socialAccounts.workspaceId,
-        socialAccounts.platform,
-        socialAccounts.platformUserId,
-      ],
-      set: {
+  return db.transaction(async (tx) => {
+    if (input.maxActiveChannels !== undefined) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${input.workspaceId}))`);
+      const [existing] = await tx
+        .select({ id: socialAccounts.id, disabled: socialAccounts.disabled })
+        .from(socialAccounts)
+        .where(and(
+          eq(socialAccounts.workspaceId, input.workspaceId),
+          eq(socialAccounts.platform, input.platform),
+          eq(socialAccounts.platformUserId, input.platformUserId),
+        ))
+        .limit(1);
+
+      if (!existing || existing.disabled) {
+        const [usage] = await tx
+          .select({ count: sql<number>`cast(count(*) as int)` })
+          .from(socialAccounts)
+          .where(and(
+            eq(socialAccounts.workspaceId, input.workspaceId),
+            eq(socialAccounts.disabled, false),
+          ));
+        const current = usage?.count ?? 0;
+        if (current >= input.maxActiveChannels) {
+          throw new SocialAccountQuotaExceededError(current, input.maxActiveChannels);
+        }
+      }
+    }
+
+    const [row] = await tx
+      .insert(socialAccounts)
+      .values({
+        id,
+        workspaceId: input.workspaceId,
+        platform: input.platform,
+        platformUserId: input.platformUserId,
         displayName: input.displayName,
         username: input.username ?? null,
         avatarUrl: input.avatarUrl ?? null,
@@ -530,12 +618,34 @@ export async function upsertSocialAccount(input: {
         additionalSettings: input.additionalSettings ?? null,
         requiresReauth: false,
         disabled: false,
+        createdByUserId: input.createdByUserId,
+        createdAt: now,
         updatedAt: now,
-      },
-    })
-    .returning();
+      })
+      .onConflictDoUpdate({
+        target: [
+          socialAccounts.workspaceId,
+          socialAccounts.platform,
+          socialAccounts.platformUserId,
+        ],
+        set: {
+          displayName: input.displayName,
+          username: input.username ?? null,
+          avatarUrl: input.avatarUrl ?? null,
+          accessTokenEncrypted: input.accessTokenEncrypted,
+          refreshTokenEncrypted: input.refreshTokenEncrypted ?? null,
+          accessTokenSecret: input.accessTokenSecret ?? null,
+          tokenExpiresAt: input.tokenExpiresAt ?? null,
+          additionalSettings: input.additionalSettings ?? null,
+          requiresReauth: false,
+          disabled: false,
+          updatedAt: now,
+        },
+      })
+      .returning();
 
-  return row;
+    return row;
+  });
 }
 
 export async function listSocialAccounts(workspaceId: string) {
@@ -686,54 +796,59 @@ export async function updateSocialAccount(
     disabled?: boolean;
     additionalSettings?: Record<string, unknown> | null;
   },
+  options?: { maxActiveChannels?: number },
 ) {
   const db = getDb();
-  let additionalSettings = data.additionalSettings;
-  if (data.additionalSettings !== undefined) {
-    const [current] = await db
-      .select({
-        platform: socialAccounts.platform,
-        additionalSettings: socialAccounts.additionalSettings,
-      })
-      .from(socialAccounts)
-      .where(
-        and(
-          eq(socialAccounts.workspaceId, workspaceId),
-          eq(socialAccounts.id, accountId),
-        ),
-      )
-      .limit(1);
-    if (!current) throw new SocialAccountNotFoundError(accountId);
-    if (current.platform === "linkedin") {
-      additionalSettings = preserveLinkedInAuthorKind(
-        current.additionalSettings,
-        data.additionalSettings,
-      );
+  return db.transaction(async (tx) => {
+    if (data.disabled === false && options?.maxActiveChannels !== undefined) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${workspaceId}))`);
+      const [current] = await tx
+        .select({ disabled: socialAccounts.disabled })
+        .from(socialAccounts)
+        .where(and(eq(socialAccounts.workspaceId, workspaceId), eq(socialAccounts.id, accountId)))
+        .limit(1);
+      if (!current) throw new SocialAccountNotFoundError(accountId);
+      if (current.disabled) {
+        const [usage] = await tx
+          .select({ count: sql<number>`cast(count(*) as int)` })
+          .from(socialAccounts)
+          .where(and(eq(socialAccounts.workspaceId, workspaceId), eq(socialAccounts.disabled, false)));
+        const active = usage?.count ?? 0;
+        if (active >= options.maxActiveChannels) {
+          throw new SocialAccountQuotaExceededError(active, options.maxActiveChannels);
+        }
+      }
     }
-  }
-  const [row] = await db
-    .update(socialAccounts)
-    .set({
-      ...(data.displayName !== undefined && { displayName: data.displayName }),
-      ...(data.disabled !== undefined && { disabled: data.disabled }),
-      ...(data.additionalSettings !== undefined && {
-        additionalSettings,
-      }),
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(socialAccounts.workspaceId, workspaceId),
-        eq(socialAccounts.id, accountId),
-      ),
-    )
-    .returning();
 
-  if (!row) {
-    throw new SocialAccountNotFoundError(accountId);
-  }
+    let additionalSettings = data.additionalSettings;
+    if (data.additionalSettings !== undefined) {
+      const [current] = await tx
+        .select({
+          platform: socialAccounts.platform,
+          additionalSettings: socialAccounts.additionalSettings,
+        })
+        .from(socialAccounts)
+        .where(and(eq(socialAccounts.workspaceId, workspaceId), eq(socialAccounts.id, accountId)))
+        .limit(1);
+      if (!current) throw new SocialAccountNotFoundError(accountId);
+      if (current.platform === "linkedin") {
+        additionalSettings = preserveLinkedInAuthorKind(current.additionalSettings, data.additionalSettings);
+      }
+    }
+    const [row] = await tx
+      .update(socialAccounts)
+      .set({
+        ...(data.displayName !== undefined && { displayName: data.displayName }),
+        ...(data.disabled !== undefined && { disabled: data.disabled }),
+        ...(data.additionalSettings !== undefined && { additionalSettings }),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(socialAccounts.workspaceId, workspaceId), eq(socialAccounts.id, accountId)))
+      .returning();
 
-  return row;
+    if (!row) throw new SocialAccountNotFoundError(accountId);
+    return row;
+  });
 }
 
 export async function countSocialPostsForAccount(
@@ -760,6 +875,70 @@ export async function countSocialPostsForAccount(
 // Social Posts
 // ---------------------------------------------------------------------------
 
+async function resolveStableSocialMedia(input: {
+  workspaceId: string;
+  mediaUrls: Array<{ type: string; url: string; alt?: string }>;
+  references: SocialPostMediaReference[];
+}): Promise<SocialPostStableMediaReference[]> {
+  if (input.mediaUrls.length === 0 && input.references.length === 0) return [];
+  const db = getDb();
+  const deriveLegacyReferences = input.references.length === 0;
+  const assetIds = input.references.filter((reference) => reference.resourceKind === "studio_asset").map((reference) => reference.id);
+  const artifactIds = input.references.filter((reference) => reference.resourceKind === "artifact").map((reference) => reference.id);
+  const [assetRows, artifactRows] = await Promise.all([
+    deriveLegacyReferences || assetIds.length
+      ? db.select().from(assets).where(and(eq(assets.workspaceId, input.workspaceId), deriveLegacyReferences ? undefined : inArray(assets.id, assetIds), isNull(assets.deletedAt)))
+      : [],
+    deriveLegacyReferences || artifactIds.length
+      ? db.select({ artifact: artifacts, content: artifactContents }).from(artifacts).innerJoin(artifactContents, and(eq(artifactContents.workspaceId, artifacts.workspaceId), eq(artifactContents.digest, artifacts.contentDigest))).where(and(eq(artifacts.workspaceId, input.workspaceId), deriveLegacyReferences ? eq(artifactContents.kind, "image") : inArray(artifacts.id, artifactIds), isNull(artifacts.deletedAt)))
+      : [],
+  ]);
+  const resources = new Map<string, { resourceKind: "studio_asset" | "artifact"; id: string; digest: string; type: string; storageKey: string }>();
+  for (const asset of assetRows) resources.set(`studio_asset:${asset.id}`, { resourceKind: "studio_asset", id: asset.id, digest: socialAssetDigest(asset), type: asset.type, storageKey: asset.storageKey });
+  for (const { artifact, content } of artifactRows) if (content.storageKey) resources.set(`artifact:${artifact.id}`, { resourceKind: "artifact", id: artifact.id, digest: content.digest, type: content.kind, storageKey: content.storageKey });
+  const references = deriveLegacyReferences
+    ? input.mediaUrls.map((media, order) => {
+        const candidates = [...resources.values()].filter((resource) => resource.type === media.type && socialStorageKeyMatchesUrl(resource.storageKey, media.url));
+        if (candidates.length !== 1) throw new SocialPostMediaBindingError(`Legacy social media relation cannot be resolved unambiguously at position ${order}.`);
+        return { resourceKind: candidates[0].resourceKind, id: candidates[0].id, digest: candidates[0].digest };
+      })
+    : input.references;
+  return bindStableSocialMedia({ mediaUrls: input.mediaUrls, references, resources });
+}
+
+export async function resolveSocialPostMediaForDelivery(
+  workspaceId: string,
+  references: StableSocialMediaReference[],
+) {
+  if (references.length === 0) return [];
+  const db = getDb();
+  const assetIds = references.filter((reference) => (reference.resourceKind ?? "studio_asset") === "studio_asset").map((reference) => reference.assetId);
+  const artifactIds = references.filter((reference) => reference.resourceKind === "artifact").map((reference) => reference.assetId);
+  const [assetRows, artifactRows] = await Promise.all([
+    assetIds.length
+      ? db.select().from(assets).where(and(eq(assets.workspaceId, workspaceId), inArray(assets.id, assetIds), isNull(assets.deletedAt)))
+      : [],
+    artifactIds.length
+      ? db.select({ artifact: artifacts, content: artifactContents }).from(artifacts).innerJoin(artifactContents, and(eq(artifactContents.workspaceId, artifacts.workspaceId), eq(artifactContents.digest, artifacts.contentDigest))).where(and(eq(artifacts.workspaceId, workspaceId), inArray(artifacts.id, artifactIds), isNull(artifacts.deletedAt)))
+      : [],
+  ]);
+  const resources = new Map<string, OwnedSocialMediaResource>();
+  for (const asset of assetRows) {
+    if (!asset.storageKey || (asset.type !== "image" && asset.type !== "video")) continue;
+    const metadata = asset.metadata as Record<string, unknown> | null;
+    if (metadata?.creativeReviewRequired === true || metadata?.creativePlateReviewRequired === true || typeof metadata?.creativeSessionId === "string") {
+      const { assertCreativeAssetDelivery } = await import("@/lib/creative-generation/publishing");
+      await assertCreativeAssetDelivery(workspaceId, asset);
+    }
+    resources.set(`studio_asset:${asset.id}`, { resourceKind: "studio_asset", id: asset.id, digest: socialAssetDigest(asset), type: asset.type, storageKey: asset.storageKey });
+  }
+  for (const { artifact, content } of artifactRows) {
+    if (!content.storageKey || content.kind !== "image" || !/^sha256:[a-f0-9]{64}$/.test(content.digest)) continue;
+    resources.set(`artifact:${artifact.id}`, { resourceKind: "artifact", id: artifact.id, digest: content.digest, type: "image", storageKey: content.storageKey });
+  }
+  return verifyAndResolveSocialMediaDelivery({ references, resources });
+}
+
 export async function createSocialPost(input: {
   workspaceId: string;
   socialAccountId: string;
@@ -775,11 +954,16 @@ export async function createSocialPost(input: {
   triggerSource?: string | null;
   parentPostId?: string | null;
   studioAssetId?: string;
+  mediaReferences?: SocialPostMediaReference[];
   createdByUserId: string;
 }) {
   const db = getDb();
   const id = `spost_${randomUUID()}`;
   const now = new Date();
+  const mediaUrls = input.mediaUrls ?? [];
+  const references = input.mediaReferences ?? (input.studioAssetId ? [{ resourceKind: "studio_asset" as const, id: input.studioAssetId }] : []);
+  const stableMediaRefs = await resolveStableSocialMedia({ workspaceId: input.workspaceId, mediaUrls, references });
+  const firstStudioAssetId = stableMediaRefs.find((reference) => reference.resourceKind === "studio_asset")?.assetId ?? null;
 
   const [row] = await db
     .insert(socialPosts)
@@ -790,7 +974,7 @@ export async function createSocialPost(input: {
       status: "draft",
       rootPostId: input.rootPostId ?? null,
       content: input.content ?? null,
-      mediaUrls: input.mediaUrls ?? null,
+      mediaUrls: mediaUrls.length ? mediaUrls : null,
       platformSettings: input.platformSettings ?? null,
       scheduledAt: input.scheduledAt ?? null,
       kind: input.kind ?? "post",
@@ -799,7 +983,8 @@ export async function createSocialPost(input: {
       sourceTemplatePostId: input.sourceTemplatePostId ?? null,
       triggerSource: input.triggerSource ?? null,
       parentPostId: input.parentPostId ?? null,
-      studioAssetId: input.studioAssetId ?? null,
+      studioAssetId: firstStudioAssetId,
+      stableMediaRefs,
       createdByUserId: input.createdByUserId,
       createdAt: now,
       updatedAt: now,
@@ -1213,6 +1398,7 @@ export async function updateSocialPost(
   data: {
     content?: string;
     mediaUrls?: Array<{ type: string; url: string; alt?: string }>;
+    mediaReferences?: SocialPostMediaReference[];
     platformSettings?: Record<string, unknown>;
     scheduledAt?: Date | null;
     rootPostId?: string | null;
@@ -1245,30 +1431,31 @@ export async function updateSocialPost(
   const canRescheduleQueued =
     onlyScheduledAtUpdate &&
     (existing.status === "queued" ||
-      existing.status === "failed" ||
-      existing.status === "publishing");
+      existing.status === "failed");
 
   if (!canEditAsDraft && !canRescheduleQueued) {
     throw new SocialPostStateTransitionError(existing.status, "draft");
   }
 
   const isCalendarReschedule = onlyScheduledAtUpdate && data.scheduledAt;
-  const shouldRequeuePublishing =
-    isCalendarReschedule && existing.status === "publishing";
   const shouldRefreshQueuedDispatch =
     isCalendarReschedule && existing.status === "queued";
+  const stableMediaRefs = data.mediaUrls === undefined
+    ? undefined
+    : await resolveStableSocialMedia({ workspaceId, mediaUrls: data.mediaUrls, references: data.mediaReferences ?? [] });
+  const firstStudioAssetId = stableMediaRefs?.find((reference) => reference.resourceKind === "studio_asset")?.assetId ?? null;
 
   const [row] = await db
     .update(socialPosts)
     .set({
-      ...(shouldRequeuePublishing && { status: "queued" as const }),
       ...(data.content !== undefined && { content: data.content }),
       ...(data.mediaUrls !== undefined && { mediaUrls: data.mediaUrls }),
+      ...(stableMediaRefs !== undefined && { stableMediaRefs, studioAssetId: firstStudioAssetId }),
       ...(data.platformSettings !== undefined && {
         platformSettings: data.platformSettings,
       }),
       ...(data.scheduledAt !== undefined && { scheduledAt: data.scheduledAt }),
-      ...(shouldRequeuePublishing || shouldRefreshQueuedDispatch
+      ...(shouldRefreshQueuedDispatch
         ? {
             dispatchStatus: "pending" as const,
             workflowRunRef: null,
@@ -1301,6 +1488,42 @@ export async function updateSocialPost(
     .returning();
 
   return row;
+}
+
+/**
+ * Re-reads and fences the exact row immediately before the irreversible
+ * provider effect. Normal editors cannot mutate a publishing row, while the
+ * refreshed lock prevents the stuck-run sweeper from requeueing this active
+ * provider attempt.
+ */
+export async function claimSocialPostProviderEffect(
+  workspaceId: string,
+  postId: string,
+) {
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const [post] = await tx
+      .select()
+      .from(socialPosts)
+      .where(and(eq(socialPosts.workspaceId, workspaceId), eq(socialPosts.id, postId)))
+      .for("update");
+    if (!post) throw new SocialPostNotFoundError(postId);
+    if (post.status !== "publishing") {
+      throw new SocialPostStateTransitionError(post.status, "publishing");
+    }
+    const claimedAt = new Date();
+    const [claimed] = await tx
+      .update(socialPosts)
+      .set({ lockedAt: claimedAt, updatedAt: claimedAt })
+      .where(and(
+        eq(socialPosts.workspaceId, workspaceId),
+        eq(socialPosts.id, postId),
+        eq(socialPosts.status, "publishing"),
+      ))
+      .returning();
+    if (!claimed) throw new SocialPostStateTransitionError(post.status, "publishing");
+    return claimed;
+  });
 }
 
 /**
@@ -1741,6 +1964,7 @@ export async function upsertSocialNotificationPreferences(input: {
 }) {
   const db = getDb();
   const now = new Date();
+  const update = buildSocialNotificationPreferenceUpdate(input, now);
 
   const [row] = await db
     .insert(socialNotificationPreferences)
@@ -1760,14 +1984,7 @@ export async function upsertSocialNotificationPreferences(input: {
         socialNotificationPreferences.workspaceId,
         socialNotificationPreferences.userId,
       ],
-      set: {
-        inAppEnabled: input.inAppEnabled ?? true,
-        emailEnabled: input.emailEnabled ?? false,
-        webhookEnabled: input.webhookEnabled ?? false,
-        muteAll: input.muteAll ?? false,
-        preferences: input.preferences ?? null,
-        updatedAt: now,
-      },
+      set: update,
     })
     .returning();
 

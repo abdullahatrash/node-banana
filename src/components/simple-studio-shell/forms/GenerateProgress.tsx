@@ -1,6 +1,7 @@
 "use client";
 
 import { useSimpleStudioStore } from "@/store/simpleStudioStore";
+import { useTranslations } from "next-intl";
 
 /**
  * Inline batch progress + cancel control. Shown in place of the Generate button
@@ -8,6 +9,7 @@ import { useSimpleStudioStore } from "@/store/simpleStudioStore";
  * derives a done/total ratio across pending/complete/failed generations.
  */
 export function GenerateProgress() {
+  const t = useTranslations("simpleStudio.generation");
   const generations = useSimpleStudioStore((s) => s.generations);
   const currentBatchId = useSimpleStudioStore((s) => s.currentBatchId);
   const cancelGeneration = useSimpleStudioStore((s) => s.cancelGeneration);
@@ -26,10 +28,10 @@ export function GenerateProgress() {
       className="space-y-2"
       role="status"
       aria-live="polite"
-      aria-label="Generation progress"
+      aria-label={t("progress")}
     >
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>Generating…</span>
+        <span>{t("generating")}</span>
         <span>
           {done}/{total}
         </span>
@@ -51,7 +53,7 @@ export function GenerateProgress() {
         onClick={() => cancelGeneration()}
         className="w-full rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/20"
       >
-        Cancel
+        {t("cancel")}
       </button>
     </div>
   );

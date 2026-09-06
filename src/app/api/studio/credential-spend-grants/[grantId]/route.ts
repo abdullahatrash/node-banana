@@ -7,7 +7,7 @@ import { withStudioAuth } from "@/lib/studio/withStudioAuth";
 type Context = { params: Promise<{ grantId: string }> };
 
 export const DELETE = withStudioAuth<Context>(
-  { route: "/api/studio/credential-spend-grants/[grantId]", action: "delete" },
+  { route: "/api/studio/credential-spend-grants/[grantId]", action: "delete", permission: "workspaces:delete" },
   async (_request, authz, context) => {
     const human = credentialHumanContext(_request, authz);
     if (!human) {

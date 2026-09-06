@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   generateAuthUrl: vi.fn(),
   userinfoGet: vi.fn(),
   channelsList: vi.fn(),
+  videosList: vi.fn(),
   videosInsert: vi.fn(),
   thumbnailsSet: vi.fn(),
 }));
@@ -35,7 +36,7 @@ vi.mock("googleapis", () => {
       auth: { OAuth2: OAuth2Mock },
       youtube: vi.fn().mockReturnValue({
         channels: { list: mocks.channelsList },
-        videos: { insert: mocks.videosInsert },
+        videos: { insert: mocks.videosInsert, list: mocks.videosList },
         thumbnails: { set: mocks.thumbnailsSet },
       }),
       oauth2: vi.fn().mockReturnValue({
@@ -299,6 +300,26 @@ describe("YouTube provider", () => {
       await expect(
         youTubeProvider.refreshToken(FAKE_REFRESH_TOKEN),
       ).rejects.toThrow("GOOGLE_CLIENT_ID");
+    });
+  });
+
+  describe("getPostMetrics", () => {
+    it("returns safe normalized metrics only for videos owned by the connected channel", async () => {
+      mocks.videosList.mockResolvedValue({
+        data: { items: [{ id: "video-1", snippet: { channelId: "channel-1" }, statistics: { viewCount: "12000", likeCount: "900", commentCount: "40" } }] },
+        headers: { get: vi.fn().mockReturnValue("google-request-1") },
+      });
+
+      const [result] = await youTubeProvider.getPostMetrics!({ platformUserId: "channel-1", accessToken: FAKE_ACCESS_TOKEN, platformPostIds: ["video-1"] });
+
+      expect(mocks.videosList).toHaveBeenCalledWith({ part: ["snippet", "statistics"], id: ["video-1"], maxResults: 1 });
+      expect(result).toMatchObject({ platformPostId: "video-1", metrics: { views: 12_000, likes: 900, comments: 40, shares: null }, providerRequestId: "google-request-1" });
+      expect(result.sourceRef).not.toContain(FAKE_ACCESS_TOKEN);
+    });
+
+    it("fails closed when the API video does not belong to the connected channel", async () => {
+      mocks.videosList.mockResolvedValue({ data: { items: [{ id: "video-1", snippet: { channelId: "other-channel" }, statistics: { viewCount: "1" } }] } });
+      await expect(youTubeProvider.getPostMetrics!({ platformUserId: "channel-1", accessToken: FAKE_ACCESS_TOKEN, platformPostIds: ["video-1"] })).rejects.toThrow("SOCIAL_POST_METRICS_OWNERSHIP_MISMATCH");
     });
   });
 

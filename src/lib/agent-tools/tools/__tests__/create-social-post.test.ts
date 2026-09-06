@@ -14,6 +14,8 @@ const {
   mockCreatePresignedDownload,
   mockEmitSocialEvent,
   mockValidatePublishingSettings,
+  mockInspectPublishingApproval,
+  mockConsumePublishingApproval,
 } = vi.hoisted(() => {
   class MockSocialAccountNotFoundError extends Error {
     constructor(accountId: string) {
@@ -32,6 +34,8 @@ const {
     mockCreatePresignedDownload: vi.fn(),
     mockEmitSocialEvent: vi.fn(),
     mockValidatePublishingSettings: vi.fn(),
+    mockInspectPublishingApproval: vi.fn(),
+    mockConsumePublishingApproval: vi.fn(),
   };
 });
 
@@ -61,6 +65,15 @@ vi.mock("@/lib/social/events", () => ({
 vi.mock("@/lib/social/publishing-settings", () => ({
   validateSelectedPublishingSettings: (...args: unknown[]) =>
     mockValidatePublishingSettings(...args),
+}));
+
+vi.mock("@/lib/agent-tools/social-publishing-approval", () => ({
+    exactApprovedSocialPostInput: () => true,
+    governedPublishingMarker: (input: unknown) => `approved:${JSON.stringify(input)}`,
+    PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION: {
+      inspect: (...args: unknown[]) => mockInspectPublishingApproval(...args),
+      consume: (...args: unknown[]) => mockConsumePublishingApproval(...args),
+    },
 }));
 
 import { runTool } from "../../runtime";
@@ -102,6 +115,41 @@ function draftRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function approvalEvidence() {
+  return {
+    approvalRequestId: "par_approved",
+    targetId: "target_x",
+    targetEvidenceDigest: `sha256:${"a".repeat(64)}`,
+    consumingPrincipalId: "principal_agent",
+    consumingKeyId: "key_agent",
+    authorizationEvidenceRef: "authz-agent-release",
+    authorizationIssuedAt: "2026-07-10T14:00:00.000Z",
+    authorizationExpiresAt: "2026-07-10T16:00:00.000Z",
+  };
+}
+
+function inspectedApproval() {
+  const evidence = approvalEvidence();
+  return {
+    requestId: evidence.approvalRequestId,
+    decisionId: "pad_approved",
+    channelIds: ["sacct_x"],
+    artifactIds: ["artifact_text"],
+    evidence,
+    target: {
+      targetId: evidence.targetId,
+      channel: { id: "sacct_x", platform: "linkedin", authorKind: "person", displayName: "Acme", historical: false },
+      content: { artifactId: "artifact_text", digest: `sha256:${"b".repeat(64)}`, mediaType: "text/plain; charset=utf-8", text: "Scheduled hello" },
+      media: [],
+      settings: { type: "person" },
+      timing: { kind: "scheduled", publishAt: "2026-07-10T15:00:00.000Z" },
+      targetEvidenceDigest: evidence.targetEvidenceDigest,
+      validation: {},
+      costContext: null,
+    },
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetSocialAccount.mockResolvedValue(account());
@@ -113,6 +161,8 @@ beforeEach(() => {
     downloadUrl: "https://signed.example/media.png",
     expiresInSeconds: 900,
   });
+  mockInspectPublishingApproval.mockResolvedValue(inspectedApproval());
+  mockConsumePublishingApproval.mockResolvedValue("consumed");
 });
 
 describe("create_social_post tool", () => {
@@ -153,6 +203,7 @@ describe("create_social_post tool", () => {
         socialAccountId: "sacct_x",
         content: "Scheduled hello",
         scheduledAt: "2026-07-10T15:00:00.000Z",
+        publishingApproval: approvalEvidence(),
       },
       { session: session("owner", "ws_1") },
     );
@@ -193,12 +244,12 @@ describe("create_social_post tool", () => {
 
     const result = await runTool(
       createSocialPostTool,
-      { socialAccountId: "sacct_x", content: "Now" },
+      { socialAccountId: "sacct_x", content: "Scheduled hello", publishingApproval: approvalEvidence() },
       { session: session("owner", "ws_1") },
     );
 
     expect(result.status).toBe("queued");
-    expect(result.scheduledAt).not.toBeNull();
+    expect(result.scheduledAt).toBe("2026-07-10T15:00:00.000Z");
     const [, , extra] = mockUpdatePostStatus.mock.calls[0] as [
       string,
       string,
@@ -206,6 +257,7 @@ describe("create_social_post tool", () => {
     ];
     expect(extra.dispatchStatus).toBe("pending");
     expect(extra.scheduledAt).toBeInstanceOf(Date);
+    expect(mockConsumePublishingApproval).toHaveBeenCalledTimes(1);
   });
 
   it("resolves media asset ids to download URLs and links the studio asset", async () => {
@@ -234,7 +286,7 @@ describe("create_social_post tool", () => {
         mediaUrls: [
           { type: "image", url: "https://signed.example/media.png" },
         ],
-        studioAssetId: "asset_1",
+        mediaReferences: [{ resourceKind: "studio_asset", id: "asset_1" }],
       }),
     );
   });
@@ -273,7 +325,7 @@ describe("create_social_post tool", () => {
 
     const error = await runTool(
       createSocialPostTool,
-      { socialAccountId: "sacct_x", content: "too long", scheduledAt: "2026-07-10T15:00:00.000Z" },
+      { socialAccountId: "sacct_x", content: "too long", scheduledAt: "2026-07-10T15:00:00.000Z", publishingApproval: approvalEvidence() },
       { session: session("owner", "ws_1") },
     ).catch((e) => e);
 
@@ -310,7 +362,7 @@ describe("create_social_post tool", () => {
 
     const error = await runTool(
       createSocialPostTool,
-      { socialAccountId: "sacct_x", content: "hi" },
+      { socialAccountId: "sacct_x", content: "hi", publishingApproval: approvalEvidence() },
       { session: session("owner", "ws_1") },
     ).catch((e) => e);
 
@@ -331,6 +383,31 @@ describe("create_social_post tool", () => {
     ).catch((e) => e);
 
     expect(error.code).toBe("invalid_input");
+  });
+
+  it("fails closed before creating a post when exact publishing Approval evidence is omitted", async () => {
+    const error = await runTool(
+      createSocialPostTool,
+      { socialAccountId: "sacct_x", content: "publish me" },
+      { session: session("owner", "ws_1") },
+    ).catch((e) => e);
+
+    expect(error.code).toBe("forbidden");
+    expect(mockCreateSocialPost).not.toHaveBeenCalled();
+    expect(mockInspectPublishingApproval).not.toHaveBeenCalled();
+  });
+
+  it("leaves only a draft and never queues when exact Approval consumption loses authority", async () => {
+    mockConsumePublishingApproval.mockResolvedValue("authorization_stale");
+    const error = await runTool(
+      createSocialPostTool,
+      { socialAccountId: "sacct_x", content: "Scheduled hello", publishingApproval: approvalEvidence() },
+      { session: session("owner", "ws_1") },
+    ).catch((e) => e);
+
+    expect(error.code).toBe("forbidden");
+    expect(mockCreateSocialPost).toHaveBeenCalledTimes(1);
+    expect(mockUpdatePostStatus).not.toHaveBeenCalled();
   });
 
   it("denies callers whose role lacks social:publish", async () => {

@@ -2,8 +2,10 @@
 
 import { useSocialComposerStore } from "@/store/socialComposerStore"
 import { Label } from "@/components/ui/label"
+import { useTranslations } from "next-intl"
 
 export function SchedulePicker() {
+  const t = useTranslations("social.compose")
   const { scheduledAt, setScheduledAt } = useSocialComposerStore()
 
   const dateStr = scheduledAt
@@ -38,25 +40,27 @@ export function SchedulePicker() {
 
   return (
     <div>
-      <Label className="mb-2 block text-xs">Schedule</Label>
-      <div className="flex gap-2">
+      <Label className="mb-2 block text-xs">{t("schedule")}</Label>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_7rem]" dir="ltr">
         <input
           type="date"
           value={dateStr}
           onChange={(e) => handleDateChange(e.target.value)}
-          className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          dir="ltr"
+          className="min-w-0 rounded-md border border-input bg-background px-3 py-1.5 text-start text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         />
         <input
           type="time"
           value={timeStr}
           onChange={(e) => handleTimeChange(e.target.value)}
           disabled={!scheduledAt}
-          className="w-28 rounded-md border border-input bg-background px-3 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+          dir="ltr"
+          className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-start text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
         />
       </div>
       {scheduledAt && scheduledAt < new Date() && (
         <p className="mt-1 text-[10px] text-destructive">
-          Scheduled time is in the past
+          {t("schedulePast")}
         </p>
       )}
     </div>

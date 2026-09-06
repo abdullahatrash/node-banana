@@ -1,6 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ObservabilityCockpit } from "./ObservabilityCockpit";
+import { I18nTestProvider } from "@/test/i18n";
+
+const renderCockpit = () => render(<I18nTestProvider locale="en"><ObservabilityCockpit /></I18nTestProvider>);
 
 function resultFor(capability: string) {
   if (capability === "operational_metrics.list@1") {
@@ -75,7 +78,7 @@ describe("ObservabilityCockpit", () => {
   });
 
   it("hydrates retention and context-bound grant controls from canonical reads", async () => {
-    render(<ObservabilityCockpit />);
+    renderCockpit();
     await waitFor(() => expect(screen.getByLabelText("Trace seconds")).toHaveValue(600));
     expect(screen.getByLabelText("Metric seconds")).toHaveValue(1200);
     expect(screen.getByLabelText("Bundle seconds")).toHaveValue(300);
@@ -85,7 +88,7 @@ describe("ObservabilityCockpit", () => {
   });
 
   it("reads payload once before audit without a duplicate metadata read", async () => {
-    render(<ObservabilityCockpit />);
+    renderCockpit();
     await screen.findByLabelText("Bundle Operator Grant ID");
     fireEvent.change(screen.getByLabelText("Bundle ID"), { target: { value: "bundle_1" } });
     fireEvent.submit(screen.getByLabelText("Bundle ID").closest("form")!);
@@ -100,7 +103,7 @@ describe("ObservabilityCockpit", () => {
   });
 
   it("submits only exact selections and consent, never digests or identity", async () => {
-    render(<ObservabilityCockpit />);
+    renderCockpit();
     await screen.findByLabelText("Support resource kind");
     fireEvent.change(screen.getByLabelText("Support resource kind"), {
       target: { value: "artifact" },

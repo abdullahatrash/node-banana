@@ -1,17 +1,12 @@
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
-import { getServerAuthSession } from "@/lib/auth/session";
+import { ProductShell } from "@/components/product-shell/ProductShell";
+import { getProductShellContext } from "@/lib/product-shell/server";
 
 export default async function StudioLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const session = await getServerAuthSession(await headers());
+  const shellContext = await getProductShellContext("/studio/usage");
 
-  if (!session?.user) {
-    redirect("/sign-in");
-  }
-
-  return children;
+  return <ProductShell context={shellContext}>{children}</ProductShell>;
 }

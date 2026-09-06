@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from "react"
 import { listSocialPosts, type SocialPost } from "@/lib/social/client"
 import { Loader2Icon } from "lucide-react"
+import { useTranslations } from "next-intl"
 
 type MediaItem = {
   postId: string;
@@ -12,6 +13,7 @@ type MediaItem = {
 }
 
 export default function SocialMediaPage() {
+  const t = useTranslations("social.media")
   const [posts, setPosts] = useState<SocialPost[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const initialized = useRef(false)
@@ -44,10 +46,10 @@ export default function SocialMediaPage() {
 
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
-      <h2 className="text-lg font-semibold">Social Media Library</h2>
+      <h2 className="text-lg font-semibold">{t("title")}</h2>
       {media.length === 0 ? (
         <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">
-          No media attached to social posts yet.
+          {t("empty")}
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
@@ -56,7 +58,7 @@ export default function SocialMediaPage() {
               {item.type === "image" ? (
                 <img
                   src={item.url}
-                  alt={`Media ${index + 1}`}
+                  alt={t("itemAlt", { number: index + 1 })}
                   className="h-36 w-full rounded-md object-cover"
                 />
               ) : (
@@ -67,7 +69,7 @@ export default function SocialMediaPage() {
                 />
               )}
               <div className="mt-2 text-[10px] text-muted-foreground">
-                {item.type.toUpperCase()} · Post {item.postId.slice(0, 8)}
+                {t(`type.${item.type === "video" ? "video" : "image"}`)} · {t("post")} <bdi>{item.postId.slice(0, 8)}</bdi>
               </div>
             </div>
           ))}
@@ -76,4 +78,3 @@ export default function SocialMediaPage() {
     </div>
   )
 }
-

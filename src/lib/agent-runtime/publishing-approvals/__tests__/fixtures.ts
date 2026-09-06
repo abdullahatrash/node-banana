@@ -4,10 +4,12 @@ import { publishingPlanLinkedInCapabilityVersion } from "../../publishing-plans/
 import { publishingApprovalRequestAuthorizationContractDigest } from "../authorization-contract";
 import { InMemoryPublishingApprovalRepository } from "../memory";
 import { PublishingApprovalService } from "../service";
-import type { PublishingApprovalAuthoritySession, PublishingApprovalValidationSession } from "../types";
+import type { PublishingApprovalAuthoritySession, PublishingApprovalGovernancePolicyPort, PublishingApprovalValidationSession } from "../types";
 import { publishingApprovalValidationBinding } from "../validation";
 
-export async function setupPublishingApprovals() {
+export async function setupPublishingApprovals(
+  governancePolicy?: PublishingApprovalGovernancePolicyPort,
+) {
   const plans = setupPublishingPlans();
   const channel = plans.channels.snapshots.values().next().value!;
   plans.channels.put({
@@ -145,6 +147,7 @@ export async function setupPublishingApprovals() {
         }),
     },
     { now: () => new Date(now) },
+    governancePolicy,
   );
   const requestInput = () => ({
     workspaceId: "workspace_1",
@@ -154,6 +157,8 @@ export async function setupPublishingApprovals() {
     requestAuthorizationContractDigest: publishingApprovalRequestAuthorizationContractDigest(),
     idempotencyKey: "approval-request-1",
     revisionId: revision.id,
+    policyId: "policy_publishing",
+    policyRevision: 1,
     action: "publish" as const,
     targetIds: ["target_1"],
     channelIds: ["channel_linkedin"],

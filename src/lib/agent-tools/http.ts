@@ -12,6 +12,7 @@ const STATUS_BY_CODE: Record<ToolErrorCode, number> = {
   unsupported_node: 422,
   // No provider key was supplied (header pass-through) for a node that needs one.
   byok_key_missing: 400,
+  unavailable: 503,
   internal: 500,
 };
 

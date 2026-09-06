@@ -1,0 +1,3 @@
+# Admitted Work Survives Commercial State Changes
+
+Workflow Runs and other paid work with valid reservations and Durable Acceptance continue through later Workspace Subscription downgrade, cancellation, or payment failure, and already-created Publishing Deliveries proceed unless an Owner explicitly pauses them or their own readiness fails. New paid effects and future Automation Occurrences are blocked at admission during grace or suspension; this preserves paid-for output and public commitments without allowing changed commercial state to authorize new spend, instead of silently cancelling accepted work or letting active Automations consume unbounded capacity.

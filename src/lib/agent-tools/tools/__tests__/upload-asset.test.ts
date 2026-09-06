@@ -10,11 +10,13 @@ const {
   mockBuildAssetObjectKey,
   mockPutObjectToS3,
   mockStreamUploadToS3,
-  mockDeleteObjectFromS3,
   mockCreatePresignedDownload,
   mockBuildCdnDownloadUrl,
   mockCanUseS3Storage,
   mockFetch,
+  mockFetchPublicRemoteFile,
+  mockCollectBufferedAssetEvidence,
+  mockCollectFileAssetEvidence,
 } = vi.hoisted(() => ({
   mockGetProject: vi.fn(),
   mockRecordPending: vi.fn(),
@@ -22,11 +24,13 @@ const {
   mockBuildAssetObjectKey: vi.fn(),
   mockPutObjectToS3: vi.fn(),
   mockStreamUploadToS3: vi.fn(),
-  mockDeleteObjectFromS3: vi.fn(),
   mockCreatePresignedDownload: vi.fn(),
   mockBuildCdnDownloadUrl: vi.fn(),
   mockCanUseS3Storage: vi.fn(),
   mockFetch: vi.fn(),
+  mockFetchPublicRemoteFile: vi.fn(),
+  mockCollectBufferedAssetEvidence: vi.fn(),
+  mockCollectFileAssetEvidence: vi.fn(),
 }));
 
 const { MockStudioAssetQuotaExceededError } = vi.hoisted(() => {
@@ -46,7 +50,6 @@ vi.mock("@/lib/storage", () => ({
   createPresignedDownload: (...args: unknown[]) => mockCreatePresignedDownload(...args),
   putObjectToS3: (...args: unknown[]) => mockPutObjectToS3(...args),
   streamUploadToS3: (...args: unknown[]) => mockStreamUploadToS3(...args),
-  deleteObjectFromS3: (...args: unknown[]) => mockDeleteObjectFromS3(...args),
 }));
 
 vi.mock("@/lib/studio/repository", () => ({
@@ -55,6 +58,8 @@ vi.mock("@/lib/studio/repository", () => ({
   finalizeAssetUpload: (...args: unknown[]) => mockFinalizeAssetUpload(...args),
   StudioAssetQuotaExceededError: MockStudioAssetQuotaExceededError,
 }));
+vi.mock("@/lib/security/remote-file-fetch", () => ({ fetchPublicRemoteFile: (...args: unknown[]) => mockFetchPublicRemoteFile(...args) }));
+vi.mock("@/lib/studio/asset-media-evidence", () => ({ collectBufferedAssetEvidence: (...args: unknown[]) => mockCollectBufferedAssetEvidence(...args), collectFileAssetEvidence: (...args: unknown[]) => mockCollectFileAssetEvidence(...args) }));
 
 import { runTool } from "../../runtime";
 import { uploadAssetTool } from "../upload-asset";
@@ -85,6 +90,17 @@ beforeEach(() => {
     expiresInSeconds: 900,
   });
   vi.stubGlobal("fetch", mockFetch);
+  mockFetchPublicRemoteFile.mockResolvedValue({
+    path: "/tmp/quarantine",
+    mimeType: "image/jpeg",
+    sizeBytes: 3,
+    digest: `sha256:${"a".repeat(64)}`,
+    createReadStream: () => ({ mocked: true }),
+    cleanup: vi.fn(async () => undefined),
+  });
+  const evidence = { checksum: `sha256:${"b".repeat(64)}`, width: 1080, height: 1920, metadata: { dimensionEvidence: "server-media-probe/v1" } };
+  mockCollectBufferedAssetEvidence.mockResolvedValue(evidence);
+  mockCollectFileAssetEvidence.mockResolvedValue(evidence);
 });
 
 describe("upload_asset tool", () => {
@@ -118,6 +134,7 @@ describe("upload_asset tool", () => {
         workspaceId: "ws_1",
         assetId: "asset_new",
         uploadState: "ready",
+        checksum: `sha256:${"b".repeat(64)}`,
       }),
     );
     expect(result).toEqual({
@@ -143,18 +160,6 @@ describe("upload_asset tool", () => {
   });
 
   it("uploads from a sourceUrl by streaming it to storage", async () => {
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new Uint8Array([1, 2, 3]));
-        controller.close();
-      },
-    });
-    mockFetch.mockResolvedValue(
-      new Response(body, {
-        status: 200,
-        headers: { "content-type": "image/jpeg", "content-length": "3" },
-      }),
-    );
     mockStreamUploadToS3.mockResolvedValue({ sizeBytes: 3 });
 
     const result = await runTool(
@@ -163,13 +168,10 @@ describe("upload_asset tool", () => {
       { session: session("owner", "ws_1") },
     );
 
-    expect(mockFetch).toHaveBeenCalledWith(
-      "https://example.com/pic.jpg",
-      expect.objectContaining({ signal: expect.anything() }),
-    );
+    expect(mockFetchPublicRemoteFile).toHaveBeenCalledWith(expect.objectContaining({ sourceUrl: "https://example.com/pic.jpg" }));
     expect(mockStreamUploadToS3).toHaveBeenCalled();
     expect(mockFinalizeAssetUpload).toHaveBeenCalledWith(
-      expect.objectContaining({ uploadState: "ready", sizeBytes: 3 }),
+      expect.objectContaining({ uploadState: "ready", sizeBytes: 3, checksum: `sha256:${"b".repeat(64)}`, metadata: { dimensionEvidence: "server-media-probe/v1" } }),
     );
     expect(result.assetId).toBe("asset_new");
   });

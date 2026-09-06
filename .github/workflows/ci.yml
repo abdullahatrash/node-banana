@@ -32,6 +32,9 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
+      - name: Check authored localization and logical RTL layout
+        run: pnpm i18n:check
+
       - name: Run Gate A deterministic tests
         run: pnpm test:gate-a
 
@@ -40,6 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     env:
+      NODE_OPTIONS: --max-old-space-size=8192
       NODE_ENV: production
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/node_banana
       BETTER_AUTH_SECRET: ci-prodlike-auth-secret-7wqVb1L9pT2nX4mK8sR0dF6hJ3zQaC5

@@ -193,6 +193,12 @@ describe("duplicateDraftForWorkspace", () => {
     );
     expect(draft.id).toBe("spost_2");
   });
+
+  it("duplicates a legacy text-only draft when optional media arrays are absent", async () => {
+    mockGetSocialPost.mockResolvedValue({ id: "spost_legacy", socialAccountId: "ch_x", status: "draft", content: "legacy", scheduledAt: null });
+    await expect(duplicateDraftForWorkspace(ctx, "spost_legacy")).resolves.toMatchObject({ status: "draft" });
+    expect(mockCreateSocialPost).toHaveBeenCalledWith(expect.not.objectContaining({ mediaReferences: expect.anything() }));
+  });
 });
 
 describe("deleteDraftForWorkspace", () => {

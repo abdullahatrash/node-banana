@@ -18,6 +18,7 @@ export const GET = withStudioAuth<MediaContext>(
     route:
       "/api/studio/publishing-approvals/[approvalRequestId]/media/[artifactId]",
     action: "read",
+    permission: "social:view",
   },
   async (request: NextRequest, authz, context) => {
     const workspaceError = requirePublishingApprovalWorkspace(

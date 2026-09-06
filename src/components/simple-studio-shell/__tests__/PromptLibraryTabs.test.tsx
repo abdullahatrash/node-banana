@@ -1,5 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { render as testingRender, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
+import { NextIntlClientProvider } from "next-intl";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { PromptLibraryTabs } from "../PromptLibraryTabs";
 import {
@@ -7,6 +9,24 @@ import {
   type SavedPrompt,
 } from "@/store/simpleStudioStore";
 import { useSimpleStudioShellStore } from "@/store/simpleStudioShellStore";
+import messages from "@/i18n/messages/en.json";
+import messagesAr from "@/i18n/messages/ar.json";
+
+function render(ui: ReactElement) {
+  return testingRender(
+    <NextIntlClientProvider locale="en" messages={messages}>
+      {ui}
+    </NextIntlClientProvider>,
+  );
+}
+
+function renderArabic(ui: ReactElement) {
+  return testingRender(
+    <NextIntlClientProvider locale="ar" messages={messagesAr}>
+      <div dir="rtl">{ui}</div>
+    </NextIntlClientProvider>,
+  );
+}
 
 const routerPush = vi.fn();
 vi.mock("next/navigation", () => ({
@@ -79,5 +99,23 @@ describe("PromptLibraryTabs", () => {
     render(<PromptLibraryTabs />);
     await userEvent.click(screen.getByRole("tab", { name: /saved/i }));
     expect(screen.getByText(/no saved prompts yet/i)).toBeInTheDocument();
+  });
+
+  it("auto-detects mixed prompt directions under Arabic UI", () => {
+    useSimpleStudioStore.setState({
+      publicPrompts: [
+        makePrompt({
+          id: "mixed",
+          name: "Product إطلاق",
+          promptText: "Write عنوان for launch",
+          isPublic: true,
+        }),
+      ],
+    });
+
+    renderArabic(<PromptLibraryTabs />);
+
+    expect(screen.getByText("Product إطلاق")).toHaveAttribute("dir", "auto");
+    expect(screen.getByText("Write عنوان for launch")).toHaveAttribute("dir", "auto");
   });
 });

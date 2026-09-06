@@ -42,6 +42,7 @@ export type ToolErrorCode =
   | "invalid_output"
   | "unsupported_node"
   | "byok_key_missing"
+  | "unavailable"
   | "internal";
 
 export interface StructuredToolError {

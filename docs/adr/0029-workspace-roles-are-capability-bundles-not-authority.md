@@ -1,0 +1,3 @@
+# Workspace Roles Are Capability Bundles, Not Authority
+
+Tasmeemai exposes built-in Owner, Admin, Billing Admin, Creator, Approver, Analyst, and Viewer roles plus versioned Workspace-defined Custom Roles, all implemented as understandable bundles over stable Application Capabilities. Effective authority is always narrowed by exact resource grants, policy, Entitlement, and resource state. No Workspace Role—including Owner, Admin, or Approver—implicitly grants Publishing Approval, credential use, provider spend, or another high-risk action; those require their dedicated grants and policy checks. This preserves the existing exact-authority runtime while making collaboration manageable without proliferating hardcoded role checks.

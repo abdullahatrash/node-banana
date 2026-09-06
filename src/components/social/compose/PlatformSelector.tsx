@@ -1,13 +1,17 @@
 "use client"
 
+import Link from "next/link"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
 import { useSocialComposerStore } from "@/store/socialComposerStore"
 import { PlatformIcon } from "@/components/social/shared/PlatformIcon"
 import { PLATFORM_LABELS, PLATFORM_COLORS } from "@/lib/social/constants"
 import { CheckIcon } from "lucide-react"
 import type { SocialPlatform } from "@/lib/db/schema"
+import { useTranslations } from "next-intl"
+import { isolateLtr } from "@/i18n/bidi"
 
 export function PlatformSelector() {
+  const t = useTranslations("social.compose")
   const accounts = useSocialAccountsStore((s) => s.accounts)
   const { selectedAccountIds, toggleAccount } = useSocialComposerStore()
 
@@ -19,11 +23,11 @@ export function PlatformSelector() {
     return (
       <div className="rounded-lg border border-dashed p-4 text-center">
         <p className="text-sm text-muted-foreground">
-          No channels connected.{" "}
-          <a href="/social/channels" className="text-primary underline">
-            Connect one
-          </a>{" "}
-          to start posting.
+          {t("channels.none")} {" "}
+          <Link href="/social/channels" className="text-primary underline">
+            {t("channels.connect")}
+          </Link>{" "}
+          {t("channels.start")}
         </p>
       </div>
     )
@@ -32,7 +36,7 @@ export function PlatformSelector() {
   return (
     <div>
       <label className="mb-2 block text-xs font-medium text-muted-foreground">
-        Post to
+        {t("channels.postTo")}
       </label>
       <div className="flex flex-wrap gap-2">
         {activeAccounts.map((account) => {
@@ -44,7 +48,7 @@ export function PlatformSelector() {
             <button
               key={account.id}
               onClick={() => toggleAccount(account.id, platform)}
-              title={`${PLATFORM_LABELS[platform]}${account.username ? ` · @${account.username}` : ""}`}
+              title={`${PLATFORM_LABELS[platform]}${account.username ? ` · ${isolateLtr(`@${account.username}`)}` : ""}`}
               className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-all ${
                 isSelected
                   ? "text-foreground"
@@ -60,7 +64,7 @@ export function PlatformSelector() {
               }
             >
               <PlatformIcon platform={platform} size={16} />
-              <span>{account.displayName}</span>
+              <span dir="auto">{account.displayName}</span>
               {isSelected && <CheckIcon className="size-3" style={{ color }} />}
             </button>
           )
@@ -68,7 +72,7 @@ export function PlatformSelector() {
       </div>
       {selectedAccountIds.length === 0 && (
         <p className="mt-2 text-xs text-destructive">
-          Select at least one channel to publish
+          {t("channels.required")}
         </p>
       )}
     </div>

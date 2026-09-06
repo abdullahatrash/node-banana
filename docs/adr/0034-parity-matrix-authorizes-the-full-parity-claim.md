@@ -1,0 +1,3 @@
+# The Parity Matrix Authorizes the Full-Parity Claim
+
+Tasmeemai may claim Reference Feature Parity only when every required Parity Matrix cell for the dated baseline—route, feature, state, role, Entitlement, viewport, and direction—contains direct sanitized reference evidence, passing Tasmeemai acceptance evidence, and a deliberate-adaptation rationale where applicable. Product, engineering, Arabic-language, accessibility, and security owners sign the exact matrix version. An unknown, stale, skipped, or failing cell blocks the claim; a Release Flag, beta label, screenshot resemblance, or partial slice cannot waive it. Later reference-product changes enter a separate parity-change review rather than retroactively moving an accepted baseline.

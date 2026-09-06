@@ -82,6 +82,12 @@ function setup() {
       all: [{ id: "test", key: Buffer.alloc(32, 8) }],
     })),
     { now: () => new Date("2026-07-25T12:00:00.000Z") },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { resolveStudioAssets: async ({ assetIds }) => assetIds.map((assetId) => ({ assetId, digest: `sha256:${(assetId === "asset_z" ? "a" : "b").repeat(64)}`, type: "image", mediaType: "image/png", sizeBytes: 42, width: 1080, height: 1920, durationSeconds: null })) },
   );
   const requests: CapabilityAuthorizationRequest[] = [];
   const authorizer: CapabilityAuthorizer = {
@@ -95,6 +101,7 @@ function setup() {
           credentialProfileIds: [],
           workflowIds: ["workflow_1"],
           automationIds: [],
+          studioAssetIds: ["asset_z", "asset_a"],
           artifactIds: [],
         },
       };
@@ -120,6 +127,19 @@ function setup() {
 }
 
 describe("Workflow Run capability parity", () => {
+  it("dispatches start@3 identically over CLI and MCP with exact Studio Asset resources", async () => {
+    const { dispatcher, requests } = setup();
+    const input = { workflowId: "workflow_1", revisionId: "revision_1", idempotencyKey: "start-capability-v3", inputs: { text: "hello" }, inputArtifactIds: [], inputStudioAssetIds: ["asset_z", "asset_a"] };
+    const cli = await dispatchCliCapability("workflow_runs.start@3", input, dispatcher);
+    const mcp = await dispatchMcpCapability("workflow_runs.start.v3", input, dispatcher);
+    expect(cli).toMatchObject({ type: "capability_result", status: "accepted" });
+    expect(mcp).toEqual(cli);
+    expect(requests.slice(-2).map((request) => request.resources)).toEqual([
+      [{ kind: "workflow", id: "workflow_1" }, { kind: "studio_asset", id: "asset_z" }, { kind: "studio_asset", id: "asset_a" }],
+      [{ kind: "workflow", id: "workflow_1" }, { kind: "studio_asset", id: "asset_z" }, { kind: "studio_asset", id: "asset_a" }],
+    ]);
+  });
+
   it("returns the same non-binding Budget preview through CLI and MCP", async () => {
     const { dispatcher, requests, service } = setup();
     vi.spyOn(service, "preview").mockResolvedValue({
@@ -331,6 +351,7 @@ describe("Workflow Run capability parity", () => {
       "workflow_runs.retry@1",
       "workflow_runs.start@1",
       "workflow_runs.start@2",
+      "workflow_runs.start@3",
       "workflow_step_attempts.list@1",
       "workflow_step_attempts.list@2",
     ]);

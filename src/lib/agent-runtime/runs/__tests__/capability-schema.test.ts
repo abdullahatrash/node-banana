@@ -13,6 +13,20 @@ function registration(name: string, version: number) {
 }
 
 describe("Workflow Run public schemas", () => {
+  it("publishes start@3 with distinct exact Studio Asset authorization", () => {
+    const current = registration(
+      WORKFLOW_RUN_CAPABILITY_IDENTITIES.startV3.name,
+      WORKFLOW_RUN_CAPABILITY_IDENTITIES.startV3.version,
+    );
+    expect(current.lifecycle.recommended).toBe(true);
+    expect(current.authorization.resources).toEqual([
+      { kind: "workflow", inputPath: "workflowId" },
+      { kind: "artifact", inputPath: "inputArtifactIds" },
+      { kind: "studio_asset", inputPath: "inputStudioAssetIds" },
+    ]);
+    expect(registration(WORKFLOW_RUN_CAPABILITY_IDENTITIES.startV2.name, WORKFLOW_RUN_CAPABILITY_IDENTITIES.startV2.version).lifecycle.recommended).toBe(false);
+  });
+
   it("publishes a strict non-binding preview with immutable FX evidence", () => {
     const preview = registration(
       WORKFLOW_RUN_CAPABILITY_IDENTITIES.preview.name,
@@ -44,6 +58,7 @@ describe("Workflow Run public schemas", () => {
     for (const identity of [
       WORKFLOW_RUN_CAPABILITY_IDENTITIES.start,
       WORKFLOW_RUN_CAPABILITY_IDENTITIES.startV2,
+      WORKFLOW_RUN_CAPABILITY_IDENTITIES.startV3,
       WORKFLOW_RUN_CAPABILITY_IDENTITIES.retry,
     ]) {
       expect(registration(identity.name, identity.version).effect)
@@ -64,7 +79,7 @@ describe("Workflow Run public schemas", () => {
       WORKFLOW_RUN_CAPABILITY_IDENTITIES.get.version,
     ).outputSchema as any;
     const branches = schema.properties.startSnapshot.oneOf;
-    expect(branches).toHaveLength(2);
+    expect(branches).toHaveLength(3);
     const legacy = branches.find(
       (branch: any) =>
         branch.properties.schema.const === "workflow-run-start-snapshot/v1",
@@ -72,6 +87,10 @@ describe("Workflow Run public schemas", () => {
     const pinned = branches.find(
       (branch: any) =>
         branch.properties.schema.const === "workflow-run-start-snapshot/v2",
+    );
+    const studioPinned = branches.find(
+      (branch: any) =>
+        branch.properties.schema.const === "workflow-run-start-snapshot/v3",
     );
     expect(legacy.properties).not.toHaveProperty("providerResolutions");
     expect(legacy.additionalProperties).toBe(false);
@@ -91,6 +110,8 @@ describe("Workflow Run public schemas", () => {
         "usageCeilings",
       ]),
     );
+    expect(studioPinned.required).toEqual(expect.arrayContaining(["providerResolutions", "studioAssetReferences"]));
+    expect(studioPinned.properties.studioAssetReferences.items.required).toEqual(["assetId", "digest", "type", "mediaType", "sizeBytes", "width", "height", "durationSeconds"]);
     expect(
       pinned.properties.providerResolutions.items.properties.usageCeilings.items.required,
     ).toEqual(["dimension", "unit", "maximumQuantity"]);

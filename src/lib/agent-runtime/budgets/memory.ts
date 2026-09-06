@@ -674,6 +674,7 @@ export class InMemoryBudgetRepository
       const settledAmount = heldUnknown
         ? withoutPrior
         : addDecimals(withoutPrior, plan.amount!);
+      if (admission?.acceptedSpendQuote && !heldUnknown && compareDecimals(settledAmount, admission.acceptedSpendQuote.amount) > 0) return "unavailable" as const;
       const nextHeldAmount = heldUnknown
         ? heldWithoutPrior
         : plan.runTerminal

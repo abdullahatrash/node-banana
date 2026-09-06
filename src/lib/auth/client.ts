@@ -4,10 +4,13 @@ import {
   organizationClient,
   twoFactorClient,
 } from "better-auth/client/plugins";
+import { getAuthClientBaseURL } from "@/lib/auth/origins";
 
-const configuredBaseURL =
+const configuredBaseURL = getAuthClientBaseURL(
   process.env.NEXT_PUBLIC_BETTER_AUTH_URL?.trim() ||
-  process.env.NEXT_PUBLIC_APP_URL?.trim();
+    process.env.NEXT_PUBLIC_APP_URL?.trim(),
+  process.env.NODE_ENV === "production",
+);
 
 function isTruthy(value: string | undefined): boolean {
   if (!value) return false;

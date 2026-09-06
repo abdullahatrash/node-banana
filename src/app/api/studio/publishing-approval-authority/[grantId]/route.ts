@@ -18,6 +18,7 @@ export const DELETE = withStudioAuth<GrantContext>(
   {
     route: "/api/studio/publishing-approval-authority/[grantId]",
     action: "write",
+    permission: "social:manage",
   },
   async (request: NextRequest, authz, context) => {
     if (authz.role !== "owner" && authz.role !== "admin") {

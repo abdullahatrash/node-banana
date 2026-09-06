@@ -9,6 +9,7 @@ import {
   StudioAssetQuotaExceededError,
 } from "@/lib/studio/repository";
 import { withStudioAuth } from "@/lib/studio/withStudioAuth";
+import { GOVERNANCE_REGION_ROUTES, requireGovernanceRegionRoute } from "@/lib/governance/region-enforcement";
 
 interface PresignRequest {
   projectId?: string | null;
@@ -29,7 +30,7 @@ interface PresignResponse {
 }
 
 export const POST = withStudioAuth<undefined>(
-  { route: "/api/studio/assets/presign", action: "write" },
+  { route: "/api/studio/assets/presign", action: "write", permission: "assets:write" },
   async (request: NextRequest, authz): Promise<NextResponse<PresignResponse>> => {
     if (!canUseS3Storage()) {
       return noStoreJson(
@@ -41,6 +42,12 @@ export const POST = withStudioAuth<undefined>(
         { status: 400 },
       );
     }
+
+    await requireGovernanceRegionRoute({
+      workspaceId: authz.workspaceId,
+      route: GOVERNANCE_REGION_ROUTES.assetStorage,
+      configuredRegion: process.env.S3_REGION ?? process.env.APP_DATA_REGION,
+    });
 
     try {
       const body = (await request.json()) as PresignRequest;

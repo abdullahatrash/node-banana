@@ -1,0 +1,19 @@
+import type { OperationStatusService } from "@/lib/agent-runtime/operation-status/service";
+import type { OperationActor, OperationRecord } from "@/lib/agent-runtime/operation-status/types";
+import type { GenerationIntent } from "./types";
+import { quoteTotalUsd } from "./pricing";
+
+export const generationOperationId = (intentId: string) => `generation:${intentId}`;
+
+export function generationOperationMetadata(intent: GenerationIntent) {
+  return { provider: intent.selectedModel.provider, intentId: intent.id, model: intent.selectedModel.model, version: intent.selectedModel.version, inputSchemaDigest: intent.selectedModel.inputSchemaDigest, providerCompositionDigest: intent.providerComposition.digest, composedPromptDigest: intent.providerComposition.composedPromptDigest, providerCompositionVersion: intent.providerComposition.promptVersion, personaId: intent.persona?.personaId ?? null, personaRevision: intent.persona?.personaRevision ?? null, personaEvidenceRefs: intent.persona ? Object.values(intent.persona.evidence).filter((value): value is string => typeof value === "string") : [], brandProfileId: intent.brand.profileId, brandRevision: intent.brand.revision, brandContextDigest: intent.brand.context.digest, brandReferenceAssetIds: intent.brand.context.referenceAssets.map((item) => item.assetId), contentLanguage: intent.contentLanguage, arabicVariety: intent.arabicVariety, fundingMode: intent.fundingMode, quoteAmountUsd: intent.quote.amount, quoteQuantity: intent.quote.quantity, quoteBasis: intent.quote.basis, quoteMaximumAmountUsd: quoteTotalUsd(intent.quote), quoteLineItems: intent.quote.lineItems ?? [], reservationIds: intent.reservationIds, rightsSnapshotId: intent.rights.snapshotId, rightsSnapshotRevision: intent.rights.revision, rightsEvidenceRefs: intent.rights.evidence.map((item) => item.id), provenanceRefs: intent.rights.sourceAssetIds, contentExecutionDigest: intent.contentExecution?.digest ?? null, contentPieceId: intent.contentExecution?.contentPiece.id ?? null, contentPieceRevision: intent.contentExecution?.contentPiece.revision ?? null, contentWorkflowId: intent.contentExecution?.workflow.id ?? null, contentWorkflowRevisionId: intent.contentExecution?.workflow.revisionId ?? null, contentModelPolicyId: intent.contentExecution?.modelPolicy.id ?? null, contentModelPolicyRevision: intent.contentExecution?.modelPolicy.revision ?? null, region: intent.regionAdmission.region, regionPolicyId: intent.regionAdmission.policyId, regionPolicyVersion: intent.regionAdmission.policyVersion, regionEvidenceDigest: intent.regionAdmission.evidenceDigest, aspectRatio: intent.outputContract.aspectRatio, width: intent.outputContract.width, height: intent.outputContract.height, fps: intent.outputContract.fps, providerState: "admitted", nextAction: "submit_provider" };
+}
+
+export async function ensureAdmittedGenerationOperation(operations: OperationStatusService, intent: GenerationIntent): Promise<OperationRecord | null> {
+  const actor: OperationActor = { type: "human", userId: intent.createdByUserId };
+  const created = await operations.create({ workspaceId: intent.workspaceId, kind: "generation", resourceId: intent.id, actor, metadata: generationOperationMetadata(intent), operationId: generationOperationId(intent.id), idempotencyKey: `generation-operation:${intent.id}` });
+  if (created.kind !== "applied" && created.kind !== "replayed") return null;
+  if (created.operation.state !== "queued") return created.operation;
+  const admitted = await operations.transition({ workspaceId: intent.workspaceId, operationId: created.operation.id, expectedRevision: created.operation.revision, to: "admitted", actor, reasonCode: "generation.intent_admitted", idempotencyKey: `generation-admission:${intent.id}` });
+  return admitted.kind === "applied" || admitted.kind === "replayed" ? admitted.operation : null;
+}

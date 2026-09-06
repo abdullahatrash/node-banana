@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useTranslations } from "next-intl"
 import {
   Dialog,
   DialogContent,
@@ -12,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useToast } from "@/components/Toast"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
+import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
 
 const POPULAR_INSTANCES = ["mastodon.social", "fosstodon.org", "hachyderm.io"]
 
@@ -24,11 +26,13 @@ export function MastodonConnectModal({
   open,
   onOpenChange,
 }: MastodonConnectModalProps) {
+  const t = useTranslations("social.channels.connect")
   const [instanceUrl, setInstanceUrl] = useState("")
   const [isConnecting, setIsConnecting] = useState(false)
   const popupRef = useRef<Window | null>(null)
   const popupCheckRef = useRef<number | null>(null)
   const { show: showToast } = useToast()
+  const { show: showClientError } = useClientErrorPresentation()
   const { fetchAccounts } = useSocialAccountsStore()
 
   const cleanupPopup = useCallback(() => {
@@ -48,18 +52,12 @@ export function MastodonConnectModal({
       setIsConnecting(false)
 
       if (event.data.success) {
-        showToast(
-          event.data.message || "Mastodon channel connected!",
-          "success",
-        )
+        showToast(t("mastodon.connected"), "success")
         fetchAccounts()
         onOpenChange(false)
         setInstanceUrl("")
       } else {
-        showToast(
-          event.data.message || "Failed to complete connection",
-          "error",
-        )
+        showToast(t("errors.complete"), "error")
       }
     }
 
@@ -68,12 +66,12 @@ export function MastodonConnectModal({
       window.removeEventListener("message", handleOAuthMessage)
       cleanupPopup()
     }
-  }, [cleanupPopup, fetchAccounts, onOpenChange, showToast])
+  }, [cleanupPopup, fetchAccounts, onOpenChange, showToast, t])
 
   async function handleSubmit(url: string) {
     const instance = url.trim()
     if (!instance) {
-      showToast("Instance URL is required.", "error")
+      showToast(t("mastodon.required"), "error")
       return
     }
 
@@ -99,7 +97,7 @@ export function MastodonConnectModal({
       const data = await response.json()
 
       if (!response.ok || !data.success || !data.authUrl) {
-        throw new Error(data.error || "Failed to start Mastodon connection")
+        throw new Error("MASTODON_CONNECT_FAILED")
       }
 
       if (!popup || popup.closed) {
@@ -117,10 +115,7 @@ export function MastodonConnectModal({
     } catch (error) {
       popup?.close()
       cleanupPopup()
-      showToast(
-        error instanceof Error ? error.message : "Failed to connect",
-        "error",
-      )
+      showClientError(showToast, error, t("mastodon.errors.start"))
       setIsConnecting(false)
     }
   }
@@ -129,9 +124,9 @@ export function MastodonConnectModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Connect Mastodon</DialogTitle>
+          <DialogTitle>{t("mastodon.title")}</DialogTitle>
           <DialogDescription>
-            Enter your Mastodon instance or pick one below
+            {t("mastodon.description")}
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4 pt-2">
@@ -145,7 +140,7 @@ export function MastodonConnectModal({
                 onClick={() => handleSubmit(instance)}
                 className="text-xs"
               >
-                {instance}
+                <bdi>{instance}</bdi>
               </Button>
             ))}
           </div>
@@ -157,13 +152,14 @@ export function MastodonConnectModal({
             className="flex gap-2"
           >
             <Input
-              placeholder="mastodon.social"
+              dir="ltr"
+              placeholder={t("mastodon.instancePlaceholder")}
               value={instanceUrl}
               onChange={(e) => setInstanceUrl(e.target.value)}
               disabled={isConnecting}
             />
             <Button type="submit" disabled={isConnecting} className="shrink-0">
-              {isConnecting ? "Connecting..." : "Connect"}
+              {isConnecting ? t("connecting") : t("action")}
             </Button>
           </form>
         </div>

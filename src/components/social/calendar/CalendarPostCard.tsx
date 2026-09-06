@@ -1,31 +1,34 @@
 "use client"
 
 import { useRef, useState } from "react"
+import { useFormatter, useTranslations } from "next-intl"
 import { useDrag } from "react-dnd"
 import { PlatformIcon } from "@/components/social/shared/PlatformIcon"
 import { POST_STATUS_CONFIG } from "@/lib/social/constants"
-import { format, isPast } from "date-fns"
+import { isPast } from "date-fns"
 import { CalendarPostDetailsPopover } from "./CalendarPostDetailsPopover"
 import { useSocialCalendarStore } from "@/store/socialCalendarStore"
 import { useSocialAccountsStore } from "@/store/socialAccountsStore"
-import type { SocialPost } from "@/lib/social/client"
+import type { CalendarItem } from "@/lib/product-surfaces/calendar-projection"
 import type { SocialPlatform, SocialPostStatus } from "@/lib/db/schema"
 
 interface CalendarPostCardProps {
-  post: SocialPost
+  post: CalendarItem
   platform?: SocialPlatform
 }
 
 export const POST_DND_TYPE = "social-post"
 
 export function CalendarPostCard({ post, platform }: CalendarPostCardProps) {
+  const t = useTranslations("social.calendarUi")
+  const formatValue = useFormatter()
   const cardRef = useRef<HTMLDivElement | null>(null)
   const [showDetails, setShowDetails] = useState(false)
   const fetchPosts = useSocialCalendarStore((s) => s.fetchPosts)
   const accounts = useSocialAccountsStore((s) => s.accounts)
   const account = accounts.find((item) => item.id === post.socialAccountId)
   const resolvedPlatform = (platform ?? account?.platform ?? "linkedin") as SocialPlatform
-  const channelName = account?.displayName ?? "Unknown channel"
+  const channelName = account?.displayName ?? t("unknownChannel")
   const statusConfig = POST_STATUS_CONFIG[post.status as SocialPostStatus]
   const postTime = post.scheduledAt || post.publishedAt || post.createdAt
   const isInPast = postTime ? isPast(new Date(postTime)) : false
@@ -44,6 +47,7 @@ export function CalendarPostCard({ post, platform }: CalendarPostCardProps) {
       scheduledAt: post.scheduledAt,
       publishedAt: post.publishedAt,
       createdAt: post.createdAt,
+      source: post.authority.kind === "canonical" ? post.authority.binding : null,
     },
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
@@ -81,31 +85,34 @@ export function CalendarPostCard({ post, platform }: CalendarPostCardProps) {
                 {initials}
               </div>
             )}
-            <div className="absolute -bottom-0.5 -right-0.5 flex size-3.5 items-center justify-center rounded-full border border-border bg-background shadow-sm">
+            <div className="absolute -bottom-0.5 -end-0.5 flex size-3.5 items-center justify-center rounded-full border border-border bg-background shadow-sm">
               <PlatformIcon platform={resolvedPlatform} size={9} />
             </div>
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1">
-              <span className="min-w-0 flex-1 truncate font-medium" title={channelName}>
+              <span dir="auto" className="min-w-0 flex-1 truncate font-medium" title={channelName}>
                 {channelName}
               </span>
               {postTime && (
-                <span className="flex-shrink-0 text-muted-foreground">
-                  {format(new Date(postTime), "HH:mm")}
+                <span className="flex-shrink-0 text-muted-foreground" dir="auto">
+                  {formatValue.dateTime(new Date(postTime), { hour: "2-digit", minute: "2-digit" })}
                 </span>
               )}
             </div>
             <div className="truncate text-muted-foreground">
               {post.status === "draft" && (
-                <span className="me-1">Draft:</span>
+                <span className="me-1">{t("draftPrefix")}</span>
               )}
-              {post.content?.slice(0, 48) || "No content"}
+              <span dir="auto">{post.content?.slice(0, 48) || t("noContent")}</span>
+            </div>
+            <div className="truncate text-[9px] text-muted-foreground">
+              {t(`authority.${post.authority.kind}`)}
             </div>
           </div>
           {!account && (
             <span className="sr-only">
-              Destination channel information is unavailable.
+              {t("destinationUnavailable")}
             </span>
           )}
         </div>

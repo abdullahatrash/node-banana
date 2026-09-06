@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { publishingApprovalAgentDtoFromDto } from "../service";
 import { exactPublishingApprovalSelection, publishingApprovalValidationBinding } from "../validation";
 import { setupPublishingApprovals } from "./fixtures";
+import type { PublishingApprovalGovernancePolicyPort } from "../types";
 
 describe("PublishingApprovalService", () => {
   it("binds one exact current revision, action, target/resource manifests, requester, validation, and bounded expiry", async () => {
@@ -106,6 +107,39 @@ describe("PublishingApprovalService", () => {
     })).rejects.toMatchObject({ code: "PUBLISHING_APPROVAL_AUTHORITY_REQUIRED" });
   });
 
+  it("allows a current member only when an exact per-channel publishing grant is verified", async () => {
+    const setup = await setupPublishingApprovals();
+    const approval = await setup.service.request(setup.requestInput());
+    const original = setup.authorityPort.checkCurrent;
+    setup.authorityPort.checkCurrent = async (input) => {
+      const session = await original(input);
+      return session ? { ...session, subjectRole: "member" as const } : null;
+    };
+
+    await expect(setup.service.decide({
+      workspaceId: "workspace_1",
+      userId: "member_1",
+      idempotencyKey: "approval-member-grant",
+      approvalRequestId: approval.id,
+      expectedInspectionDigest: approval.inspectionDigest,
+      decision: "approved",
+    })).resolves.toMatchObject({ status: "approved" });
+
+    setup.setAuthorityCurrent(false);
+    const second = await setup.service.request({
+      ...setup.requestInput(),
+      idempotencyKey: "approval-member-second-request",
+    });
+    await expect(setup.service.decide({
+      workspaceId: "workspace_1",
+      userId: "member_1",
+      idempotencyKey: "approval-member-without-grant",
+      approvalRequestId: second.id,
+      expectedInspectionDigest: second.inspectionDigest,
+      decision: "approved",
+    })).rejects.toMatchObject({ code: "PUBLISHING_APPROVAL_AUTHORITY_REQUIRED" });
+  });
+
   it("replays the original request after expiry and supersession without re-running mutable admission", async () => {
     const setup = await setupPublishingApprovals();
     const first = await setup.service.request(setup.requestInput());
@@ -115,7 +149,7 @@ describe("PublishingApprovalService", () => {
     setup.setNow("2026-08-08T14:00:00.000Z");
     const replay = await setup.service.request(setup.requestInput());
     expect(replay.id).toBe(first.id);
-    expect(replay.status).toBe("expired");
+    expect(replay.status).toBe("superseded");
   });
 
   it("requester-scopes Agent observation and resource manifests", async () => {
@@ -131,8 +165,20 @@ describe("PublishingApprovalService", () => {
     const head = setup.plans.repository.plans.get("workspace_1\u0000plan_1")!;
     setup.plans.repository.plans.set("workspace_1\u0000plan_1", { ...structuredClone(head), currentRevision: 2 });
     const presentation = await setup.service.inspectForHuman({ workspaceId: "workspace_1", userId: "owner_1", approvalRequestId: approval.id });
+    expect(presentation.approval.status).toBe("superseded");
     expect(presentation.targets[0]).toMatchObject({ targetId: "target_1", content: { text: "Launch copy" } });
     expect(presentation.decisionEligibility).toEqual({ eligible: false, blockerCodes: expect.arrayContaining(["REVISION_SUPERSEDED", "VALIDATION_STALE"]) });
+  });
+
+  it("projects superseded status in direct and filtered list reads", async () => {
+    const setup = await setupPublishingApprovals();
+    const approval = await setup.service.request(setup.requestInput());
+    const head = setup.plans.repository.plans.get("workspace_1\u0000plan_1")!;
+    setup.plans.repository.plans.set("workspace_1\u0000plan_1", { ...structuredClone(head), currentRevision: 2 });
+
+    await expect(setup.service.get({ workspaceId: "workspace_1", approvalRequestId: approval.id, viewer: { kind: "human", userId: "owner_1" } })).resolves.toMatchObject({ status: "superseded" });
+    await expect(setup.service.list({ workspaceId: "workspace_1", filters: { status: "superseded" }, limit: 10, viewer: { kind: "human", userId: "owner_1" } })).resolves.toEqual([expect.objectContaining({ id: approval.id, status: "superseded" })]);
+    await expect(setup.service.list({ workspaceId: "workspace_1", filters: { status: "pending" }, limit: 10, viewer: { kind: "human", userId: "owner_1" } })).resolves.toEqual([]);
   });
 
   it("accepts canonical punctuated Artifact IDs and binds the full evidence document", () => {
@@ -154,5 +200,38 @@ describe("PublishingApprovalService", () => {
     const revision = structuredClone(setup.revision);
     revision.validationEvidence.runtimePolicy.identity = "publishing-runtime-policy/other@1";
     expect(() => publishingApprovalValidationBinding({ revision, targetIds: ["target_1"] })).toThrow(expect.objectContaining({ code: "PUBLISHING_APPROVAL_STALE_VALIDATION" }));
+  });
+
+  it("keeps runtime approval pending until the pinned Workspace policy reaches acceptance", async () => {
+    let decisionCount = 0;
+    const binding = {
+      schema: "publishing-approval-governance-binding/v1" as const,
+      governanceRequestId: "gpar_request_1",
+      policyId: "policy_publishing",
+      policyRevision: 1,
+      policyDigest: `sha256:${"9".repeat(64)}`,
+    };
+    const policyPort: PublishingApprovalGovernancePolicyPort = {
+      bind: async () => binding,
+      decide: async () => ++decisionCount === 1 ? "pending" : "accepted",
+      verifyAccepted: async () => decisionCount > 1,
+    };
+    const setup = await setupPublishingApprovals(policyPort);
+    const requested = await setup.service.request(setup.requestInput());
+    expect(requested.governancePolicy).toEqual(binding);
+
+    const first = await setup.service.decide({
+      workspaceId: "workspace_1", userId: "member_a", idempotencyKey: "policy-stage-one",
+      approvalRequestId: requested.id, expectedInspectionDigest: requested.inspectionDigest,
+      decision: "approved",
+    });
+    expect(first).toMatchObject({ status: "pending", decision: null });
+
+    const second = await setup.service.decide({
+      workspaceId: "workspace_1", userId: "member_b", idempotencyKey: "policy-stage-two",
+      approvalRequestId: requested.id, expectedInspectionDigest: requested.inspectionDigest,
+      decision: "approved",
+    });
+    expect(second).toMatchObject({ status: "approved", decision: { decidedByUserId: "member_b" } });
   });
 });

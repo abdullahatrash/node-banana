@@ -32,6 +32,7 @@ vi.mock("@/lib/agent-auth", () => {
     },
   };
 });
+vi.mock("@/lib/governance/step-up-http", () => ({ requireGovernanceStepUp: vi.fn(async () => null) }));
 
 import { POST } from "../[principalId]/authority/route";
 

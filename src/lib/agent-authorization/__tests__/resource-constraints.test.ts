@@ -31,6 +31,11 @@ describe("Agent resource descriptors", () => {
         label: "Automation IDs",
       },
       {
+        kind: "studio_asset",
+        constraintKey: "studioAssetIds",
+        label: "Studio Asset IDs",
+      },
+      {
         kind: "artifact",
         constraintKey: "artifactIds",
         label: "Artifact IDs",
@@ -48,6 +53,7 @@ describe("Agent resource descriptors", () => {
       credential_profile: "credentialProfileIds",
       workflow: "workflowIds",
       automation: "automationIds",
+      studio_asset: "studioAssetIds",
       artifact: "artifactIds",
     });
 
@@ -57,6 +63,7 @@ describe("Agent resource descriptors", () => {
       credentialProfileIds: [],
       workflowIds: [],
       automationIds: [],
+      studioAssetIds: [],
       artifactIds: [],
     });
     expect(emptyResourceConstraints().channelIds).not.toBe(empty.channelIds);
@@ -67,6 +74,7 @@ describe("Agent resource descriptors", () => {
         credentialProfileIds: ["credential-1"],
         workflowIds: ["workflow-1"],
         automationIds: [],
+        studioAssetIds: ["studio-2", "studio-1"],
         artifactIds: ["artifact-2", "artifact-1"],
       },
       {
@@ -74,6 +82,7 @@ describe("Agent resource descriptors", () => {
         credentialProfileIds: ["credential-1"],
         workflowIds: [],
         automationIds: ["automation-1"],
+        studioAssetIds: ["studio-1"],
         artifactIds: ["artifact-1"],
       },
     ]);
@@ -82,11 +91,13 @@ describe("Agent resource descriptors", () => {
       credentialProfileIds: ["credential-1"],
       workflowIds: [],
       automationIds: [],
+      studioAssetIds: ["studio-1"],
       artifactIds: ["artifact-1"],
     });
     expect(resourceConstraintRefs(intersection)).toEqual([
       { kind: "channel", id: "channel-a" },
       { kind: "credential_profile", id: "credential-1" },
+      { kind: "studio_asset", id: "studio-1" },
       { kind: "artifact", id: "artifact-1" },
     ]);
   });

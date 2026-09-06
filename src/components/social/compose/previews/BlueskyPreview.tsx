@@ -1,6 +1,7 @@
 "use client"
 
 import type { ComposerMediaItem } from "@/store/socialComposerStore"
+import { useTranslations } from "next-intl"
 
 interface BlueskyPreviewProps {
   displayName: string
@@ -15,6 +16,7 @@ export function BlueskyPreview({
   content,
   media,
 }: BlueskyPreviewProps) {
+  const t = useTranslations("social.preview")
   const images = media.filter((m) => m.type === "image").slice(0, 4)
 
   return (
@@ -23,12 +25,12 @@ export function BlueskyPreview({
         <div className="size-9 flex-shrink-0 rounded-full bg-muted" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1">
-            <span className="text-xs font-semibold">{displayName}</span>
+            <bdi className="text-xs font-semibold">{displayName}</bdi>
             <span className="text-[10px] text-muted-foreground">
-              {username ? `@${username}` : ""}
+              <bdi dir="ltr">{username ? `@${username}` : ""}</bdi>
             </span>
           </div>
-          <p className="mt-1 whitespace-pre-line text-xs leading-relaxed">
+          <p dir="auto" className="mt-1 whitespace-pre-line text-xs leading-relaxed">
             {content}
           </p>
           {images.length > 0 && (
@@ -64,10 +66,10 @@ export function BlueskyPreview({
             </div>
           )}
           <div className="mt-2 flex gap-6 text-[10px] text-muted-foreground">
-            <span>Reply</span>
-            <span>Repost</span>
-            <span>Like</span>
-            <span>More</span>
+            <span>{t("reply")}</span>
+            <span>{t("repost")}</span>
+            <span>{t("like")}</span>
+            <span>{t("more")}</span>
           </div>
         </div>
       </div>

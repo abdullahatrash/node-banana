@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
+import { requireGovernanceStepUp } from "@/lib/governance/step-up-http";
 import { AGENT_AUTH_SERVICE } from "@/lib/agent-auth";
 import {
   agentAuthErrorResponse,
@@ -115,7 +116,7 @@ function resolveAuthorityContracts(
 }
 
 export const POST = withStudioAuth<Context>(
-  { route: "/api/agents/[principalId]/authority", action: "write" },
+  { route: "/api/agents/[principalId]/authority", action: "write", permission: "workspaces:write" },
   async (request: NextRequest, authz, context) => {
     const denied = requireAgentManagerRole(authz.role);
     if (denied) return denied;
@@ -138,6 +139,8 @@ export const POST = withStudioAuth<Context>(
       );
     }
     const { principalId } = await context.params;
+    const stepUpDenied = await requireGovernanceStepUp({ request, workspaceId: authz.workspaceId, userId: authz.userId, purpose: "agent.authority.provision", resourceId: principalId });
+    if (stepUpDenied) return stepUpDenied;
     try {
       const grants = resolveAuthorityContracts(parsed.data.grants);
       const policyGrants = resolveAuthorityContracts(parsed.data.policyGrants);

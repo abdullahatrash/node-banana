@@ -9,6 +9,7 @@ import {
   getSocialPost,
   hasChainChildren,
   updatePostStatus,
+  updateSocialPost,
   SocialPostNotFoundError,
   SocialPostStateTransitionError,
 } from "@/lib/social/repository";
@@ -24,6 +25,14 @@ import {
   publishPostWorkflow,
 } from "@/../workflows/social-publish";
 import { logger } from "@/utils/logger";
+import { requiresGovernedPublishingPlan } from "@/lib/governance/publishing-route-guard";
+import { canonicalDigest } from "@/lib/agent-tools/canonical";
+import {
+  governedPublishingMarker,
+  PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION,
+  socialPublishingApprovalEvidenceSchema,
+  type InspectedSocialPublishingApproval,
+} from "@/lib/agent-tools/social-publishing-approval";
 
 interface PublishResponse {
   success: boolean;
@@ -107,6 +116,26 @@ function toPublishMediaItems(
   });
 }
 
+function hasCompleteStableMediaBinding(post: {
+  mediaUrls: Array<{ type: string; url: string; alt?: string }> | null | undefined;
+  stableMediaRefs?: Array<{ resourceKind?: "studio_asset" | "artifact"; assetId: string; assetDigest: string; order: number }> | null;
+}): boolean {
+  const media = post.mediaUrls ?? [];
+  const references = post.stableMediaRefs ?? [];
+  if (media.length !== references.length) return false;
+  const identities = new Set<string>();
+  return references.every((reference, index) => {
+    const identity = `${reference.resourceKind ?? "studio_asset"}:${reference.assetId}`;
+    if (
+      reference.order !== index ||
+      !/^sha256:[a-f0-9]{64}$/.test(reference.assetDigest) ||
+      identities.has(identity)
+    ) return false;
+    identities.add(identity);
+    return true;
+  });
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ postId: string }> },
@@ -133,6 +162,12 @@ export async function POST(
     const body = await readOptionalJsonBody(request);
     const workflowContext = extractWorkflowContext(body);
     const post = await getSocialPost(workspaceId, postId);
+    if (!hasCompleteStableMediaBinding(post)) {
+      return NextResponse.json(
+        { success: false, error: "Every published media item must have one ordered Workspace-owned SHA-256 reference." },
+        { status: 409 },
+      );
+    }
     const forceNow = body.forceNow === true;
     const now = new Date();
     const isFuturePublishing =
@@ -143,6 +178,49 @@ export async function POST(
     const canForceNow =
       forceNow &&
       (post.status === "queued" || isFuturePublishing);
+
+    let governedTriggerSource: string | undefined;
+    let governedPublishAt: Date | undefined;
+    let inspectedGoverned: InspectedSocialPublishingApproval | null = null;
+    if (await requiresGovernedPublishingPlan(workspaceId)) {
+      const approvalResult = socialPublishingApprovalEvidenceSchema.safeParse(body.publishingApproval);
+      const idempotencyKey = readString(body.idempotencyKey);
+      if (!approvalResult.success || !idempotencyKey || approvalResult.data.consumingPrincipalId !== result.session.user.id) {
+        return NextResponse.json(
+          { success: false, error: "This Workspace requires exact Publishing Approval evidence, actor-bound release authorization, and a stable idempotencyKey." },
+          { status: 409 },
+        );
+      }
+      const inspected = await PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION.inspect({
+        workspaceId,
+        socialAccountId: post.socialAccountId,
+        evidence: approvalResult.data,
+      });
+      const postMedia = (post.mediaUrls ?? []).map((media) => ({ type: media.type, url: media.url }));
+      const targetMedia = inspected?.target.media.map((media) => ({ type: "image", url: media.previewUrl })) ?? [];
+      const postStableMedia = (post.stableMediaRefs ?? []).map((reference) => ({ resourceKind: reference.resourceKind ?? "studio_asset", assetId: reference.assetId, assetDigest: reference.assetDigest, order: reference.order }));
+      const targetStableMedia = inspected?.target.media.map((media, order) => ({ resourceKind: "artifact", assetId: media.artifactId, assetDigest: media.digest, order })) ?? [];
+      if (
+        !inspected || post.content?.trim() !== inspected.target.content.text ||
+        canonicalDigest(post.platformSettings ?? {}) !== canonicalDigest(inspected.target.settings) ||
+        canonicalDigest(postStableMedia) !== canonicalDigest(targetStableMedia) ||
+        canonicalDigest(postMedia) !== canonicalDigest(targetMedia) ||
+        (forceNow && inspected.target.timing.kind !== "now")
+      ) return NextResponse.json(
+        { success: false, error: "The current post does not match the exact approved Plan Revision target." },
+        { status: 409 },
+      );
+      inspectedGoverned = inspected;
+      governedPublishAt = new Date(inspected.target.timing.publishAt);
+      governedTriggerSource = governedPublishingMarker({
+        schema: "governed-social-publishing/v1",
+        approvalRequestId: inspected.requestId,
+        targetId: inspected.target.targetId,
+        targetEvidenceDigest: inspected.target.targetEvidenceDigest,
+        consumingPrincipalId: result.session.user.id,
+        idempotencyKey,
+      });
+    }
 
     if (!PUBLISHABLE_STATES.has(post.status) && !canForceNow) {
       return NextResponse.json(
@@ -182,8 +260,16 @@ export async function POST(
       );
     }
 
+    if (inspectedGoverned) {
+      const consumption = await PRODUCTION_SOCIAL_PUBLISHING_APPROVAL_ADMISSION.consume({ workspaceId, inspected: inspectedGoverned });
+      if (consumption !== "consumed") return NextResponse.json(
+        { success: false, error: "Publishing Approval release authorization is stale or already consumed." },
+        { status: 409 },
+      );
+    }
+
     const dispatchAttempts = (post.dispatchAttempts ?? 0) + 1;
-    const dispatchKey = `publish:${postId}:${dispatchAttempts}`;
+    const dispatchKey = `publish:${result.session.user.id}:${postId}:${dispatchAttempts}`;
     const dispatchClaimToken = randomUUID();
     const eventMetadata = {
       previousStatus: post.status,
@@ -193,8 +279,11 @@ export async function POST(
     };
 
     // Transition to "queued" and persist dispatch intent metadata first.
+    if (governedTriggerSource) {
+      await updateSocialPost(workspaceId, postId, { triggerSource: governedTriggerSource });
+    }
     await updatePostStatus(postId, "queued", {
-      ...(forceNow ? { scheduledAt: now } : {}),
+      ...(governedPublishAt ? { scheduledAt: governedPublishAt } : forceNow ? { scheduledAt: now } : {}),
       errorMessage: null,
       retryCount: post.status === "failed" ? 0 : undefined,
       dispatchStatus: "pending",
