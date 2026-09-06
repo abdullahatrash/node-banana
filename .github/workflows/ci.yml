@@ -47,6 +47,9 @@ jobs:
       - name: Check YouTube SDK integration
         run: pnpm test:run src/lib/social/providers/__tests__/youtube.test.ts src/lib/social/providers/__tests__/youtube.contract.test.ts
 
+      - name: Check authentication forms and redirect contracts
+        run: pnpm test:run src/components/auth/__tests__/AuthPages.test.tsx src/lib/auth/__tests__/identity-erasure-contract.test.ts src/lib/auth/__tests__/post-auth-destination.test.ts
+
   build-prodlike:
     name: build-prodlike
     runs-on: ubuntu-latest
