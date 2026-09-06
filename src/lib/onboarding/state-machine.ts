@@ -18,6 +18,7 @@ const COMMAND_STEP: Record<OnboardingCommandType, OnboardingStep> = {
   edit_brand_profile: "review",
   accept_brand_profile: "review",
   retry_analysis: "review",
+  retry_preparation: "review",
   complete: "education",
 };
 
@@ -66,6 +67,9 @@ export function transitionOnboarding(
       409,
     );
   }
+
+  // Dispatch recovery preserves the questionnaire position and saved run.
+  if (command === "retry_preparation") return state;
 
   if (command === "go_back") {
     const previousStep = PREVIOUS_STEP[state.currentStep];

@@ -278,6 +278,7 @@ export const onboardingCommandRequestSchema = z.discriminatedUnion("type", [
   z.object({ ...commandBase, type: z.literal("change_brand_source"), payload: z.object({}).strict() }).strict(),
   z.object({ ...commandBase, type: z.literal("edit_brand_profile"), payload: z.object({ profileId: idSchema, correction: brandProfileCorrectionSchema }).strict() }).strict(),
   z.object({ ...commandBase, type: z.literal("accept_brand_profile"), payload: z.object({ profileId: idSchema }).strict() }).strict(),
+  z.object({ ...commandBase, type: z.literal("retry_preparation"), payload: z.object({ runId: idSchema }).strict() }).strict(),
   z.object({ ...commandBase, type: z.literal("retry_analysis"), payload: z.object({}).strict() }).strict(),
   z.object({ ...commandBase, type: z.literal("complete"), payload: z.object({}).strict() }).strict(),
 ]);

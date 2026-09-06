@@ -10,6 +10,7 @@ const copyKeys = [
   "descriptionPlaceholder", "teamTitle", "teamSize", "revenue", "roleTitle",
   "businessTitle", "businessModel", "categories", "goalsTitle", "intent",
   "outcomes", "attributionTitle", "attributionSubtitle", "preparing",
+  "preparationPaused", "preparationPausedDetail", "preparationQueued", "preparationReady", "preparationReadyDetail", "retryPreparation",
   "preparingDetail", "profileTitle", "profileSubtitle", "acceptProfile",
   "editProfile", "saveProfile", "cancel", "sourceFailed", "sourceFailedDetail",
   "educationTitle", "educationSubtitle", "finish", "error", "changeSource",

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { InMemoryOnboardingRepository } from "../memory-repository";
 import { InMemoryOnboardingQueue } from "../queue";
 import type { BrandProfileRecord } from "../repository";
@@ -204,6 +204,30 @@ describe("DefaultOnboardingService", () => {
     expect(repository.sources.size).toBe(1);
     expect(repository.runs.size).toBe(1);
     expect(queue.scheduled.size).toBe(1);
+  });
+
+  it("exposes a failed dispatch after reload and retries the same saved run", async () => {
+    const { repository, queue, service } = testService();
+    await service.getSnapshot({ userId: "user_1" });
+    await service.execute({ userId: "user_1", command: identityCommand() });
+    const schedule = vi.spyOn(queue, "schedule").mockRejectedValueOnce(new Error("queue unavailable"));
+    await expect(service.execute({ userId: "user_1", command: {
+      type: "set_brand_source", expectedRevision: 1, idempotencyKey: "source_queue_failure",
+      payload: { kind: "description", description: "We help MENA brands create reliable Arabic content." },
+    } })).rejects.toMatchObject({ status: 503 });
+    const saved = await service.getSnapshot({ userId: "user_1" });
+    expect(saved.currentStep).toBe("company_stage");
+    expect(saved.analysis).toMatchObject({ status: "queued", errorCode: "WORKFLOW_DISPATCH_FAILED" });
+    const command = { type: "retry_preparation", expectedRevision: saved.revision, idempotencyKey: "retry_queue_failure", payload: { runId: saved.analysis!.runId } };
+    const recovered = await service.execute({ userId: "user_1", command });
+    expect(recovered.currentStep).toBe(saved.currentStep);
+    expect(recovered.analysis).toMatchObject({ runId: saved.analysis!.runId, status: "queued", errorCode: null });
+    await service.execute({ userId: "user_1", command });
+    expect(schedule).toHaveBeenCalledTimes(2);
+    expect(repository.sources.size).toBe(1);
+    expect(repository.runs.size).toBe(1);
+    expect(queue.scheduled.size).toBe(1);
+    await expect(service.execute({ userId: "user_1", command: { ...command, expectedRevision: recovered.revision, idempotencyKey: "wrong_run_retry", payload: { runId: "someone_elses_run" } } })).rejects.toMatchObject({ status: 409 });
   });
 
   it("rejects stale and out-of-order commands", async () => {

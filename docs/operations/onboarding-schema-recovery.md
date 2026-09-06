@@ -29,7 +29,7 @@ The integration test is opt-in and refuses any database except `127.0.0.1/.../on
 ONBOARDING_REHEARSAL_DATABASE_URL=postgresql://postgres:LOCAL_PASSWORD@127.0.0.1:55437/onboarding_rehearsal pnpm exec vitest run src/lib/onboarding/__tests__/production-schema-rehearsal.test.ts
 ```
 
-The production presence check passed after commit. Browser submission of the user's existing form was left to the user because automatic approval review blocked the workspace-creation side effect. Completing the remaining onboarding stages has not been verified.
+The production presence check passed after commit. Browser submission of the user's existing form was left to the user because automatic approval review blocked the workspace-creation side effect. The subsequent recovery rehearsal now also exercises source submission, a failed queue dispatch, an explicit retry of the saved run, and all draft-preparation stages with the real repository and configured generator. The draft and its suggestion reach ready without provider configuration. Live completion still requires retrying the saved run after deploying the application fix.
 
 ## Remaining database rollout work
 
@@ -44,3 +44,13 @@ node scripts/db-repair-onboarding-prerequisites.mjs --check
 ```
 
 Supply `DATABASE_URL` securely in the process environment. This presence check does not certify the rest of the schema or provider configuration.
+
+## Dispatch recovery and draft configuration
+
+The next observed production failure committed a source and queued analysis run, but its dispatch intent remained pending with `WORKFLOW_DISPATCH_FAILED`. A second browser click used a new command key and stale revision; refreshing advanced the questionnaire without resubmitting the job. Historical logs contain the HTTP 503 but no underlying exception. Both deployed Workflow queue endpoints passed the SDK health probe; the original submission rejection remains unclassified.
+
+Snapshots now expose a failed pending dispatch. `retry_preparation` validates the current user's exact saved analysis run and redispatches it while preserving questionnaire progress. It does not create another source or analysis run. The browser retains a command key across uncertain responses and offers recovery after reload. Queue failures log only bounded diagnostic labels and server-owned IDs, never exception messages or source content.
+
+Initial profiles and suggestions use the existing local draft path. Provider configuration is now checked when admitted external generation is requested, rather than when constructing the generator. External generation still requires the qualified model configuration and accepted Brand context; this incident fix does not enable or bypass that path. Arabic and English copy describes the draft accurately.
+
+The checked-in public Workflow manifest is stale; the build-generated manifest includes onboarding and its compiled entry point has the expected workflow ID. Do not treat the public file as proof that a production build omitted the workflow.

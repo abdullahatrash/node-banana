@@ -55,6 +55,7 @@ export function OnboardingFlow() {
   const copy = useOnboardingCopy();
   const optionLabels = useOnboardingOptionLabels();
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const pendingCommand = useRef<{ fingerprint: string; idempotencyKey: string } | null>(null);
   const [snapshot, setSnapshot] = useState<ParsedOnboardingSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -194,6 +195,11 @@ export function OnboardingFlow() {
     if (!baseSnapshot || submitting) return null;
     setSubmitting(true);
     setError(null);
+    const fingerprint = JSON.stringify({ type, expectedRevision: baseSnapshot.revision, payload });
+    if (pendingCommand.current?.fingerprint !== fingerprint) {
+      pendingCommand.current = { fingerprint, idempotencyKey: crypto.randomUUID() };
+    }
+    const idempotencyKey = pendingCommand.current.idempotencyKey;
     try {
       const response = await fetch("/api/onboarding", {
         method: "POST",
@@ -201,15 +207,18 @@ export function OnboardingFlow() {
         body: JSON.stringify({
           type,
           expectedRevision: baseSnapshot.revision,
-          idempotencyKey: crypto.randomUUID(),
+          idempotencyKey,
           payload,
         }),
       });
       const body = (await response.json()) as ApiResponse;
       if (!response.ok || !body.snapshot) {
-        if (response.status === 409) await fetchSnapshot(true);
+        if (response.status >= 400 && response.status < 500) pendingCommand.current = null;
+        // A command can be saved before dispatch fails. Show that durable state.
+        if (response.status === 409 || response.status === 503) await fetchSnapshot(true);
         throw new Error(body.error);
       }
+      pendingCommand.current = null;
       hydrate(body.snapshot);
       return body.snapshot;
     } catch (submitError) {
@@ -399,13 +408,14 @@ export function OnboardingFlow() {
       );
       break;
     case "review": {
-      const failed = snapshot.analysis?.status.startsWith("failed_");
+      const dispatchFailed = snapshot.analysis?.errorCode === "WORKFLOW_DISPATCH_FAILED";
+      const failed = snapshot.analysis?.status.startsWith("failed_") || dispatchFailed;
       const ready = snapshot.analysis?.status === "ready" && snapshot.draftBrandProfile;
       content = (
         <div>
           <h2 className="text-2xl font-semibold text-white">{failed ? copy.sourceFailed : copy.profileTitle}</h2>
           {failed ? (
-            <div className="mt-6 rounded-2xl border border-red-400/20 bg-red-400/[0.06] p-5"><p className="text-sm leading-6 text-stone-300">{copy.sourceFailedDetail}</p><div className="mt-5 flex flex-wrap gap-3"><button disabled={submitting} onClick={() => void send("retry_analysis", {})} className="rounded-xl bg-amber-300 px-5 py-3 text-sm font-bold text-stone-950 disabled:opacity-50">{copy.retry}</button><button disabled={submitting} onClick={() => void send("change_brand_source", {})} className="rounded-xl border border-white/15 px-5 py-3 text-sm text-white disabled:opacity-50">{copy.changeSource}</button></div></div>
+            <div className="mt-6 rounded-2xl border border-red-400/20 bg-red-400/[0.06] p-5"><p className="text-sm leading-6 text-stone-300">{copy.sourceFailedDetail}</p><div className="mt-5 flex flex-wrap gap-3"><button disabled={submitting} onClick={() => void send(dispatchFailed ? "retry_preparation" : "retry_analysis", dispatchFailed ? { runId: snapshot.analysis!.runId } : {})} className="rounded-xl bg-amber-300 px-5 py-3 text-sm font-bold text-stone-950 disabled:opacity-50">{copy.retry}</button><button disabled={submitting} onClick={() => void send("change_brand_source", {})} className="rounded-xl border border-white/15 px-5 py-3 text-sm text-white disabled:opacity-50">{copy.changeSource}</button></div></div>
           ) : ready ? (
             <><div className="mt-6"><BrandProfileReview profile={snapshot.draftBrandProfile!} locale={locale} saving={submitting} onSave={async (correction) => Boolean(await send("edit_brand_profile", { profileId: snapshot.draftBrandProfileId, correction }))} /></div><button disabled={submitting} onClick={() => void send("accept_brand_profile", { profileId: snapshot.draftBrandProfileId })} className="mt-7 flex min-h-13 w-full items-center justify-center gap-2 rounded-2xl bg-amber-300 px-5 py-3 text-sm font-bold text-stone-950 disabled:opacity-40">{submitting ? copy.saving : copy.acceptProfile}<ContinueIcon className="size-4" /></button><button disabled={submitting} onClick={() => void send("change_brand_source", {})} className="mt-4 text-sm text-stone-400 underline hover:text-white">{copy.changeSource}</button></>
           ) : (
@@ -432,7 +442,7 @@ export function OnboardingFlow() {
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#100e0c] px-4 py-8 text-stone-100 sm:px-6">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_-10%,rgba(217,119,6,0.24),transparent_38%),linear-gradient(rgba(255,255,255,0.018)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.018)_1px,transparent_1px)] bg-[size:auto,36px_36px,36px_36px]" />
-      <PreparationStatus analysis={snapshot.analysis} locale={locale} />
+      <PreparationStatus analysis={snapshot.analysis} locale={locale} retrying={submitting} onRetry={() => void send("retry_preparation", { runId: snapshot.analysis!.runId })} />
       <div className="relative mx-auto max-w-4xl">
         <header className="flex items-center justify-between gap-4"><div className="text-sm font-bold tracking-tight text-white">{copy.brandBase}<span className="text-amber-300">{copy.brandAccent}</span></div><LanguageSwitcher className="border border-white/10 bg-white/5 text-stone-200 hover:bg-white/10" /></header>
         <div className="mx-auto mt-12 max-w-2xl text-center"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-300">{copy.eyebrow}</p><h1 ref={headingRef} tabIndex={-1} className="mt-3 text-3xl font-semibold tracking-tight text-white outline-none sm:text-5xl">{copy.title}</h1><p className="mx-auto mt-4 max-w-xl text-sm leading-7 text-stone-400">{copy.subtitle}</p></div>
