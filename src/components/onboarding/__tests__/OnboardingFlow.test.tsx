@@ -104,6 +104,33 @@ describe("OnboardingFlow", () => {
     });
   });
 
+  it("shows a saved dispatch failure and retries its existing run after reload", async () => {
+    useDirectionStore.setState({ locale: "en", direction: "ltr" });
+    const waiting = { ...snapshot("company_stage", 2), analysis: { runId: "run_1", stage: "queued" as const, status: "queued" as const, errorCode: "WORKFLOW_DISPATCH_FAILED", retryOfRunId: null } };
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ success: true, snapshot: waiting }))
+      .mockResolvedValueOnce(json({ success: true, snapshot: { ...waiting, revision: 3, analysis: { ...waiting.analysis, errorCode: null } } }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<OnboardingFlow />);
+    fireEvent.click(await screen.findByRole("button", { name: "Retry preparation" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ type: "retry_preparation", expectedRevision: 2, payload: { runId: "run_1" } });
+    expect(screen.getByRole("heading", { name: "Tell us about your current stage" })).toBeInTheDocument();
+  });
+
+  it("reuses the command identity when a response is lost", async () => {
+    useDirectionStore.setState({ locale: "en", direction: "ltr" });
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ success: true, snapshot: snapshot("company_stage", 2) }))
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(json({ success: true, snapshot: snapshot("role", 3) }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<OnboardingFlow />);
+    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+    await screen.findByText("Failed to fetch");
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock.mock.calls[2][1].body).toBe(fetchMock.mock.calls[1][1].body);
+  });
+
   it("renders English without changing the stored content language", async () => {
     useDirectionStore.setState({ locale: "en", direction: "ltr" });
     document.documentElement.dir = "ltr";

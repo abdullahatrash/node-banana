@@ -179,6 +179,17 @@ export class DefaultOnboardingService {
     private readonly profileGenerator?: () => BrandProfileGenerator,
   ) {}
 
+  private async snapshot(aggregate: OnboardingAggregate): Promise<OnboardingSnapshot> {
+    const snapshot = snapshotFromAggregate(aggregate);
+    if (snapshot.analysis?.status === "queued" && snapshot.workspaceId) {
+      const intent = await this.repository.getAnalysisDispatchIntent(snapshot.workspaceId, snapshot.analysis.runId);
+      if (intent?.status === "pending" && intent.lastErrorCode) {
+        snapshot.analysis.errorCode = intent.lastErrorCode;
+      }
+    }
+    return snapshot;
+  }
+
   private async scheduleAnalysis(input: { workspaceId: string; runId: string }) {
     const intent = await this.repository.getAnalysisDispatchIntent(
       input.workspaceId,
@@ -234,7 +245,7 @@ export class DefaultOnboardingService {
         500,
       );
     }
-    const snapshot = snapshotFromAggregate(aggregate);
+    const snapshot = await this.snapshot(aggregate);
     await recordOnboardingEventBestEffort(this.analytics, {
       eventName: "step_viewed",
       userId: aggregate.session.userId,
@@ -276,7 +287,8 @@ export class DefaultOnboardingService {
     }
     if (receipt.kind === "replayed") {
       if (
-        (command.type === "set_brand_source" || command.type === "retry_analysis") &&
+        (command.type === "set_brand_source" || command.type === "retry_analysis" ||
+          (command.type === "retry_preparation" && command.payload.runId === aggregate.analysis?.id)) &&
         aggregate.session.workspaceId &&
         aggregate.analysis?.status === "queued"
       ) {
@@ -285,7 +297,7 @@ export class DefaultOnboardingService {
           runId: aggregate.analysis.id,
         });
       }
-      return snapshotFromAggregate(aggregate);
+      return this.snapshot(aggregate);
     }
     if (command.expectedRevision !== aggregate.session.revision) {
       throw new OnboardingError(
@@ -303,6 +315,12 @@ export class DefaultOnboardingService {
         "The selected Brand Profile is no longer the current draft.",
         409,
       );
+    }
+
+    if (command.type === "retry_preparation" && (
+      command.payload.runId !== aggregate.analysis?.id || aggregate.analysis?.status !== "queued"
+    )) {
+      throw new OnboardingError("ONBOARDING_COMMAND_INVALID", "This preparation run is no longer waiting to be queued.", 409);
     }
 
     const transition = transitionOnboarding(
@@ -533,7 +551,7 @@ export class DefaultOnboardingService {
       );
     }
     if (
-      (command.type === "set_brand_source" || command.type === "retry_analysis") &&
+      (command.type === "set_brand_source" || command.type === "retry_analysis" || command.type === "retry_preparation") &&
       updated.session.workspaceId &&
       updated.analysis?.status === "queued"
     ) {
@@ -577,7 +595,7 @@ export class DefaultOnboardingService {
         eventName: "onboarding_completed",
       });
     }
-    return snapshotFromAggregate(updated);
+    return this.snapshot(updated);
   }
 }
 

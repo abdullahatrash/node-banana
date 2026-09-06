@@ -271,13 +271,30 @@ describe("ValidatedBrandProfileGenerator", () => {
     expect(client.requests).toHaveLength(0);
   });
 
-  it("fails closed when the configured model or API key is unavailable", () => {
+  it("rejects an unsupported model override", () => {
     expect(() =>
       createConfiguredBrandProfileGenerator({
         modelKey: "unknown-model",
         environment: { NODE_ENV: "test" },
       }),
     ).toThrowError(BrandProfileGenerationError);
-    expect(() => createConfiguredBrandProfileGenerator({ environment: { NODE_ENV: "test" } })).toThrowError(BrandProfileGenerationError);
+  });
+
+  it("prepares the initial profile and suggestion without provider configuration", async () => {
+    const generator = createConfiguredBrandProfileGenerator({ environment: { NODE_ENV: "test" } });
+    const profile = await generator.generateProfile({ source, answers, contentLanguage: "en" });
+    expect(profile.identity.companyName).toBe(answers.identity?.companyName);
+    await expect(generator.generateActivationArtifact({
+      brandProfileId: "profile_1", profile,
+      control: { workspaceId: source.workspaceId, userId: source.createdByUserId, idempotencyKey: "draft", revision: 1, status: "draft" },
+    })).resolves.toMatchObject({ brandProfileId: "profile_1", contentLanguage: "en" });
+  });
+
+  it("still fails closed on external generation without provider configuration", async () => {
+    const generator = createConfiguredBrandProfileGenerator({ environment: { NODE_ENV: "test" } });
+    await expect(generator.generateActivationArtifact({
+      brandProfileId: "profile_1", profile: validProfile("en"),
+      control: { workspaceId: source.workspaceId, userId: source.createdByUserId, idempotencyKey: "active", revision: 1, status: "active" },
+    })).rejects.toMatchObject({ code: "MODEL_CONFIGURATION_UNAVAILABLE", retryable: false });
   });
 });
