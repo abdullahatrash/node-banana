@@ -50,6 +50,9 @@ jobs:
       - name: Check authentication forms and redirect contracts
         run: pnpm test:run src/components/auth/__tests__/AuthPages.test.tsx src/lib/auth/__tests__/identity-erasure-contract.test.ts src/lib/auth/__tests__/post-auth-destination.test.ts
 
+      - name: Check onboarding preparation and recovery
+        run: pnpm test:run src/lib/onboarding src/components/onboarding/__tests__ src/app/api/onboarding/__tests__
+
   build-prodlike:
     name: build-prodlike
     runs-on: ubuntu-latest
