@@ -22,6 +22,7 @@ import type { SocialPost } from "@/lib/social/client"
 import type { SocialPostStatus } from "@/lib/db/schema"
 import { useFormatter, useTranslations } from "next-intl"
 import { useClientErrorPresentation } from "@/hooks/use-client-error-presentation"
+import { SOCIAL_CHANNEL_UNAVAILABLE } from "@/lib/social/publishing-errors"
 
 interface PostRowProps {
   post: SocialPost
@@ -30,6 +31,7 @@ interface PostRowProps {
 
 export function PostRow({ post, onMutate }: PostRowProps) {
   const t = useTranslations("social.posts")
+  const tCalendar = useTranslations("social.calendarUi")
   const format = useFormatter()
   const router = useRouter()
   const { show: showToast } = useToast()
@@ -197,7 +199,9 @@ export function PostRow({ post, onMutate }: PostRowProps) {
           </button>
           {showError && (
             <div className="px-3 pb-2 text-[10px] text-destructive/80">
-              {post.errorMessage}
+              {post.errorMessage === SOCIAL_CHANNEL_UNAVAILABLE
+                ? tCalendar("destinationUnavailable")
+                : post.errorMessage}
             </div>
           )}
         </div>

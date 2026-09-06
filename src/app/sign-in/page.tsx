@@ -4,7 +4,11 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useState } from "react";
 import { authClient } from "@/lib/auth/client";
-import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { AuthShell } from "@/components/auth/AuthShell";
+import { PasswordField } from "@/components/auth/PasswordField";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { ArrowRightIcon, LoaderCircleIcon } from "lucide-react";
 import { isSafeLocalPath } from "@/lib/auth/post-auth-destination";
 import { useTranslations } from "next-intl";
 
@@ -78,64 +82,30 @@ function SignInForm() {
   };
 
   return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center px-4">
-      <div className="fixed top-4 end-4 z-10">
-        <LanguageSwitcher />
-      </div>
-      <div className="w-full max-w-md border border-neutral-800 bg-neutral-900 rounded-xl p-6">
-        <h1 className="text-xl font-semibold">{t("title")}</h1>
-        <p className="text-sm text-neutral-400 mt-1">{t("subtitle")}</p>
-        {identityErased ? <p role="status" className="mt-4 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">{t("erased")}</p> : null}
-
-        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-          <label className="block">
-            <span className="text-xs text-neutral-400">{common("email")}</span>
-            <input
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              className="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 outline-none focus:border-neutral-500"
-              placeholder={common("emailPlaceholder")}
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-xs text-neutral-400">{common("password")}</span>
-            <input
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 outline-none focus:border-neutral-500"
-              placeholder="••••••••"
-            />
-          </label>
-
-          {error && (
-            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">
-              {error}
-            </p>
-          )}
-
-          <button
-            type="submit"
-            disabled={isSubmitting || isPending}
-            className="w-full rounded-md bg-neutral-100 text-neutral-900 py-2 text-sm font-medium hover:bg-neutral-200 disabled:opacity-60"
-          >
-            {isSubmitting ? t("submitting") : t("submit")}
-          </button>
-        </form>
-
-        <p className="mt-4 text-xs text-neutral-400">
-          {t("newAccount")}{" "}
-          <Link href="/sign-up" className="text-neutral-200 hover:text-white underline underline-offset-2">
-            {t("signUp")}
-          </Link>
-        </p>
-      </div>
-    </main>
+    <AuthShell title={t("title")} description={t("subtitle")} footer={
+      <>{t("newAccount")}{" "}<Link href="/sign-up" className="font-medium text-foreground underline-offset-4 hover:underline">{t("signUp")}</Link></>
+    }>
+      {identityErased ? <p role="status" className="mb-6 rounded-xl border border-emerald-600/20 bg-emerald-500/10 px-4 py-3 text-sm leading-6 text-emerald-800 dark:text-emerald-200">{t("erased")}</p> : null}
+      <form onSubmit={handleSubmit} aria-busy={isSubmitting} className="space-y-5">
+        <div className="space-y-2">
+          <label htmlFor="sign-in-email" className="text-sm font-medium">{common("email")}</label>
+          <Input id="sign-in-email" type="email" dir="ltr" autoComplete="email" required value={email}
+            onChange={(event) => setEmail(event.target.value)} className="h-11" placeholder={common("emailPlaceholder")}
+            aria-invalid={!!error} aria-describedby={error ? "sign-in-error" : undefined} />
+        </div>
+        <div className="space-y-2">
+          <label htmlFor="sign-in-password" className="text-sm font-medium">{common("password")}</label>
+          <PasswordField id="sign-in-password" autoComplete="current-password" required value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            aria-invalid={!!error} aria-describedby={error ? "sign-in-error" : undefined} />
+        </div>
+        {error ? <p id="sign-in-error" role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm leading-6 text-destructive">{error}</p> : null}
+        <Button type="submit" disabled={isSubmitting || isPending} className="h-11 w-full gap-2 text-sm">
+          {isSubmitting ? <LoaderCircleIcon className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> : null}
+          {isSubmitting ? t("submitting") : t("submit")}
+          {!isSubmitting ? <ArrowRightIcon className="size-4 rtl:rotate-180" aria-hidden="true" /> : null}
+        </Button>
+      </form>
+    </AuthShell>
   );
 }

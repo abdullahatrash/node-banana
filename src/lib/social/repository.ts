@@ -957,6 +957,8 @@ export async function createSocialPost(input: {
   mediaReferences?: SocialPostMediaReference[];
   createdByUserId: string;
 }) {
+  // Enforce channel ownership for every caller, including agents and automation.
+  await getSocialAccount(input.workspaceId, input.socialAccountId);
   const db = getDb();
   const id = `spost_${randomUUID()}`;
   const now = new Date();

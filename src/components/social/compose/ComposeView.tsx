@@ -63,7 +63,8 @@ export function ComposeView() {
   const hasChannels = selectedAccountIds.length > 0
   const canPublish = hasContent && hasChannels
   const canSchedule = canPublish && scheduledAt && scheduledAt > new Date()
-  const sourceAccountId = editSourceAccountId ?? selectedAccountIds[0] ?? null
+  const sourceAccountId = editSourceAccountId
+  const updateOriginal = !!postId && !!sourceAccountId && selectedAccountIds.includes(sourceAccountId)
   const mediaReferences = mediaUrls.map((media) => ({ resourceKind: media.resourceKind ?? "studio_asset" as const, id: media.assetId ?? "", ...(media.assetDigest ? { digest: media.assetDigest } : {}) }))
 
   function getAccountMaps() {
@@ -103,11 +104,11 @@ export function ComposeView() {
     try {
       const preparedSettings = getPreparedSettings()
 
-      if (postId) {
+      if (postId && updateOriginal) {
         await updateSocialPost(postId, {
           content,
-          mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
-          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
+          mediaUrls,
+          mediaReferences,
           platformSettings: sourceAccountId
             ? preparedSettings[sourceAccountId]
             : undefined,
@@ -115,7 +116,7 @@ export function ComposeView() {
         })
       }
 
-      const extraAccountIds = postId
+      const extraAccountIds = updateOriginal
         ? selectedAccountIds.filter((accountId) => accountId !== sourceAccountId)
         : selectedAccountIds
 
@@ -123,8 +124,8 @@ export function ComposeView() {
         await createSocialPost({
           socialAccountId: accountId,
           content,
-          mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
-          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
+          mediaUrls,
+          mediaReferences,
           platformSettings: preparedSettings[accountId],
           scheduledAt: scheduledAt?.toISOString(),
         })
@@ -166,11 +167,11 @@ export function ComposeView() {
       const publishQueue: string[] = []
       const preparedSettings = getPreparedSettings()
 
-      if (postId) {
+      if (postId && updateOriginal) {
         const updated = await updateSocialPost(postId, {
           content,
-          mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
-          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
+          mediaUrls,
+          mediaReferences,
           platformSettings: sourceAccountId
             ? preparedSettings[sourceAccountId]
             : undefined,
@@ -179,7 +180,7 @@ export function ComposeView() {
         publishQueue.push(updated.id)
       }
 
-      const extraAccountIds = postId
+      const extraAccountIds = updateOriginal
         ? selectedAccountIds.filter((accountId) => accountId !== sourceAccountId)
         : selectedAccountIds
 
@@ -187,8 +188,8 @@ export function ComposeView() {
         const created = await createSocialPost({
           socialAccountId: accountId,
           content,
-          mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
-          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
+          mediaUrls,
+          mediaReferences,
           platformSettings: preparedSettings[accountId],
           scheduledAt: scheduledAt!.toISOString(),
         })
@@ -225,11 +226,11 @@ export function ComposeView() {
       const publishQueue: string[] = []
       const preparedSettings = getPreparedSettings()
 
-      if (postId) {
+      if (postId && updateOriginal) {
         const updated = await updateSocialPost(postId, {
           content,
-          mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
-          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
+          mediaUrls,
+          mediaReferences,
           platformSettings: sourceAccountId
             ? preparedSettings[sourceAccountId]
             : undefined,
@@ -238,7 +239,7 @@ export function ComposeView() {
         publishQueue.push(updated.id)
       }
 
-      const extraAccountIds = postId
+      const extraAccountIds = updateOriginal
         ? selectedAccountIds.filter((accountId) => accountId !== sourceAccountId)
         : selectedAccountIds
 
@@ -246,8 +247,8 @@ export function ComposeView() {
         const created = await createSocialPost({
           socialAccountId: accountId,
           content,
-          mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
-          mediaReferences: mediaUrls.length > 0 ? mediaReferences : undefined,
+          mediaUrls,
+          mediaReferences,
           platformSettings: preparedSettings[accountId],
         })
         publishQueue.push(created.id)

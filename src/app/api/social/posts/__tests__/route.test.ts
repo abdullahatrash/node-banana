@@ -6,6 +6,7 @@ const mockCreateSocialPost = vi.fn();
 const mockListSocialPosts = vi.fn();
 const mockGetSocialPost = vi.fn();
 const mockGetSocialAccountById = vi.fn();
+const mockGetSocialAccount = vi.fn();
 const mockUpdateSocialPost = vi.fn();
 const mockDeleteSocialPost = vi.fn();
 const mockUpdatePostStatus = vi.fn();
@@ -34,6 +35,8 @@ vi.mock("@/lib/social/repository", () => ({
   listSocialPosts: mockListSocialPosts,
   getSocialPost: mockGetSocialPost,
   getSocialAccountById: mockGetSocialAccountById,
+  getSocialAccount: mockGetSocialAccount,
+  SocialAccountNotFoundError: class extends Error { constructor() { super("Channel not found."); } },
   updateSocialPost: mockUpdateSocialPost,
   deleteSocialPost: mockDeleteSocialPost,
   updatePostStatus: mockUpdatePostStatus,
@@ -109,6 +112,7 @@ function createRequest(
 describe("/api/social/posts", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetSocialAccount.mockReset().mockResolvedValue({ id: "sacct_1", workspaceId: "ws_1", platform: "x", displayName: "X Channel" });
     mockCountSocialPostsCreatedInRange.mockResolvedValue(0);
   });
 
@@ -167,6 +171,21 @@ describe("/api/social/posts", () => {
   });
 
   describe("POST /api/social/posts", () => {
+    it("rejects another workspace's channel before creating a draft", async () => {
+      authorized();
+      const { SocialAccountNotFoundError } = await import("@/lib/social/repository");
+      mockGetSocialAccount.mockRejectedValue(new SocialAccountNotFoundError("foreign"));
+      mockGetSocialAccountById.mockResolvedValue({ id: "foreign", workspaceId: "ws_2", platform: "x" });
+      mockCreateSocialPost.mockResolvedValue({ id: "unsafe", status: "draft" });
+      const { POST } = await import("../../posts/route");
+      const response = await POST(createRequest(undefined, {
+        method: "POST",
+        body: JSON.stringify({ socialAccountId: "foreign", content: "Hello" }),
+      }));
+      expect(response.status).toBe(404);
+      expect(mockCreateSocialPost).not.toHaveBeenCalled();
+    });
+
     it("creates a draft post", async () => {
       authorized();
       mockCountSocialPostsCreatedInRange.mockResolvedValue(1);
@@ -293,6 +312,7 @@ describe("/api/social/posts", () => {
 describe("/api/social/posts/[postId]/publish", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetSocialAccount.mockReset().mockResolvedValue({ id: "sacct_1", workspaceId: "ws_1", platform: "x", displayName: "X Channel" });
     mockHasChainChildren.mockResolvedValue(false);
     mockGetSocialAccountById.mockResolvedValue({
       id: "sacct_1",
@@ -334,6 +354,19 @@ describe("/api/social/posts/[postId]/publish", () => {
       { params: Promise.resolve({ postId: "spost_1" }) },
     );
     expect(response.status).toBe(401);
+  });
+
+  it("rejects a legacy draft linked to another workspace's channel before dispatch", async () => {
+    authorized();
+    const { SocialAccountNotFoundError } = await import("@/lib/social/repository");
+    mockGetSocialAccount.mockRejectedValue(new SocialAccountNotFoundError("foreign"));
+    mockGetSocialAccountById.mockResolvedValue({ id: "foreign", workspaceId: "ws_2", platform: "x" });
+    mockGetSocialPost.mockResolvedValue({ id: "spost_1", workspaceId: "ws_1", socialAccountId: "foreign", status: "draft", content: "Hello" });
+    const { POST } = await import("../../posts/[postId]/publish/route");
+    const response = await POST(createRequest("http://localhost:3000/api/social/posts/spost_1/publish", { method: "POST" }), { params: Promise.resolve({ postId: "spost_1" }) });
+    expect(response.status).toBe(404);
+    expect(mockUpdatePostStatus).not.toHaveBeenCalled();
+    expect(mockWorkflowStart).not.toHaveBeenCalled();
   });
 
   it("transitions draft → queued", async () => {
@@ -392,7 +425,7 @@ describe("/api/social/posts/[postId]/publish", () => {
       platformSettings: { privacyStatus: "private" },
       socialAccountId: "sacct_youtube",
     });
-    mockGetSocialAccountById.mockResolvedValue({
+    mockGetSocialAccount.mockResolvedValue({
       id: "sacct_youtube",
       platform: "youtube",
       displayName: "Studio YouTube",

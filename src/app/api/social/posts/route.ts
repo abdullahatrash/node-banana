@@ -1,3 +1,4 @@
+import { SOCIAL_CHANNEL_UNAVAILABLE } from "@/lib/social/publishing-errors";
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db";
 import { withApiPermission } from "@/lib/studio/authz";
@@ -5,6 +6,8 @@ import { getSocialPlanLimits, quotaExceededPayload } from "@/lib/social/limits";
 import {
   countSocialPostsCreatedInRange,
   createSocialPost,
+  getSocialAccount,
+  SocialAccountNotFoundError,
   listSocialPosts,
 } from "@/lib/social/repository";
 import type { SocialPostStatus } from "@/lib/db/schema";
@@ -221,6 +224,8 @@ export async function POST(
       );
     }
 
+    await getSocialAccount(result.session.workspace.id, body.socialAccountId);
+
     const content = resolveContent(bodyRecord);
     const mediaUrls = resolveMediaUrls(bodyRecord);
     const workflowContext = extractWorkflowContext(bodyRecord);
@@ -321,6 +326,9 @@ export async function POST(
 
     return NextResponse.json({ success: true, post });
   } catch (error) {
+    if (error instanceof SocialAccountNotFoundError) {
+      return NextResponse.json({ success: false, error: SOCIAL_CHANNEL_UNAVAILABLE, code: SOCIAL_CHANNEL_UNAVAILABLE }, { status: 404 });
+    }
     return NextResponse.json(
       {
         success: false,

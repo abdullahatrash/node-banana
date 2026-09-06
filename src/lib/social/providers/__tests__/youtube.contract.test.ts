@@ -3,7 +3,7 @@
 /**
  * YouTube provider CONTRACT tests (MSW).
  *
- * Unlike `youtube.test.ts` — which replaces `googleapis` wholesale with
+ * Unlike `youtube.test.ts` — which replaces the Google API modules with
  * `vi.mock` — these tests exercise the *real* `googleapis`/`gaxios` SDK
  * against a mocked Google API boundary via MSW.
  *
@@ -22,7 +22,7 @@
  * calls `part.body.pipe(...)` on the media body, so every real `post()` with
  * video media threw `TypeError: part.body.pipe is not a function` before any
  * HTTP request to the YouTube Data API was even made — YouTube publishing did
- * not work at all. `youtube.test.ts`'s `vi.mock("googleapis")` replaces the
+ * not work at all. `youtube.test.ts`'s module mocks replace the
  * whole SDK, so it never exercised the real multipart pipeline and could not
  * have caught this. Fixed by bridging with `Readable.fromWeb(response.body)`
  * (node:stream, Node 17+); scenario 1 below now drives the real pipeline.

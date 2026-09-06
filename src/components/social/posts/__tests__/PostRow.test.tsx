@@ -20,6 +20,24 @@ vi.mock("@/lib/social/client", async () => {
 import { PostRow } from "../PostRow"
 
 describe("PostRow bidirectional content", () => {
+  it("renders a persisted unavailable-channel code using authored Arabic copy", () => {
+    const post: SocialPost = {
+      id: "post_missing_channel", workspaceId: "workspace_1", socialAccountId: "foreign",
+      status: "failed", content: "محتوى", mediaUrls: null, stableMediaRefs: [],
+      platformSettings: null, scheduledAt: null, publishedAt: null, platformPostId: null,
+      platformPostUrl: null, errorMessage: "channel_not_found", retryCount: 0,
+      createdAt: "2026-09-01T08:00:00.000Z", updatedAt: "2026-09-01T08:00:00.000Z",
+    }
+    render(
+      <NextIntlClientProvider locale="ar" messages={messages} timeZone="UTC">
+        <PostRow post={post} onMutate={vi.fn()} />
+      </NextIntlClientProvider>,
+    )
+    fireEvent.click(screen.getByRole("button", { name: messages.social.posts.showError }))
+    expect(screen.getByText(messages.social.calendarUi.destinationUnavailable)).toBeInTheDocument()
+    expect(screen.queryByText("channel_not_found")).not.toBeInTheDocument()
+  })
+
   it("auto-detects English post content direction under Arabic UI", () => {
     const content = "Launch the campaign at 5 PM"
     const post: SocialPost = {

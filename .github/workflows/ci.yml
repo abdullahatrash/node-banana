@@ -30,7 +30,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Type check
-        run: pnpm typecheck
+        # Keep a cold, bounded check so dependency-type growth is visible in CI.
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: pnpm typecheck --incremental false --extendedDiagnostics
 
       - name: Check authored localization and logical RTL layout
         run: pnpm i18n:check
@@ -38,12 +41,21 @@ jobs:
       - name: Run Gate A deterministic tests
         run: pnpm test:gate-a
 
+      - name: Check publishing workspace isolation
+        run: pnpm test:publishing-safety
+
+      - name: Check YouTube SDK integration
+        run: pnpm test:run src/lib/social/providers/__tests__/youtube.test.ts src/lib/social/providers/__tests__/youtube.contract.test.ts
+
+      - name: Check authentication forms and redirect contracts
+        run: pnpm test:run src/components/auth/__tests__/AuthPages.test.tsx src/lib/auth/__tests__/identity-erasure-contract.test.ts src/lib/auth/__tests__/post-auth-destination.test.ts
+
   build-prodlike:
     name: build-prodlike
     runs-on: ubuntu-latest
     needs: test
     env:
-      NODE_OPTIONS: --max-old-space-size=8192
+      NODE_OPTIONS: --max-old-space-size=4096
       NODE_ENV: production
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/node_banana
       BETTER_AUTH_SECRET: ci-prodlike-auth-secret-7wqVb1L9pT2nX4mK8sR0dF6hJ3zQaC5
