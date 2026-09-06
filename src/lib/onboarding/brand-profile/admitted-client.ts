@@ -65,13 +65,13 @@ function providerPrompt(request: StructuredGenerationRequest) {
 /** Production onboarding text generation through the same intent, budget, region, effect and Operation controls as Studio. */
 export class AdmittedOnboardingStructuredGenerationClient implements StructuredGenerationClient {
   readonly requiresAdmission = true;
-  private readonly model: ExactModelRef;
-  constructor(private readonly environment: NodeJS.ProcessEnv = process.env) { this.model = configuredModel(environment); }
+  constructor(private readonly environment: NodeJS.ProcessEnv = process.env) {}
 
   async generate(request: StructuredGenerationRequest): Promise<unknown> {
     const admission = request.admission;
     if (!admission) throw new BrandProfileGenerationError("ADMITTED_GENERATION_UNAVAILABLE", false);
-    const model = this.model;
+    // Initial drafts never call generate; only admitted provider work needs a model.
+    const model = configuredModel(this.environment);
     const [brand] = await getDb().select().from(brandProfiles).where(and(eq(brandProfiles.workspaceId, admission.workspaceId), eq(brandProfiles.id, admission.brand.profileId), eq(brandProfiles.revision, admission.brand.revision), eq(brandProfiles.status, "active"))).limit(1);
     if (!brand?.acceptedAt) throw new BrandProfileGenerationError("ADMITTED_GENERATION_UNAVAILABLE", false);
     const loaded = await loadImmutableBrandContext({ workspaceId: admission.workspaceId, profileId: brand.id, revision: brand.revision, acceptedAt: brand.acceptedAt, profile: brand.profile });
