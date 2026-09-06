@@ -376,6 +376,20 @@ describe("social/repository", () => {
   });
 
   describe("updateSocialPost", () => {
+    it("clears stable media bindings when the composer removes its last attachment", async () => {
+      setupChainableMock([{
+        id: "spost_1", workspaceId: "ws_1", status: "draft",
+        mediaUrls: [{ type: "image", url: "https://example.com/old.png" }],
+        stableMediaRefs: [{ assetId: "asset_1", assetDigest: "digest", order: 0 }],
+        studioAssetId: "asset_1",
+      }]);
+      const { updateSocialPost } = await import("@/lib/social/repository");
+      await updateSocialPost("ws_1", "spost_1", { mediaUrls: [], mediaReferences: [] });
+      expect(mockSet).toHaveBeenCalledWith(expect.objectContaining({
+        mediaUrls: [], stableMediaRefs: [], studioAssetId: null,
+      }));
+    });
+
     it("rejects update on non-draft post", async () => {
       // getSocialPost returns a published post
       setupChainableMock([
