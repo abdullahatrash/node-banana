@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearRegistry } from "@/lib/social/provider-registry";
 
 // ---------------------------------------------------------------------------
-// Mock the googleapis module before importing the provider.
+// Mock the Google OAuth2 and YouTube modules before importing the provider.
 //
-// The googleapis OAuth2 class is instantiated via `new google.auth.OAuth2()`.
+// The OAuth2 class is instantiated via `new auth.OAuth2()`.
 // We use vi.hoisted() to declare per-test callable stubs and wire them into a
 // proper ES6 class constructor in the vi.mock() factory so `new` works.
 // ---------------------------------------------------------------------------
@@ -21,9 +21,9 @@ const mocks = vi.hoisted(() => ({
   thumbnailsSet: vi.fn(),
 }));
 
-vi.mock("googleapis", () => {
+vi.mock("googleapis/build/src/apis/oauth2", () => {
   // OAuth2 must be a real constructor (class/function) because the provider
-  // calls `new google.auth.OAuth2(...)`.
+  // calls `new auth.OAuth2(...)`.
   class OAuth2Mock {
     getToken = mocks.getToken;
     setCredentials = mocks.setCredentials;
@@ -32,19 +32,20 @@ vi.mock("googleapis", () => {
   }
 
   return {
-    google: {
-      auth: { OAuth2: OAuth2Mock },
-      youtube: vi.fn().mockReturnValue({
-        channels: { list: mocks.channelsList },
-        videos: { insert: mocks.videosInsert, list: mocks.videosList },
-        thumbnails: { set: mocks.thumbnailsSet },
-      }),
-      oauth2: vi.fn().mockReturnValue({
-        userinfo: { get: mocks.userinfoGet },
-      }),
-    },
+    auth: { OAuth2: OAuth2Mock },
+    oauth2: vi.fn().mockReturnValue({
+      userinfo: { get: mocks.userinfoGet },
+    }),
   };
 });
+
+vi.mock("googleapis/build/src/apis/youtube", () => ({
+  youtube: vi.fn().mockReturnValue({
+    channels: { list: mocks.channelsList },
+    videos: { insert: mocks.videosInsert, list: mocks.videosList },
+    thumbnails: { set: mocks.thumbnailsSet },
+  }),
+}));
 
 // Mock global fetch for video/thumbnail URL downloads
 const mockFetch = vi.fn();

@@ -1,7 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { Readable } from "node:stream";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
-import { google } from "googleapis";
+// The root googleapis entry loads declarations for every Google API into tsc.
+// Keep this adapter's dependency graph limited to OAuth2 and YouTube.
+import { auth, oauth2 } from "googleapis/build/src/apis/oauth2";
+import { youtube } from "googleapis/build/src/apis/youtube";
 import type {
   AuthenticateParams,
   AuthenticateResult,
@@ -34,7 +37,7 @@ function buildOAuth2Client(redirectUri?: string) {
       "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be configured",
     );
   }
-  return new google.auth.OAuth2({ clientId, clientSecret, redirectUri });
+  return new auth.OAuth2({ clientId, clientSecret, redirectUri });
 }
 
 /**
@@ -139,8 +142,8 @@ export const youTubeProvider: SocialProviderAdapter = {
     const { tokens } = await client.getToken(params.code);
     client.setCredentials(tokens);
 
-    const oauth2 = google.oauth2({ version: "v2", auth: client });
-    const { data: userInfo } = await oauth2.userinfo.get();
+    const oauth = oauth2({ version: "v2", auth: client });
+    const { data: userInfo } = await oauth.userinfo.get();
 
     const expiresIn = tokens.expiry_date
       ? Math.floor((tokens.expiry_date - Date.now()) / 1000)
@@ -180,7 +183,7 @@ export const youTubeProvider: SocialProviderAdapter = {
   ): Promise<PublishResult[]> {
     const client = buildOAuth2Client();
     client.setCredentials({ access_token: accessToken });
-    const yt = google.youtube({ version: "v3", auth: client });
+    const yt = youtube({ version: "v3", auth: client });
 
     const results: PublishResult[] = [];
 
@@ -256,7 +259,7 @@ export const youTubeProvider: SocialProviderAdapter = {
     const ids = validatePostMetricIds(request.platformPostIds, 50);
     const client = buildOAuth2Client();
     client.setCredentials({ access_token: request.accessToken });
-    const yt = google.youtube({ version: "v3", auth: client });
+    const yt = youtube({ version: "v3", auth: client });
     const response = await yt.videos.list({ part: ["snippet", "statistics"], id: ids, maxResults: ids.length });
     const sourceRef = `https://www.googleapis.com/youtube/v3/videos?part=snippet%2Cstatistics&id=${encodeURIComponent(ids.join(","))}`;
     const items = response.data.items ?? [];
@@ -347,7 +350,7 @@ export const youTubeProvider: SocialProviderAdapter = {
   async fetchPageInformation(accessToken: string): Promise<PageInfo[]> {
     const client = buildOAuth2Client();
     client.setCredentials({ access_token: accessToken });
-    const yt = google.youtube({ version: "v3", auth: client });
+    const yt = youtube({ version: "v3", auth: client });
 
     const response = await yt.channels.list({
       part: ["snippet"],
