@@ -780,6 +780,10 @@ _Avoid_: output blob, generated file, media item, fake run output
 A stable Workspace-owned creative work in one declared content format, spanning its editable configuration, revisions, source references, executions, and produced Artifacts. Its lifecycle is `active`, `archived`, or terminally `deleted`; it is the Library's canonical editable-content item, while execution and publishing states remain on their owning resources.
 _Avoid_: Content item, generation, project, Artifact, Post
 
+**Video Editor**:
+Tasmeemai's focused surface for trimming, splitting, and arranging video clips, sizing the composition for social formats, adding Arabic or English text and automatic subtitles, adding music or voiceover, and exporting the result.
+_Avoid_: Code editor, OpenCut, full production suite
+
 **Content Piece Draft**:
 A mutable autosaved working copy based on one exact Content Piece Revision and owned by one active editor. It uses optimistic versioning, is never executable or publishable, and becomes shared immutable history only when explicit Save, Preview, or Generate validation promotes it to a new Revision.
 _Avoid_: Current revision, unpublished Artifact, shared mutable document, form state
