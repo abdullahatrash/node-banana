@@ -1,7 +1,7 @@
 // THROWAWAY: local performance experiment, never a production route.
 import { createServer } from 'node:http';
 import { createReadStream, existsSync } from 'node:fs';
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, stat, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
@@ -13,9 +13,13 @@ const run = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../../../..');
 const require = createRequire(import.meta.url);
-const library = process.env.PROTOTYPE_DEPENDENCY_ROOT
-  ? join(process.env.PROTOTYPE_DEPENDENCY_ROOT, 'mediabunny/dist/bundles/mediabunny.mjs')
-  : require.resolve('mediabunny').replace(/mediabunny\.cjs$/, 'mediabunny.mjs');
+// Keep the upstream MP3 fix isolated from the app's other media consumers.
+const libraryRoot = process.env.PROTOTYPE_DEPENDENCY_ROOT
+  ? join(process.env.PROTOTYPE_DEPENDENCY_ROOT, 'mediabunny-reaction-prototype')
+  : resolve(dirname(require.resolve('mediabunny-reaction-prototype')), '../..');
+const libraryVersion=JSON.parse(await readFile(join(libraryRoot,'package.json'),'utf8')).version;
+if(libraryVersion!=='1.55.7')throw new Error(`Expected prototype media library 1.55.7, received ${libraryVersion}`);
+const library=join(libraryRoot,'dist/bundles/mediabunny.mjs');
 const media = process.env.PROTOTYPE_MEDIA_DIR || join(tmpdir(), 'tasmeemai-throwaway-reaction-export-v1');
 await mkdir(media, { recursive: true });
 // Synthetic moving footage and distinct audio tones. No external assets or AI calls.

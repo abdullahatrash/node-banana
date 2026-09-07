@@ -142,6 +142,7 @@
     "eslint": "^9.39.4",
     "eslint-config-next": "16.1.6",
     "jsdom": "^27.4.0",
+    "mediabunny-reaction-prototype": "npm:mediabunny@1.55.7",
     "msw": "^2.12.14",
     "tsx": "^4.22.4",
     "typescript": "5.9.3",

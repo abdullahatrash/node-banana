@@ -52,3 +52,26 @@ The portable `audio-diagnosis.mjs` removes the mixer and video pipeline as neces
 A generated 44.1 kHz MP3 plays in the browser preview but fails import in the worker. Its first two MPEG frame headers use channel modes 0 and 1 at the same sample rate; the installed detector rejects differing modes. The failure also occurs before any conversion in a direct library input probe. It remains an input-compatibility gap, not a sample-rate-conversion failure. The diagnostic preserves a reproducible MP3 case; no dependency patch, upgrade, full-file native decoding fallback, or source-file mutation was introduced.
 
 Raw follow-up evidence is in [audio-measurements.json](./audio-measurements.json). Related upstream AAC reports remain separate evidence, not proof of a fix: [issue 444](https://github.com/Vanilagy/mediabunny/issues/444) and [issue 447](https://github.com/Vanilagy/mediabunny/issues/447). Browser export remains a prototype pending these correctness and compatibility checks.
+
+
+## MP3 import fix — subsequent verification
+
+The original rejection is resolved for the tested files by pinning Mediabunny **1.55.7** as the prototype-only `mediabunny-reaction-prototype` dependency. Its [upstream MP3 detector](https://github.com/Vanilagy/mediabunny/blob/v1.55.7/src/input-format.ts) recognizes Xing/Info metadata before applying the consecutive-frame comparison that rejected our fixture. The application still uses its original locked 1.31.0 dependency for other media consumers. The local server verifies and serves the alias version; it does not load both versions into the same browser context.
+
+The regression harness first failed against 1.31.0 with the original unsupported-format error. Against 1.55.7 it successfully exported 44.1 kHz CBR with metadata, 44.1 kHz VBR, 48 kHz mono, and untagged CBR MP3 fixtures, plus both existing WAV marker cases. Every export retained the marker with correlation above 0.9994, and no temporary audio files remained. A malformed file named `.mp3` was still rejected. These synthetic fixtures cover the reported header problem, not every possible MP3 file.
+
+No additional MP3-specific conversion, full-file native decoding fallback, header rewriting, or server processing was added. MP3 files requiring resampling use the same existing local preparation path as WAV; the 48 kHz mono fixture skipped that path entirely.
+
+| 60-second composition | Total export | MP3 music preparation | Main frame gap p95 | Click-to-next-frame p95 |
+|---|---:|---:|---:|---:|
+| Stacked | 5.853 s | 308 ms | 17.6 ms | 14.9 ms |
+| Overlay | 5.638 s | 291 ms | 17.6 ms | 15.5 ms |
+| Side by side | 5.595 s | 297 ms | 17.7 ms | 15.0 ms |
+
+These runs used 60 seconds of 44.1 kHz MP3 music and ten seconds of 24 kHz WAV voiceover on the same M1 Max/Chrome environment. Voiceover preparation added about 50 ms and is included in total export time. Each run retained 1,800 H.264 frames and all four audio tones in the expected interior windows, with no mixer clipping or recorded main-thread long tasks. An extracted stacked frame retained both source panels and the Arabic overlay. Peak summed browser-session RSS was 1.37–1.52 GB, with the same shared-memory and sampling limitations as earlier measurements.
+
+A subsequent stacked WAV comparison on **the same 1.55.7 release** took 5.557 seconds, including 221 ms of WAV music preparation and 57 ms of voiceover preparation. The observed difference from the single stacked MP3 run was about 0.30 seconds overall and 88 ms in music preparation; this is not a controlled statistical estimate of codec overhead. The historical 1.31.0 numbers should not be used to attribute the entire difference to MP3. Cancellation during MP3 preparation took 72 ms; a separate render cancellation took 63 ms. Both left no temporary files and were followed by successful full exports.
+
+Timing correction remains deferred. The new release preserves the measured 44 ms AAC offset for direct PCM and WAV. MP3 markers appeared about 67–70 ms late in total, adding roughly 23–26 ms of source encoding/decoding padding in these fixtures. We did not conceal this difference with a hard-coded trim. The regression harness asserts WAV timing equivalence and reports MP3 timing separately; successful import/export does not mean sample-exact MP3 alignment is solved.
+
+Raw results, format checks, output inspection, and the same-version WAV comparison are recorded in [mp3-measurements.json](./mp3-measurements.json). Lockfile installation and JavaScript syntax checks passed. Ordinary-laptop and real-user-footage qualification remain open.

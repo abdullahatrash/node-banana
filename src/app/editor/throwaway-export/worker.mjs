@@ -11,7 +11,7 @@ onmessage = async ({ data }) => {
   cancelled = false;
   const inputs = []; const iterators = []; const temporaryAudio=[]; let output; let destination;let root;let completion;let stage='prepare export';
   const started = performance.now();
-  const metrics = { clippedAudioSamples:0, workerHeapPeakBytes:null, videoFrames:0, normalizedAudioSources:[] };
+  const metrics = { mediaLibraryVersion:'1.55.7', clippedAudioSamples:0, workerHeapPeakBytes:null, videoFrames:0, normalizedAudioSources:[] };
   try {
     const { files, config } = data;
     const width=1080,height=1920,fps=30,rate=48000,block=rate/fps;

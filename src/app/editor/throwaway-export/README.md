@@ -6,13 +6,13 @@ This is a local performance experiment, not the production editor or a UI design
 
 ## Run
 
-Requires Node, installed project dependencies, FFmpeg on PATH, and a browser with WebCodecs, worker OffscreenCanvas/fonts, and OPFS support. Measured with Chrome 152 and Mediabunny 1.31.0.
+Requires Node, installed project dependencies (including dev dependencies), FFmpeg on PATH, and a browser with WebCodecs, worker OffscreenCanvas/fonts, and OPFS support. Current prototype: Chrome 152 and Mediabunny 1.55.7, pinned under the `mediabunny-reaction-prototype` alias. The app's existing `mediabunny` dependency stays at its previous locked version; the standalone server serves only the prototype alias. Earlier measurements used 1.31.0 and remain labeled as historical results.
 
 ```sh
 pnpm prototype:reaction-export
 ```
 
-Open <http://127.0.0.1:3047> and select **Load local test clips**, then **Measure MP4 export**. The first start generates synthetic fixtures in the OS temporary directory using FFmpeg; subsequent starts reuse them. FFmpeg generates test inputs only; browser export does not call it. To use dependencies from an existing checkout, set `PROTOTYPE_DEPENDENCY_ROOT` to that checkout's `node_modules` directory. Optional `PROTOTYPE_MEDIA_DIR` and `PROTOTYPE_PORT` override the fixture directory and loopback port.
+Open <http://127.0.0.1:3047> and select **Load local test clips**, then **Measure MP4 export**. The first start generates synthetic fixtures in the OS temporary directory using FFmpeg; subsequent starts reuse them. FFmpeg generates test inputs only; browser export does not call it. To use dependencies from an existing checkout, set `PROTOTYPE_DEPENDENCY_ROOT` to that checkout's `node_modules` directory, which must contain the pinned `mediabunny-reaction-prototype` alias. The server checks the version at startup. Optional `PROTOTYPE_MEDIA_DIR` and `PROTOTYPE_PORT` override the fixture directory and loopback port.
 
 Drag the text directly on the preview to move it; double-click or focus it and press Enter to edit in place. Enter inserts a new line; Ctrl/Cmd+Enter or Escape finishes editing. Arrow keys move a selected overlay, and Shift+arrow moves it farther. The side textarea stays synchronized, including pasted line breaks. Formatting controls apply left/center/right alignment, thin/light/regular/bold weight, size, text color, and background color/opacity to the whole overlay; zero opacity removes the background. The bundled Arabic font has a true 100–900 variable weight axis. Long lines wrap, and exceptionally tall text scales down to remain inside the canvas. Preview and export share the same font, line layout, text raster drawing, styling, and normalized position through `overlay.mjs`.
 
@@ -22,7 +22,7 @@ The local server serves only an explicit allowlist of prototype files, the exist
 
 The UI records elapsed export time, frame count, file size, animation-frame gaps, main-thread long tasks, click-handler-to-next-frame latency, and available JS heap metrics. The worker decodes ordered source frames with two pooled canvases per input, caches the Arabic text raster, mixes audio in 1,600-frame blocks, awaits encoder backpressure, and streams MP4 output to OPFS in 1 MiB chunks. It never first trims and then re-encodes the clips a second time.
 
-Audio that needs a different sample rate or channel count is converted locally in the worker to stereo 48 kHz float PCM using the installed library's public Conversion API. Preparation reads only the portion needed for the composition, capped at 60 seconds, and streams intermediate WAV files to temporary browser storage. Already-compatible sources and muted layers skip conversion. Intermediates are removed before reporting success, cancellation, or a handled error. The preparation phase is included in export timing; no video is transcoded during this phase. Tested inputs include 44.1 kHz stereo WAV music and 24 kHz mono WAV voiceover. Multichannel downmix and arbitrary codecs remain unqualified; some MP3 files are rejected by the installed library's format detector.
+Audio that needs a different sample rate or channel count is converted locally in the worker to stereo 48 kHz float PCM using the installed library's public Conversion API. Preparation reads only the portion needed for the composition, capped at 60 seconds, and streams intermediate WAV files to temporary browser storage. Already-compatible sources and muted layers skip conversion. Intermediates are removed before reporting success, cancellation, or a handled error. The preparation phase is included in export timing; no video is transcoded during this phase. Tested inputs include 44.1 kHz stereo WAV music, 24 kHz mono WAV voiceover, and CBR/VBR, mono, and untagged MP3 files. The pinned upstream release fixes recognition of the tested MP3 metadata headers without an MP3-specific conversion pass or changes to uploaded files. Multichannel downmix, other MP3 encoders/header combinations, and arbitrary codecs remain unqualified.
 
 For automated measurements with Playwright and installed Google Chrome:
 
@@ -40,13 +40,13 @@ For a repeatable timing and format diagnostic:
 node src/app/editor/throwaway-export/audio-diagnosis.mjs
 ```
 
-This harness generates short windowed-tone WAV inputs at 48 and 44.1 kHz plus an FFmpeg-encoded MP3, exports the WAVs through the mixer, and independently feeds exactly five seconds of PCM to the AAC encoder/muxer. It decodes outputs with FFmpeg and searches for the marker's correlation peak within ±4,096 samples of its expected position. It reports observed alignment rather than declaring the unresolved AAC issue fixed. The same Playwright environment override applies; `PROTOTYPE_AUDIO_RESULTS_DIR` selects the artifacts directory. FFmpeg is used by this diagnostic, never by the browser export path.
+This harness generates short windowed-tone WAV inputs at 48 and 44.1 kHz plus CBR, VBR, mono, and untagged MP3 variants, exports each through the mixer, and independently feeds exactly five seconds of PCM to the AAC encoder/muxer. It asserts successful exports, retained audio markers, cleanup, WAV timing equivalence, and rejection of a malformed file named `.mp3`. It decodes outputs with FFmpeg and searches for the marker's correlation peak within ±4,096 samples of its expected position. It reports MP3 padding and AAC delay separately from export success; timing correction remains deferred. The same Playwright environment override applies; `PROTOTYPE_AUDIO_RESULTS_DIR` selects the artifacts directory. FFmpeg is used by this diagnostic, never by the browser export path.
 
 Synthetic input: 60-second 1080×1920 main video, 15-second 720×1280 reaction, 60-second music tone, and 10-second voiceover tone. Main/reaction/music/voice frequencies are 220/440/660/880 Hz. All use 48 kHz audio. Reaction starts at 5 seconds, voiceover at 2 seconds, and music at zero. These are diagnostic tones, not evidence of speech intelligibility or a perceptual audio-mixing review.
 
 ## Results and verdict
 
-See [RESULTS.md](./RESULTS.md), the original [measurements.json](./measurements.json), and subsequent [audio-measurements.json](./audio-measurements.json).
+See [RESULTS.md](./RESULTS.md), the original [measurements.json](./measurements.json), subsequent [audio-measurements.json](./audio-measurements.json), and current [mp3-measurements.json](./mp3-measurements.json).
 
 Browser export is **feasible on the measured M1 Max** and worth further qualification. It is **not approved as the production export path**. No ordinary-laptop, Safari, Firefox, mobile, real-user-footage, battery, or thermal qualification was performed. Native/browser compatibility and the unresolved audio-duration gap can still change the architecture decision.
 
