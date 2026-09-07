@@ -23,6 +23,7 @@ export function VideoEditor({ locale = 'ar', initialId }: { locale?: 'ar' | 'en'
  const [media, setMedia] = useState<Record<string, EditorMedia>>({});
  const [busy, setBusy] = useState(false);
  const [progress, setProgress] = useState<number | null>(null), [resultUrl, setResultUrl] = useState('');
+ const outputUrl = useRef(''), outputSnapshot = useRef({ key: '', title: '' });
  const controller = useRef<AbortController | null>(null), result = useRef<ExportResult | null>(null);
  const preview = useRef<PreviewHandle>(null);
  const open = useCallback(async (record: EditorRecord, retainUndo = false) => {
@@ -43,7 +44,7 @@ export function VideoEditor({ locale = 'ar', initialId }: { locale?: 'ar' | 'en'
   }).catch(failure => { if (active) setError(errorCopy(failure, copy)); }).finally(() => { if (active) setBusy(false); });
   return () => { active = false; };
  }, [initialId, api, copy, open, setError, setRecords]);
- useEffect(() => () => { controller.current?.abort(); void result.current?.release(); }, []);
+ useEffect(() => () => { controller.current?.abort(); if (outputUrl.current) URL.revokeObjectURL(outputUrl.current); void result.current?.release().catch(() => undefined); }, []);
  async function select(item: MediaItem) {
   setBusy(true); setError('');
   try { const selected = await api.resolveMedia(item); if (selected.duration <= 0 || (selected.type === 'video' && (Math.max(selected.width, selected.height) > 1920 || Math.min(selected.width, selected.height) > 1080))) throw new Error('EDITOR_MEDIA_LIMIT'); setMedia((items) => ({ ...items, [item.id]: selected })); setComposition((value) => ({ ...value, [selectedRole]: { ...createClip(item.id, selected.duration), trimEnd: Math.min(selected.duration, selectedRole === 'main' ? 60 : Math.min(selectedRole === 'secondary' ? 15 : 60, duration(value))) } })); }
@@ -51,9 +52,17 @@ export function VideoEditor({ locale = 'ar', initialId }: { locale?: 'ar' | 'en'
  }
  async function runExport() {
   preview.current?.pause(); setError(''); setProgress(0);
-  if (resultUrl) URL.revokeObjectURL(resultUrl); setResultUrl(''); await result.current?.release(); result.current = null;
+  if (resultUrl) URL.revokeObjectURL(resultUrl); setResultUrl(''); await result.current?.release().catch(() => undefined); result.current = null;
   const abort = new AbortController(); controller.current = abort;
-  try { result.current = await exportComposition(composition, media, { signal: abort.signal, onProgress: setProgress }); setResultUrl(URL.createObjectURL(result.current.file)); }
+  try {
+   const refreshed = await Promise.all([...new Set(roles.flatMap(role => composition[role]?.assetId || []))].map(async id => {
+    const item = media[id]; if (!item) throw new Error('EDITOR_MEDIA_UNAVAILABLE');
+    const { downloadUrl } = await api.request(`/api/studio/assets/${encodeURIComponent(id)}/download`, undefined, 'GET', abort.signal);
+    return { ...item, url: downloadUrl };
+   }));
+   result.current = await exportComposition(composition, Object.fromEntries(refreshed.map(item => [item.id, item])), { signal: abort.signal, onProgress: setProgress });
+   outputSnapshot.current = { key: JSON.stringify(composition), title: composition.title }; outputUrl.current = URL.createObjectURL(result.current.file); setResultUrl(outputUrl.current);
+  }
   catch (failure) { if (!abort.signal.aborted) setError(errorCopy(failure, copy)); }
   finally { setProgress(null); controller.current = null; }
  }
@@ -93,6 +102,6 @@ export function VideoEditor({ locale = 'ar', initialId }: { locale?: 'ar' | 'en'
   </div>
   <section className={styles.timeline} dir="ltr">{roles.map((role) => <div key={role} className={styles.track}><button onClick={() => { setSelectedRole(role); setTextSelected(false); }}>{copy[role]}</button><div className={styles.trackLane}>{composition[role] && <button className={styles.clip} onClick={() => { setSelectedRole(role); setTextSelected(false); }} style={{ marginLeft: `${100 * composition[role]!.start / (duration(composition) || 1)}%`, width: `${100 * (composition[role]!.trimEnd - composition[role]!.trimStart) / (duration(composition) || 1)}%` }}>{media[composition[role]!.assetId]?.name}</button>}</div></div>)}</section>
   {progress !== null && <section role="status" className={styles.exportStatus}>{copy.exporting}<progress max={100} value={progress} /><button onClick={() => controller.current?.abort()}>{copy.cancel}</button></section>}
-  {resultUrl && <a className={styles.download} download={`${composition.title}.mp4`} href={resultUrl}>{copy.download}</a>}
+  {resultUrl && <a className={styles.download} download={`${outputSnapshot.current.title}.mp4`} href={resultUrl}>{outputSnapshot.current.key === JSON.stringify(composition) ? copy.download : copy.previousExport}</a>}
  </main>;
 }

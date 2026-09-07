@@ -64,6 +64,19 @@ try {
  await page.getByRole('button', { name: 'Redo', exact: true }).click();
  if (await page.getByLabel('Volume', { exact: true }).inputValue() !== '0.4') throw Error('Redo did not restore gain');
  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+ // Failure injection stays at browser/platform boundaries; codecs and worker remain real.
+ const encoder = await page.evaluate(() => { window.__editorEncoder = window.VideoEncoder; window.VideoEncoder = undefined; return true; });
+ await page.getByRole('button', { name: 'Export video', exact: true }).click();
+ await page.getByRole('alert').filter({ hasText: 'Chrome' }).waitFor();
+ await page.evaluate(() => { window.VideoEncoder = window.__editorEncoder; });
+ await page.evaluate(() => { window.__editorStorage = navigator.storage.getDirectory.bind(navigator.storage); navigator.storage.getDirectory = async () => { throw new DOMException('injected storage full', 'QuotaExceededError'); }; });
+ await page.getByRole('button', { name: 'Export video', exact: true }).click();
+ await page.getByRole('alert').filter({ hasText: 'temporary storage' }).waitFor();
+ await page.evaluate(() => { navigator.storage.getDirectory = window.__editorStorage; });
+ await page.getByRole('button', { name: 'Export video', exact: true }).click();
+ await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+ await page.getByRole('button', { name: 'Cancel', exact: true }).waitFor({ state: 'hidden' });
+ await page.evaluate(async () => { const parent = await (await navigator.storage.getDirectory()).getDirectoryHandle('tasmeemai-video-editor-v1', { create: true }); await parent.getDirectoryHandle('11111111-1111-4111-8111-111111111111', { create: true }); });
  const measurements = [];
  for (const [layout, label] of [['stacked', 'Stacked'], ['pip', 'Picture in picture'], ['side-by-side', 'Side by side']]) {
   await page.getByRole('button', { name: label, exact: true }).click();
@@ -76,6 +89,8 @@ try {
   await page.screenshot({ path: join(out, `${layout}.png`), fullPage: true });
  }
 
+ const attempts = await page.evaluate(async () => { const parent = await (await navigator.storage.getDirectory()).getDirectoryHandle('tasmeemai-video-editor-v1'); const names = []; for await (const name of parent.keys()) names.push(name); return names; });
+ if (attempts.length !== 1 || attempts.includes('11111111-1111-4111-8111-111111111111')) throw Error(`Temporary attempt cleanup failed: ${attempts}`);
  if (errors.length) throw Error(errors.join('\n'));
  await writeFile(join(out, 'main-check.json'), JSON.stringify({ measurements, browser: browser.version(), errors }, null, 2));
  console.log(JSON.stringify({ measurements, output: out }));

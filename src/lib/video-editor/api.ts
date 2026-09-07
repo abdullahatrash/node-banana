@@ -4,9 +4,9 @@ export class EditorApiError extends Error {
   constructor(public code: string, public status = 0) { super(code); }
 }
 export function createEditorClient(workspace: string | null) {
-async function editorRequest(path: string, body?: unknown, method = body ? 'POST' : 'GET') {
+async function editorRequest(path: string, body?: unknown, method = body ? 'POST' : 'GET', signal?: AbortSignal) {
   if (!workspace) throw new EditorApiError('WORKSPACE_REQUIRED');
-  const response = await fetch(path, { method, cache: 'no-store', headers: { 'x-workspace-id': workspace, ...(body ? { 'content-type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const response = await fetch(path, { method, signal, cache: 'no-store', headers: { 'x-workspace-id': workspace, ...(body ? { 'content-type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const data = await response.json();
   if (!response.ok || !data.success) throw new EditorApiError(data.code || (response.status === 403 ? 'EDITOR_ACCESS_OR_QUOTA' : 'EDITOR_REQUEST_FAILED'), response.status);
   return data;
@@ -36,7 +36,7 @@ async function resolveMedia(item: MediaItem): Promise<EditorMedia> {
     const seconds = await track.computeDuration();
     if (!Number.isFinite(seconds) || seconds <= 0) throw new EditorApiError('EDITOR_MEDIA_UNAVAILABLE');
     return { id: item.id, name: item.name, type: item.type, duration: seconds, width: video?.displayWidth || 0, height: video?.displayHeight || 0, url: downloadUrl };
-  } finally { input.dispose(); }
+  } catch (error) { if (error instanceof EditorApiError) throw error; throw new EditorApiError('EDITOR_MEDIA_UNAVAILABLE'); } finally { input.dispose(); }
 }
 
 /** Upload uses the same reservation, quota and server inspection path as Workspace media. */

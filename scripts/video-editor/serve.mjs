@@ -8,7 +8,7 @@ const root = resolve(import.meta.dirname, '../..');
 const out = join(tmpdir(), 'tasmeemai-editor-acceptance');
 const fixtures = process.env.EDITOR_FIXTURES || join(tmpdir(), 'tasmeemai-throwaway-reaction-export-v1');
 await mkdir(out, { recursive: true });
-await build({ entryPoints: [join(root, 'scripts/video-editor/entry.tsx')], outfile: join(out, 'app.js'), bundle: true, format: 'esm', jsx: 'automatic', sourcemap: true, define: { 'process.env.NODE_ENV': '"development"' }, external: ['/fonts/*'] });
+await build({ entryPoints: [join(root, 'scripts/video-editor/entry.tsx')], outfile: join(out, 'app.js'), bundle: true, format: 'esm', jsx: 'automatic', sourcemap: true, define: { 'process.env': '{}', 'process.env.NODE_ENV': '"development"' }, external: ['/fonts/*'] });
 await build({ entryPoints: [join(root, 'src/lib/video-editor/export.worker.ts')], outfile: join(out, 'export.worker.ts'), bundle: true, format: 'esm', sourcemap: true });
 const port = Number(process.env.EDITOR_TEST_PORT || 3048);
 const origin = `http://127.0.0.1:${port}`;

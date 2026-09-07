@@ -18,7 +18,7 @@ beforeEach(() => {
   if (url.endsWith('/download')) return Response.json({ success: true, downloadUrl: 'https://media.example/main.mp4' });
   return Response.json({}, { status: 404 });
  }));
- exporter.mockResolvedValue({ file: new File(['mp4'], 'video.mp4', { type: 'video/mp4' }), release: vi.fn() });
+ exporter.mockResolvedValue({ file: new File(['mp4'], 'video.mp4', { type: 'video/mp4' }), release: vi.fn().mockResolvedValue(undefined) });
  vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:export'), revokeObjectURL: vi.fn() }));
 });
 it('selects Workspace footage, saves a trim, reopens, and requests an export of that composition', async () => {

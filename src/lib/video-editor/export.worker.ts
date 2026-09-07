@@ -7,7 +7,7 @@ let cancelled = false;
 let conversion: Conversion | null = null;
 const rate = 48000, fps = VIDEO_FPS, block = rate / fps;
 function checkCancelled() { if (cancelled) throw new Error('EDITOR_CANCELLED'); }
-type AudioCursor = { clip: Clip; offset: number; samples: ReturnType<AudioSampleSink['samples']>; done: boolean; current: { pcm: Float32Array; channels: number; frames: number; start: number; end: number } | null };
+type AudioCursor = { role: string; clip: Clip; offset: number; samples: ReturnType<AudioSampleSink['samples']>; done: boolean; current: { pcm: Float32Array; channels: number; frames: number; start: number; end: number } | null };
 async function mix(cursor: AudioCursor, pcm: Float32Array, start: number) {
  for (let j = 0; j < block; j++) {
   const compositionTime = start + j / rate;
@@ -40,7 +40,7 @@ scope.onmessage = async ({ data }) => {
  cancelled = false;
  const inputs: Input[] = [], cursors: AudioCursor[] = [], frameIterators: ReturnType<CanvasSink['canvasesAtTimestamps']>[] = [];
  let output: Output | null = null;
- let result: File | null = null, errorCode: string | null = null;
+ let result: File | null = null, errorCode: string | null = null, affectedRole: string | null = null;
  try {
   const composition = compositionSchema.parse(data.composition);
   if (!composition.main) throw new Error('EDITOR_COMPOSITION_INVALID');
@@ -50,7 +50,7 @@ scope.onmessage = async ({ data }) => {
   const count = Math.floor(duration(composition) * fps + 1e-6);
   const videos: Partial<Record<'main' | 'secondary', ReturnType<CanvasSink['canvasesAtTimestamps']>>> = {};
   for (const role of roles) {
-   checkCancelled();
+   affectedRole = role; checkCancelled();
    const clip = composition[role]; if (!clip) continue;
    const source = (data.media as Record<string, EditorMedia>)[clip.assetId];
    if (!source) throw new Error('EDITOR_MEDIA_UNAVAILABLE');
@@ -76,9 +76,9 @@ scope.onmessage = async ({ data }) => {
     const normalized = new Input({ source: new BlobSource(await handle.getFile()), formats: ALL_FORMATS }); inputs.push(normalized);
     audioTrack = await normalized.getPrimaryAudioTrack(); offset = 0;
    }
-   if (audioTrack) cursors.push({ clip, offset, samples: new AudioSampleSink(audioTrack).samples(offset, offset + clipDuration(clip)), done: false, current: null });
+   if (audioTrack) cursors.push({ role, clip, offset, samples: new AudioSampleSink(audioTrack).samples(offset, offset + clipDuration(clip)), done: false, current: null });
   }
-  checkCancelled();
+  affectedRole = null; checkCancelled();
   const canvas = new OffscreenCanvas(1080, 1920), context = canvas.getContext('2d', { alpha: false })!;
   let overlay: { canvas: OffscreenCanvas; x: number; y: number } | null = null;
   if (composition.text?.text) {
@@ -98,13 +98,15 @@ scope.onmessage = async ({ data }) => {
    const time = i / fps, rectangles = videoRects(composition.layout, clipActive(composition.secondary, time));
    for (const role of ['main', 'secondary'] as const) {
     const rect = rectangles[role]; if (!rect || !videos[role]) continue;
+    affectedRole = role;
     const frame = (await videos[role]!.next()).value;
     if (!frame) throw new Error('EDITOR_MEDIA_UNAVAILABLE');
     draw(context, frame.canvas, rect);
    }
    if (overlay) context.drawImage(overlay.canvas, overlay.x, overlay.y);
    const pcm = new Float32Array(block * 2);
-   for (const cursor of cursors) await mix(cursor, pcm, time);
+   for (const cursor of cursors) { affectedRole = cursor.role; await mix(cursor, pcm, time); }
+   affectedRole = null;
    for (let sample = 0; sample < pcm.length; sample++) pcm[sample] = Math.max(-1, Math.min(1, pcm[sample]));
    const sample = new AudioSample({ data: pcm, format: 'f32', numberOfChannels: 2, sampleRate: rate, timestamp: time });
    try { await audio.add(sample); } finally { sample.close(); }
@@ -121,5 +123,5 @@ scope.onmessage = async ({ data }) => {
   await Promise.allSettled([...frameIterators.map(iterator => iterator.return(undefined)), ...cursors.map(cursor => cursor.samples.return(undefined))]);
   for (const input of inputs) input.dispose();
  }
- scope.postMessage(errorCode ? { type: 'error', code: errorCode } : { type: 'done', file: result });
+ scope.postMessage(errorCode ? { type: 'error', code: errorCode, role: affectedRole } : { type: 'done', file: result });
 };
