@@ -781,8 +781,16 @@ A stable Workspace-owned creative work in one declared content format, spanning 
 _Avoid_: Content item, generation, project, Artifact, Post
 
 **Video Editor**:
-Tasmeemai's focused surface for trimming, splitting, and arranging video clips, sizing the composition for social formats, adding Arabic or English text and automatic subtitles, adding music or voiceover, and exporting the result.
+Tasmeemai's focused surface for combining an AI influencer reaction with a person's recorded footage in a 9:16 short-form video using simple layout and timing controls.
 _Avoid_: Code editor, OpenCut, full production suite
+
+**Reaction Video**:
+A 9:16 Content Piece combining recorded main footage, such as a phone screen recording or camera video, with a generated AI influencer reaction. The reaction usually lasts 5–10 seconds, at most 15 seconds, and appears once at a creator-selected time while the main footage continues.
+_Avoid_: AI influencer generation, source clip, wide video
+
+**Video Collage Layout**:
+A preset arrangement showing the main footage and reaction together within a Reaction Video, such as stacked top-and-bottom panels, side-by-side panels, or a reaction overlay on the main footage. The arrangement does not change the finished video's 9:16 aspect ratio.
+_Avoid_: Aspect ratio, image collage, freeform timeline
 
 **Content Piece Draft**:
 A mutable autosaved working copy based on one exact Content Piece Revision and owned by one active editor. It uses optimistic versioning, is never executable or publishable, and becomes shared immutable history only when explicit Save, Preview, or Generate validation promotes it to a new Revision.
