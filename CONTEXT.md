@@ -792,6 +792,10 @@ _Avoid_: AI influencer generation, source clip, wide video
 A preset arrangement showing the main footage and reaction together within a Reaction Video, such as stacked top-and-bottom panels, side-by-side panels, or a reaction overlay on the main footage. The arrangement does not change the finished video's 9:16 aspect ratio.
 _Avoid_: Aspect ratio, image collage, freeform timeline
 
+**Secondary Video**:
+The second video input and timeline track in the Video Editor, displayed alongside the main footage through the selected Video Collage Layout. It commonly contains the AI influencer reaction in the initial use case. User-facing labels use “Secondary video” in English and “الفيديو الثانوي” in Arabic across the track, media card, timing, and source-audio controls. This naming decision does not change the agreed clip limits.
+_Avoid_: Reaction as the user-facing name of the second video track
+
 **Music Layer**:
 An independently timed background-music contribution to a Reaction Video, separate from its Voiceover Layer and any audio contained in the source videos.
 _Avoid_: Voiceover, video audio, generated song
