@@ -792,6 +792,14 @@ _Avoid_: AI influencer generation, source clip, wide video
 A preset arrangement showing the main footage and reaction together within a Reaction Video, such as stacked top-and-bottom panels, side-by-side panels, or a reaction overlay on the main footage. The arrangement does not change the finished video's 9:16 aspect ratio.
 _Avoid_: Aspect ratio, image collage, freeform timeline
 
+**Music Layer**:
+An independently timed background-music contribution to a Reaction Video, separate from its Voiceover Layer and any audio contained in the source videos.
+_Avoid_: Voiceover, video audio, generated song
+
+**Voiceover Layer**:
+An independently timed spoken-narration contribution to a Reaction Video, separate from its Music Layer and any speech contained in the source videos.
+_Avoid_: Music, influencer reaction clip, source-video audio
+
 **Content Piece Draft**:
 A mutable autosaved working copy based on one exact Content Piece Revision and owned by one active editor. It uses optimistic versioning, is never executable or publishable, and becomes shared immutable history only when explicit Save, Preview, or Generate validation promotes it to a new Revision.
 _Avoid_: Current revision, unpublished Artifact, shared mutable document, form state
