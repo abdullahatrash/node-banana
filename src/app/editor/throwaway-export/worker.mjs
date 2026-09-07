@@ -1,20 +1,21 @@
-// THROWAWAY: bounded media pipeline, deliberately limited to 48 kHz audio.
+// THROWAWAY: bounded video pipeline and local audio normalization.
 import { Input, BlobSource, ALL_FORMATS, CanvasSink, CanvasSource, AudioSample,
   AudioSampleSink, AudioSampleSource, Output, Mp4OutputFormat, StreamTarget,
-  canEncodeVideo, canEncodeAudio } from '/mediabunny.mjs';
+  Conversion, WavOutputFormat, canEncodeVideo, canEncodeAudio } from '/mediabunny.mjs';
 import { overlayLayout, paintOverlay } from '/overlay.mjs';
 
-let cancelled = false;
+let cancelled = false;let activeConversion=null;
 onmessage = async ({ data }) => {
-  if (data.type === 'cancel') { cancelled = true; return; }
+  if (data.type === 'cancel') { cancelled = true; await activeConversion?.cancel().catch(()=>{}); return; }
   if (data.type !== 'export') return;
   cancelled = false;
-  const inputs = []; const iterators = []; let output; let destination;
+  const inputs = []; const iterators = []; const temporaryAudio=[]; let output; let destination;let root;let completion;let stage='prepare export';
   const started = performance.now();
-  const metrics = { clippedAudioSamples:0, workerHeapPeakBytes:null, videoFrames:0 };
+  const metrics = { clippedAudioSamples:0, workerHeapPeakBytes:null, videoFrames:0, normalizedAudioSources:[] };
   try {
     const { files, config } = data;
     const width=1080,height=1920,fps=30,rate=48000,block=rate/fps;
+    root=await navigator.storage.getDirectory();
     if (!await canEncodeVideo('avc',{width,height,bitrate:6_000_000}) || !await canEncodeAudio('aac',{sampleRate:rate,numberOfChannels:2,bitrate:128_000})) throw new Error('This browser cannot encode the required H.264 + AAC MP4.');
     const font = new FontFace('ReactionArabic', await (await fetch('/font.ttf')).arrayBuffer(), { weight:'100 900' });
     await font.load(); self.fonts.add(font);
@@ -36,29 +37,50 @@ onmessage = async ({ data }) => {
     const reactionFrames=new CanvasSink(reactionTrack,{poolSize:2}).canvasesAtTimestamps(reactionTimes);
     iterators.push(mainFrames,reactionFrames);
     const sounds=[];
-    for (const [input,offset,length,gain] of [[main,0,duration,config.mainGain],[reaction,config.reactionStart,reactionDuration,config.reactionGain],[await open(files.music),0,duration,config.musicGain],[await open(files.voice),2,duration,config.voiceGain]]) {
-      const track=await input?.getPrimaryAudioTrack();
-      if (!track || gain===0) continue;
-      const iterator=new AudioSampleSink(track).samples(0,length); iterators.push(iterator);
-      sounds.push({iterator,offset,length,gain,current:null,done:false});
+    for (const [input,offset,length,gain,label] of [[main,0,duration,config.mainGain,'main'],[reaction,config.reactionStart,reactionDuration,config.reactionGain,'reaction'],[await open(files.music),0,duration,config.musicGain,'music'],[await open(files.voice),2,duration,config.voiceGain,'voiceover']]) {
+      if(cancelled)throw new Error('Cancelled');
+      if(!input || gain===0)continue;
+      stage=`read ${label} audio`;let track=await input.getPrimaryAudioTrack();
+      if (!track) continue;
+      const neededLength=Math.min(length,duration-offset,60);
+      if(neededLength<=0)continue;
+      if(track.sampleRate!==rate || track.numberOfChannels>2){
+        const sourceRate=track.sampleRate,sourceChannels=track.numberOfChannels,sourceTrack=track;
+        const name=`${data.outputName}-${label}.wav`;temporaryAudio.push(name);
+        const handle=await root.getFileHandle(name,{create:true});
+        const normalizationOutput=new Output({format:new WavOutputFormat(),target:new StreamTarget(await handle.createWritable(),{chunked:true,chunkSize:1024*1024})});
+        const normalizationStarted=performance.now();
+        stage=`convert ${label} audio`;try{
+          activeConversion=await Conversion.init({input,output:normalizationOutput,video:{discard:true},audio:track=>track===sourceTrack?{codec:'pcm-f32',sampleRate:rate,numberOfChannels:2,forceTranscode:true}:{discard:true},trim:{start:0,end:neededLength},tags:{},showWarnings:false});
+          if(!activeConversion.isValid)throw new Error(`This browser cannot prepare the ${label} audio.`);
+          activeConversion.onProgress=progress=>postMessage({type:'preparing',message:`Preparing ${label} audio locally: ${Math.round(progress*100)}%`});
+          if(cancelled)throw new Error('Cancelled');
+          await activeConversion.execute();
+        }catch(error){await normalizationOutput.cancel().catch(()=>{});throw error;}finally{activeConversion=null;}
+        const file=await handle.getFile();
+        stage=`read prepared ${label} audio`;const normalizedInput=await open(file);track=await normalizedInput.getPrimaryAudioTrack();
+        metrics.normalizedAudioSources.push({label,sourceRate,sourceChannels,targetRate:rate,targetChannels:2,trimLimitSeconds:neededLength,temporaryBytes:file.size,elapsedMs:performance.now()-normalizationStarted});
+      }
+      if(cancelled)throw new Error('Cancelled');
+      const iterator=new AudioSampleSink(track).samples(0,neededLength); iterators.push(iterator);
+      sounds.push({iterator,offset,length:neededLength,gain,current:null,done:false});
     }
     async function advance(sound) {
       const item=await sound.iterator.next(); sound.done=item.done;
       if (item.done) { sound.current=null; return; }
       const sample=item.value;
       try {
-        if (sample.sampleRate!==rate || sample.numberOfChannels>2) throw new Error('Prototype audio must be 48 kHz mono/stereo. Resampling is not implemented.');
+        if (sample.sampleRate!==rate || sample.numberOfChannels>2) throw new Error('Audio format changed unexpectedly after preparation.');
         const pcm=new Float32Array(sample.numberOfFrames*sample.numberOfChannels);
         sample.copyTo(pcm,{planeIndex:0,format:'f32'});
         sound.current={pcm,channels:sample.numberOfChannels,start:sample.timestamp,end:sample.timestamp+sample.duration,frames:sample.numberOfFrames};
       } finally { sample.close(); }
     }
-    const canvas=new OffscreenCanvas(width,height),ctx=canvas.getContext('2d',{alpha:false});
+    stage='render video';const canvas=new OffscreenCanvas(width,height),ctx=canvas.getContext('2d',{alpha:false});
     // Shape text once, then reuse exactly the same raster for every frame.
     const textLayout=overlayLayout(ctx,config.text,config.textPosition,config.textStyle);
     const textCanvas=new OffscreenCanvas(textLayout.width,textLayout.height),textCtx=textCanvas.getContext('2d');
     paintOverlay(textCtx,config.text,textLayout);
-    const root=await navigator.storage.getDirectory();
     destination=await root.getFileHandle(data.outputName,{create:true});
     const writable=await destination.createWritable();
     output=new Output({format:new Mp4OutputFormat({fastStart:false}),target:new StreamTarget(writable,{chunked:true,chunkSize:1024*1024})});
@@ -109,13 +131,15 @@ onmessage = async ({ data }) => {
     }
     video.close();audio.close();await output.finalize();output=null;
     const file=await destination.getFile();
-    postMessage({type:'done',file,metrics:{...metrics,durationSeconds:frameCount/fps,exportMs:performance.now()-started,outputBytes:file.size,audioLayers:sounds.length,layout:config.layout,output:'H.264/AAC 1080x1920 30fps',outputStorage:'OPFS streamed, 1 MiB write chunks',inputBytes:Object.values(files).reduce((sum,file)=>sum+(file?.size||0),0)}});
+    completion={type:'done',file,metrics:{...metrics,durationSeconds:frameCount/fps,exportMs:performance.now()-started,outputBytes:file.size,audioLayers:sounds.length,layout:config.layout,output:'H.264/AAC 1080x1920 30fps',outputStorage:'OPFS streamed, 1 MiB write chunks',inputBytes:Object.values(files).reduce((sum,file)=>sum+(file?.size||0),0)}};
   }catch(error){
     if(output)await output.cancel().catch(()=>{});
-    await (await navigator.storage.getDirectory()).removeEntry(data.outputName).catch(()=>{});
-    postMessage({type:cancelled?'cancelled':'error',message:error.message});
+    await root?.removeEntry(data.outputName).catch(()=>{});
+    completion={type:cancelled?'cancelled':'error',message:cancelled?'Cancelled':`Could not ${stage}: ${error.message}`};
   }finally{
     await Promise.allSettled(iterators.map(iterator=>iterator.return()));
     for(const input of inputs)input.dispose();
+    await Promise.allSettled(temporaryAudio.map(name=>root?.removeEntry(name)));
   }
+  postMessage(completion);
 };

@@ -102,6 +102,7 @@ $('ping').onclick=()=>{const start=performance.now();$('clicks').textContent=Num
 async function cleanOutput(){if(outputName){await(await navigator.storage.getDirectory()).removeEntry(outputName).catch(()=>{});outputName=null;}}
 $('export').onclick=async()=>{
   if(running)return;pause();
+  running=true;window.prototypeResults=null;$('export').disabled=true;
   const exportConfig=config();
   if(worker){worker.terminate();worker=null;}await cleanOutput();
   for(const id of ['download','report']){if($(id).href)URL.revokeObjectURL($(id).href);$(id).hidden=true;}
@@ -114,6 +115,7 @@ $('export').onclick=async()=>{
   const finish=()=>{running=false;$('export').disabled=false;$('cancel').disabled=true;};
   worker.onerror=e=>{finish();$('status').textContent=`Worker failed: ${e.message}`;window.prototypeResults={status:'error',message:e.message};cleanOutput();};
   worker.onmessage=({data})=>{
+    if(data.type==='preparing'){$('status').textContent=data.message;return;}
     if(data.type==='progress'){$('progress').value=data.progress;$('status').textContent=`Exporting ${data.progress.toFixed(0)}% · ${(data.elapsedMs/1000).toFixed(1)}s`;return;}
     if(data.type!=='done'){finish();$('status').textContent=data.message||'Cancelled';window.prototypeResults={status:data.type,message:data.message};return;}
     finish();$('progress').value=100;

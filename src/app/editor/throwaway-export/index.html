@@ -19,7 +19,7 @@
 <div class="row"><button id="play">Play / pause</button><button id="ping">Try clicking: <span id="clicks">0</span></button></div>
 <input id="seek" type="range" min="0" max="60" value="0" step="0.1" aria-label="Preview time"><small id="time">0.0 seconds</small>
 <audio id="music"></audio><audio id="voice"></audio>
-<p><small>Prototype assumptions: center crop; main fills the frame after the reaction ends; no automatic audio ducking. Input audio must be 48 kHz mono/stereo for this experiment.</small></p></div>
+<p><small>Prototype assumptions: center crop; main fills the frame after the reaction ends; no automatic audio ducking. Audio conversion happens locally. WAV at 44.1, 48 and 24 kHz has been checked; some MP3 files fail to import. An AAC timing issue remains under investigation.</small></p></div>
 <div><button id="fixtures">Load local test clips</button><div class="files">
 <label>Main footage<input id="mainFile" type="file" accept="video/*"></label><label>Influencer reaction<input id="reactionFile" type="file" accept="video/*"></label>
 <label>Music<input id="musicFile" type="file" accept="audio/*"></label><label>Voiceover<input id="voiceFile" type="file" accept="audio/*"></label></div>
