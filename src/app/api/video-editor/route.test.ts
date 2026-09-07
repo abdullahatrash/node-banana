@@ -4,7 +4,7 @@ import { NextRequest } from 'next/server';
 const mocks = vi.hoisted(() => ({ authorize: vi.fn(), list: vi.fn(), create: vi.fn(), update: vi.fn(), asset: vi.fn() }));
 vi.mock('@/lib/db', () => ({ isDatabaseConfigured: () => true }));
 vi.mock('@/lib/studio/authz', () => ({ authorizeStudioRequest: mocks.authorize, authzErrorResponse: () => new Response('{}', { status: 403 }) }));
-vi.mock('@/lib/product-surfaces/repository', () => ({ listProductRecords: mocks.list, createProductRecord: mocks.create, updateProductRecord: mocks.update, ProductRecordConflictError: class extends Error {}, ProductRecordIdempotencyError: class extends Error {} }));
+vi.mock('@/lib/product-surfaces/repository', () => ({ getProductRecord: vi.fn(), listProductRecords: mocks.list, createProductRecord: mocks.create, updateProductRecord: mocks.update, ProductRecordConflictError: class extends Error {}, ProductRecordIdempotencyError: class extends Error {} }));
 vi.mock('@/lib/studio/repository', () => ({ getAsset: mocks.asset }));
 vi.mock('@/lib/agent-runtime/safe-diagnostics', () => ({ recordSafeOperationalTrace: vi.fn() }));
 import { GET, POST } from './route';

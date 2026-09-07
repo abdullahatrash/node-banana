@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withStudioAuth } from '@/lib/studio/withStudioAuth';
 import { getAsset } from '@/lib/studio/repository';
-import { createProductRecord, listProductRecords, updateProductRecord, ProductRecordConflictError, ProductRecordIdempotencyError } from '@/lib/product-surfaces/repository';
+import { getProductRecord, createProductRecord, listProductRecords, updateProductRecord, ProductRecordConflictError, ProductRecordIdempotencyError } from '@/lib/product-surfaces/repository';
 import { compositionSchema, duration, roles, mediaKind } from '@/lib/video-editor/composition';
 
 const command = z.object({
@@ -15,8 +15,10 @@ function project(record: { id: string; revision: number; payload: Record<string,
   return parsed.success ? { id: record.id, revision: record.revision, composition: parsed.data } : null;
 }
 
-export const GET = withStudioAuth<undefined>({ route: '/api/video-editor', action: 'read', permission: 'product:read' }, async (_request, authz) => {
+export const GET = withStudioAuth<undefined>({ route: '/api/video-editor', action: 'read', permission: 'product:read' }, async (request, authz) => {
   const records = await listProductRecords({ workspaceId: authz.workspaceId, kinds: ['content_piece'], limit: 250 });
+  const id = request.nextUrl.searchParams.get('id');
+  if (id && !records.some(record => record.id === id)) { const record = await getProductRecord(authz.workspaceId, id); if (record?.kind === 'content_piece') records.unshift(record); }
   return json({ success: true, records: records.flatMap((record) => project(record) ?? []) });
 });
 

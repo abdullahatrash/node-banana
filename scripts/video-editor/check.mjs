@@ -58,6 +58,12 @@ try {
  await page.reload();
  await page.getByLabel('Add media to').selectOption('voiceover');
  if (await page.getByLabel('Volume', { exact: true }).inputValue() !== '0.7') throw Error('Audio gain did not survive reopen');
+ await page.getByLabel('Volume', { exact: true }).fill('0.4');
+ await page.getByRole('button', { name: 'Undo', exact: true }).click();
+ if (await page.getByLabel('Volume', { exact: true }).inputValue() !== '0.7') throw Error('Undo did not restore gain');
+ await page.getByRole('button', { name: 'Redo', exact: true }).click();
+ if (await page.getByLabel('Volume', { exact: true }).inputValue() !== '0.4') throw Error('Redo did not restore gain');
+ await page.getByRole('button', { name: 'Undo', exact: true }).click();
  const measurements = [];
  for (const [layout, label] of [['stacked', 'Stacked'], ['pip', 'Picture in picture'], ['side-by-side', 'Side by side']]) {
   await page.getByRole('button', { name: label, exact: true }).click();

@@ -1,30 +1,29 @@
-import { getActiveWorkspaceId } from '@/lib/studio/client';
 import { compositionSchema, type Composition, type EditorRecord, type EditorMedia } from './composition';
 
 export class EditorApiError extends Error {
   constructor(public code: string, public status = 0) { super(code); }
 }
-export async function editorRequest(path: string, body?: unknown, method = body ? 'POST' : 'GET') {
-  const workspace = getActiveWorkspaceId();
+export function createEditorClient(workspace: string | null) {
+async function editorRequest(path: string, body?: unknown, method = body ? 'POST' : 'GET') {
   if (!workspace) throw new EditorApiError('WORKSPACE_REQUIRED');
   const response = await fetch(path, { method, cache: 'no-store', headers: { 'x-workspace-id': workspace, ...(body ? { 'content-type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const data = await response.json();
   if (!response.ok || !data.success) throw new EditorApiError(data.code || (response.status === 403 ? 'EDITOR_ACCESS_OR_QUOTA' : 'EDITOR_REQUEST_FAILED'), response.status);
   return data;
 }
-export async function loadRecords(): Promise<EditorRecord[]> {
-  const { records } = await editorRequest('/api/video-editor');
+async function loadRecords(id?: string): Promise<EditorRecord[]> {
+  const { records } = await editorRequest(`/api/video-editor${id ? `?id=${encodeURIComponent(id)}` : ''}`);
   return records.map((record: EditorRecord) => ({ ...record, composition: compositionSchema.parse(record.composition) }));
 }
-export async function saveComposition(composition: Composition, current: EditorRecord | null, key: string): Promise<EditorRecord> {
+async function saveComposition(composition: Composition, current: EditorRecord | null, key: string): Promise<EditorRecord> {
   const { record } = await editorRequest('/api/video-editor', { composition: compositionSchema.parse(composition), ...(current ? { id: current.id, expectedRevision: current.revision } : {}), idempotencyKey: key });
   return { ...record, composition: compositionSchema.parse(record.composition) };
 }
-export interface MediaItem { id: string; name: string; type: string; durationSeconds: number | null; width: number | null; height: number | null }
-export async function listMedia(cursor: string | null = null): Promise<{ items: MediaItem[]; nextCursor: string | null }> {
+
+async function listMedia(cursor: string | null = null): Promise<{ items: MediaItem[]; nextCursor: string | null }> {
   return editorRequest(`/api/product-library/assets${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
 }
-export async function resolveMedia(item: MediaItem): Promise<EditorMedia> {
+async function resolveMedia(item: MediaItem): Promise<EditorMedia> {
   const { downloadUrl } = await editorRequest(`/api/studio/assets/${encodeURIComponent(item.id)}/download`);
   if (item.type !== 'video' && item.type !== 'audio') throw new EditorApiError('EDITOR_MEDIA_UNAVAILABLE');
   // Lazy metadata inspection: avoid loading codec tooling until a creator selects media.
@@ -41,7 +40,7 @@ export async function resolveMedia(item: MediaItem): Promise<EditorMedia> {
 }
 
 /** Upload uses the same reservation, quota and server inspection path as Workspace media. */
-export async function uploadMedia(file: File, onPhase: (phase: 'uploading' | 'processing') => void): Promise<MediaItem> {
+async function uploadMedia(file: File, onPhase: (phase: 'uploading' | 'processing') => void): Promise<MediaItem> {
   const type = /^(video\/(mp4|webm|quicktime))$/.test(file.type) ? 'video' : /^(audio\/(mpeg|mp3|wav|x-wav|wave))$/.test(file.type) ? 'audio' : null;
   if (!type || !file.size || file.size > 500 * 1024 * 1024) throw new EditorApiError('EDITOR_UPLOAD_FORMAT');
   onPhase('uploading');
@@ -57,3 +56,8 @@ export async function uploadMedia(file: File, onPhase: (phase: 'uploading' | 'pr
     throw error;
   }
 }
+
+ return { request: editorRequest, loadRecords, saveComposition, listMedia, resolveMedia, uploadMedia };
+}
+export interface MediaItem { id: string; name: string; type: string; durationSeconds: number | null; width: number | null; height: number | null }
+export type EditorClient = ReturnType<typeof createEditorClient>;

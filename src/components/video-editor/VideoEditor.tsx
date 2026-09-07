@@ -1,7 +1,10 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { createText, createClip, duration, emptyComposition, type Composition, type EditorMedia, type EditorRecord, type MediaRole, roles, mediaKind } from '@/lib/video-editor/composition';
-import { uploadMedia, listMedia, loadRecords, resolveMedia, saveComposition, type MediaItem } from '@/lib/video-editor/api';
+import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createText, createClip, duration, type EditorMedia, type EditorRecord, type MediaRole, roles, mediaKind } from '@/lib/video-editor/composition';
+import { createEditorClient, type MediaItem } from '@/lib/video-editor/api';
+import { getActiveWorkspaceId } from '@/lib/studio/client';
+import { useEditorDraft } from './useEditorDraft';
 import { exportComposition, type ExportResult } from '@/lib/video-editor/export-client';
 import { TextControls } from './TextControls';
 import { Preview, type PreviewHandle } from './Preview';
@@ -10,56 +13,40 @@ import styles from './editor.module.css';
 
 export function VideoEditor({ locale = 'ar', initialId }: { locale?: 'ar' | 'en'; initialId?: string }) {
  const copy = editorCopy[locale];
- const [composition, setComposition] = useState<Composition>(() => emptyComposition(copy.untitled));
+ const api = useMemo(() => createEditorClient(getActiveWorkspaceId()), []);
+ const draft = useEditorDraft(api, copy);
+ const { composition, change: setComposition, current, status, error, setError, records, setRecords, adopt } = draft;
  const [textSelected, setTextSelected] = useState(false);
  const [selectedRole, setSelectedRole] = useState<MediaRole>('main');
  const [uploadPhase, setUploadPhase] = useState<'uploading' | 'processing' | null>(null);
  const [assets, setAssets] = useState<MediaItem[]>([]), [cursor, setCursor] = useState<string | null>(null);
  const [media, setMedia] = useState<Record<string, EditorMedia>>({});
- const [records, setRecords] = useState<EditorRecord[]>([]);
- const [error, setError] = useState(''), [status, setStatus] = useState(''), [busy, setBusy] = useState(false);
+ const [busy, setBusy] = useState(false);
  const [progress, setProgress] = useState<number | null>(null), [resultUrl, setResultUrl] = useState('');
- const current = useRef<EditorRecord | null>(null), latest = useRef(composition), saved = useRef(JSON.stringify(composition));
- const queue = useRef(Promise.resolve()), controller = useRef<AbortController | null>(null), result = useRef<ExportResult | null>(null);
+ const controller = useRef<AbortController | null>(null), result = useRef<ExportResult | null>(null);
  const preview = useRef<PreviewHandle>(null);
- latest.current = composition;
- const open = useCallback(async (record: EditorRecord) => {
-  const items = roles.flatMap((role) => record.composition[role]?.assetId || []);
-  const resolved = await Promise.all(items.map(async (id) => {
-   const { editorRequest } = await import('@/lib/video-editor/api');
-   const { asset } = await editorRequest(`/api/studio/assets/${encodeURIComponent(id)}`);
-   return resolveMedia({ id, name: asset.metadata?.originalFileName || id, type: asset.type, durationSeconds: asset.durationSeconds, width: asset.width, height: asset.height });
+ const open = useCallback(async (record: EditorRecord, retainUndo = false) => {
+  adopt(record, retainUndo);
+  const items = [...new Set(roles.flatMap(role => record.composition[role]?.assetId || []))];
+  const resolved = await Promise.allSettled(items.map(async id => {
+   const { asset } = await api.request(`/api/studio/assets/${encodeURIComponent(id)}`);
+   return api.resolveMedia({ id, name: asset.metadata?.originalFileName || id, type: asset.type, durationSeconds: asset.durationSeconds, width: asset.width, height: asset.height });
   }));
-  setMedia(Object.fromEntries(resolved.map((item) => [item.id, item])));
-  current.current = record; saved.current = JSON.stringify(record.composition); setComposition(record.composition); setStatus(copy.saved); setError('');
- }, [copy.saved]);
+  setMedia(Object.fromEntries(resolved.flatMap(item => item.status === 'fulfilled' ? [[item.value.id, item.value]] : [])));
+  if (resolved.some(item => item.status === 'rejected')) setError(copy.errors.EDITOR_MEDIA_UNAVAILABLE);
+ }, [api, adopt, setError, copy]);
  useEffect(() => {
-  let active = true;
-  void Promise.all([listMedia(), loadRecords()]).then(async ([library, drafts]) => {
+  let active = true; setBusy(true);
+  void Promise.all([api.listMedia(), api.loadRecords(initialId)]).then(async ([library, drafts]) => {
    if (!active) return; setAssets(library.items); setCursor(library.nextCursor); setRecords(drafts);
-   const record = drafts.find((item) => item.id === initialId); if (record) await open(record);
-  }).catch((failure) => { if (active) setError(errorCopy(failure, copy)); });
+   const record = drafts.find(item => item.id === initialId); if (record) await open(record); else if (initialId) setError(copy.errors.EDITOR_NOT_FOUND);
+  }).catch(failure => { if (active) setError(errorCopy(failure, copy)); }).finally(() => { if (active) setBusy(false); });
   return () => { active = false; };
- }, [initialId, copy, open]);
- const persist = useCallback(() => {
-  const snapshot = latest.current;
-  if (!snapshot.main || JSON.stringify(snapshot) === saved.current) return Promise.resolve();
-  setStatus(copy.saving);
-  const task = queue.current.then(async () => {
-   const record = await saveComposition(snapshot, current.current, crypto.randomUUID());
-   current.current = record; saved.current = JSON.stringify(snapshot);
-   setRecords((items) => [record, ...items.filter((item) => item.id !== record.id)]);
-   setStatus(JSON.stringify(latest.current) === saved.current ? copy.saved : copy.unsaved);
-   const url = new URL(window.location.href); url.searchParams.set('piece', record.id); window.history.replaceState(null, '', url);
-  });
-  queue.current = task.catch((failure) => { setStatus(copy.unsaved); setError(errorCopy(failure, copy)); });
-  return queue.current;
- }, [copy]);
- useEffect(() => { if (!composition.main || JSON.stringify(composition) === saved.current) return; setStatus(copy.unsaved); const timer = setTimeout(() => void persist(), 1200); return () => clearTimeout(timer); }, [composition, persist, copy.unsaved]);
+ }, [initialId, api, copy, open, setError, setRecords]);
  useEffect(() => () => { controller.current?.abort(); void result.current?.release(); }, []);
  async function select(item: MediaItem) {
   setBusy(true); setError('');
-  try { const selected = await resolveMedia(item); if (selected.duration <= 0 || (selected.type === 'video' && (Math.max(selected.width, selected.height) > 1920 || Math.min(selected.width, selected.height) > 1080))) throw new Error('EDITOR_MEDIA_LIMIT'); setMedia((items) => ({ ...items, [item.id]: selected })); setComposition((value) => ({ ...value, [selectedRole]: { ...createClip(item.id, selected.duration), trimEnd: Math.min(selected.duration, selectedRole === 'main' ? 60 : Math.min(selectedRole === 'secondary' ? 15 : 60, duration(value))) } })); }
+  try { const selected = await api.resolveMedia(item); if (selected.duration <= 0 || (selected.type === 'video' && (Math.max(selected.width, selected.height) > 1920 || Math.min(selected.width, selected.height) > 1080))) throw new Error('EDITOR_MEDIA_LIMIT'); setMedia((items) => ({ ...items, [item.id]: selected })); setComposition((value) => ({ ...value, [selectedRole]: { ...createClip(item.id, selected.duration), trimEnd: Math.min(selected.duration, selectedRole === 'main' ? 60 : Math.min(selectedRole === 'secondary' ? 15 : 60, duration(value))) } })); }
   catch (failure) { setError(errorCopy(failure, copy)); } finally { setBusy(false); }
  }
  async function runExport() {
@@ -72,25 +59,26 @@ export function VideoEditor({ locale = 'ar', initialId }: { locale?: 'ar' | 'en'
  }
  return <main className={styles.editor} lang={locale} dir={locale === 'ar' ? 'rtl' : 'ltr'}>
   <header className={styles.header}>
-   <a href="/simple-studio/videos">{copy.back}</a><h1>{copy.title}</h1>
+   <Link href="/simple-studio/videos">{copy.back}</Link><h1>{copy.title}</h1>
    <input aria-label={copy.name} value={composition.title} maxLength={240} onChange={(e) => setComposition({ ...composition, title: e.target.value })} />
+   <button onClick={draft.undo} disabled={!draft.canUndo}>{copy.undo}</button><button onClick={draft.redo} disabled={!draft.canRedo}>{copy.redo}</button>
    <span role="status">{status}</span><span dir="ltr">1080p · 9:16</span>
-   <button disabled={!composition.main || status === copy.saving} onClick={() => { setError(''); void persist(); }}>{copy.save}</button>
+   <button disabled={!composition.main || status === copy.saving} onClick={() => void draft.save()}>{copy.save}</button>
    <button className={styles.primary} disabled={!composition.main || progress !== null || busy} onClick={() => void runExport()}>{copy.export}</button>
   </header>
-  {error && <div className={styles.error} role="alert">{error}</div>}
+  {(error || draft.conflict) && <div className={styles.error} role="alert">{error || copy.errors.EDITOR_SAVE_CONFLICT}{draft.conflict && <><button onClick={() => void draft.saveCopy()}>{copy.saveCopy}</button><button onClick={() => void api.loadRecords(current?.id).then(items => { const record = items.find(item => item.id === current?.id); if (record) return open(record, true); throw new Error('EDITOR_NOT_FOUND'); }).catch(failure => setError(errorCopy(failure, copy)))}>{copy.reloadSaved}</button></>}</div>}
   <div className={styles.workspace} dir="ltr">
    <aside className={styles.panel} dir={locale === 'ar' ? 'rtl' : 'ltr'}>
     <h2>{copy.media}</h2><button onClick={() => { setComposition({ ...composition, text: composition.text || createText() }); setTextSelected(true); }}>{copy.addText}</button>
     <label>{copy.addTo}<select value={selectedRole} onChange={(event) => { setSelectedRole(event.target.value as MediaRole); setTextSelected(false); }}>{roles.map((role) => <option key={role} value={role} disabled={role !== 'main' && !composition.main}>{copy[role]}</option>)}</select></label>
     <label>{copy.upload}<input type="file" accept="video/mp4,video/webm,video/quicktime,audio/mpeg,audio/wav,audio/x-wav" disabled={Boolean(uploadPhase)} onChange={(event) => {
      const file = event.target.files?.[0]; event.target.value = ''; if (!file) return; setError('');
-     void uploadMedia(file, setUploadPhase).then((item) => { setAssets((items) => [item, ...items.filter((value) => value.id !== item.id)]); }).catch((failure) => setError(errorCopy(failure, copy))).finally(() => setUploadPhase(null));
+     void api.uploadMedia(file, setUploadPhase).then((item) => { setAssets((items) => [item, ...items.filter((value) => value.id !== item.id)]); }).catch((failure) => setError(errorCopy(failure, copy))).finally(() => setUploadPhase(null));
     }} /></label>{uploadPhase && <p role="status">{copy[uploadPhase]}</p>}
-    <select aria-label={copy.open} value={current.current?.id || ''} onChange={(e) => { const record = records.find((item) => item.id === e.target.value); if (record) void open(record).catch((failure) => setError(errorCopy(failure, copy))); }}><option value="">{copy.open}</option>{records.map((record) => <option key={record.id} value={record.id}>{record.composition.title}</option>)}</select>
+    <select aria-label={copy.open} value={current?.id || ''} onChange={(e) => { const record = records.find((item) => item.id === e.target.value); if (record) void draft.save().then(saved => { if (saved) return open(record); }).catch((failure) => setError(errorCopy(failure, copy))); }}><option value="">{copy.open}</option>{records.map((record) => <option key={record.id} value={record.id}>{record.composition.title}</option>)}</select>
     {assets.filter((item) => item.type === 'video' || item.type === 'audio').map((item) => <button className={styles.mediaCard} key={item.id} disabled={busy || item.type !== mediaKind(selectedRole)} onClick={() => void select(item)}>{item.name}<small>{item.durationSeconds}s</small></button>)}
     {!assets.length && <p>{copy.empty}</p>}
-    {cursor && <button onClick={() => void listMedia(cursor).then((page) => { setAssets([...assets, ...page.items]); setCursor(page.nextCursor); }).catch((failure) => setError(errorCopy(failure, copy)))}>{copy.more}</button>}
+    {cursor && <button onClick={() => void api.listMedia(cursor).then((page) => { setAssets([...assets, ...page.items]); setCursor(page.nextCursor); }).catch((failure) => setError(errorCopy(failure, copy)))}>{copy.more}</button>}
    </aside>
    <Preview ref={preview} composition={composition} media={media} copy={copy} onChange={setComposition} onSelectText={() => setTextSelected(true)} />
    <aside className={styles.panel} dir={locale === 'ar' ? 'rtl' : 'ltr'}><h2>{!textSelected && copy[selectedRole]}</h2>
