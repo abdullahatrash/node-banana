@@ -9,7 +9,7 @@ await mkdir(out, { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 try {
  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
- const errors = []; page.on('pageerror', e => errors.push(e.message));
+ const errors = []; page.on('pageerror', e => { errors.push(e.message); console.error('PAGE ERROR', e.message); });
  page.on('console', msg => { if (msg.type() === 'error') console.error(msg.text()); });
  await page.goto('http://127.0.0.1:3048/?lang=en');
  await page.getByRole('button', { name: /Phone footage/ }).click();
@@ -30,6 +30,22 @@ try {
  if (!await secondary.isVisible()) throw Error('Secondary video absent during segment');
  await page.getByLabel('Timeline', { exact: true }).fill('4.5');
  if (await secondary.isVisible()) throw Error('Secondary video did not disappear');
+ await page.getByRole('button', { name: 'Add text', exact: true }).click();
+ await page.getByLabel('Overlay text', { exact: true }).fill('مرحبا بالعالم\nHello 2026');
+ const overlay = page.getByRole('button', { name: 'Move or edit text' });
+ await overlay.dblclick();
+ await page.getByLabel('Edit text on video').fill('السطر الأول\nHello 2026');
+ await page.getByLabel('Edit text on video').press('Control+Enter');
+ await overlay.press('ArrowUp');
+ const bounds = await overlay.boundingBox();
+ await page.mouse.move(bounds.x + 5, bounds.y + 5); await page.mouse.down(); await page.mouse.move(bounds.x + 20, bounds.y - 20, { steps: 5 }); await page.mouse.up();
+ await page.getByLabel('Text weight').selectOption('700');
+ await page.getByLabel('Text alignment').selectOption('right');
+ await page.getByRole('button', { name: 'Save', exact: true }).click();
+ await page.getByText('Saved', { exact: true }).waitFor();
+ await page.reload();
+ await page.getByRole('button', { name: 'Move or edit text' }).click();
+ if (await page.getByLabel('Overlay text', { exact: true }).inputValue() !== 'السطر الأول\nHello 2026') throw Error('Multiline text did not survive reopen');
  const measurements = [];
  for (const [layout, label] of [['stacked', 'Stacked'], ['pip', 'Picture in picture'], ['side-by-side', 'Side by side']]) {
   await page.getByRole('button', { name: label, exact: true }).click();

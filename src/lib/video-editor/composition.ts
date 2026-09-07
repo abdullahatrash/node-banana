@@ -11,10 +11,19 @@ export const clipSchema = z.object({
   muted: z.boolean(),
 }).strict().refine((clip) => clip.trimEnd - clip.trimStart >= 1 / VIDEO_FPS, 'Select at least one frame');
 
+export const textSchema = z.object({
+ text: z.string().max(1000), x: z.number().finite().min(0).max(1), y: z.number().finite().min(0).max(1),
+ fontSize: z.number().finite().min(24).max(160), fontWeight: z.union([z.literal(100), z.literal(300), z.literal(400), z.literal(700)]),
+ align: z.enum(['left', 'center', 'right']), color: z.string().regex(/^#[0-9a-f]{6}$/i), backgroundColor: z.string().regex(/^#[0-9a-f]{6}$/i), backgroundOpacity: z.number().finite().min(0).max(1),
+}).strict();
+export type TextOverlay = z.infer<typeof textSchema>;
+export function createText(): TextOverlay { return { text: 'اكتب نصك هنا', x: 0.5, y: 0.8, fontSize: 76, fontWeight: 400, align: 'center', color: '#ffffff', backgroundColor: '#000000', backgroundOpacity: 0.73 }; }
+
 export const compositionSchema = z.object({
   version: z.literal(1),
   title: z.string().trim().min(1).max(240),
   main: clipSchema.nullable(),
+  text: textSchema.nullable().default(null),
   secondary: clipSchema.nullable().default(null),
   layout: z.enum(['stacked', 'pip', 'side-by-side']).default('stacked'),
 }).strict().superRefine((composition, context) => {
@@ -30,7 +39,7 @@ export const roles: MediaRole[] = ['main', 'secondary'];
 export function duration(composition: { main: { trimEnd: number; trimStart: number } | null }) {
   return composition.main ? composition.main.trimEnd - composition.main.trimStart : 0;
 }
-export function emptyComposition(title = 'Untitled video'): Composition { return { version: 1, title, main: null, secondary: null, layout: 'stacked' }; }
+export function emptyComposition(title = 'Untitled video'): Composition { return { version: 1, title, main: null, text: null, secondary: null, layout: 'stacked' }; }
 export function createClip(assetId: string, seconds: number): Clip {
   return { assetId, trimStart: 0, trimEnd: Math.min(seconds, MAX_DURATION), start: 0, gain: 1, muted: false };
 }

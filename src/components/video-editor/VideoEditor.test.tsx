@@ -45,3 +45,15 @@ it('retains the selected trim after a quota denial and allows another upload att
  expect(screen.getByLabelText('Trim end')).toHaveValue(5);
  expect(screen.getByLabelText('Upload video or audio')).toBeEnabled();
 });
+
+it('edits multiline Arabic text through properties and the video overlay', async () => {
+ render(<VideoEditor locale="en" />);
+ fireEvent.click(await screen.findByRole('button', { name: 'Add text' }));
+ fireEvent.change(screen.getByLabelText('Overlay text'), { target: { value: 'مرحبا بالعالم\nHello 2026' } });
+ fireEvent.doubleClick(screen.getByRole('button', { name: 'Move or edit text' }));
+ const inline = screen.getByLabelText('Edit text on video');
+ expect(inline).toHaveValue('مرحبا بالعالم\nHello 2026');
+ fireEvent.change(inline, { target: { value: 'السطر الأول\nالسطر الثاني' } });
+ fireEvent.keyDown(inline, { key: 'Enter', ctrlKey: true });
+ expect(screen.getByLabelText('Overlay text')).toHaveValue('السطر الأول\nالسطر الثاني');
+});

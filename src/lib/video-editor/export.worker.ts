@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 import { Input, UrlSource, ALL_FORMATS, CanvasSink, CanvasSource, AudioSample, AudioSampleSink, AudioSampleSource, Output, Mp4OutputFormat, StreamTarget, Conversion, WavOutputFormat, BlobSource, canEncodeVideo, canEncodeAudio } from 'mediabunny-editor';
+import { overlayLayout, paintOverlay } from './overlay';
 import { compositionSchema, duration, clipDuration, clipActive, roles, videoRects, VIDEO_FPS, type EditorMedia, type Clip, type Rect } from './composition';
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 let cancelled = false;
@@ -79,6 +80,14 @@ scope.onmessage = async ({ data }) => {
   }
   checkCancelled();
   const canvas = new OffscreenCanvas(1080, 1920), context = canvas.getContext('2d', { alpha: false })!;
+  let overlay: { canvas: OffscreenCanvas; x: number; y: number } | null = null;
+  if (composition.text?.text) {
+   const font = new FontFace('EditorArabic', `url(${new URL('/fonts/editor-arabic.ttf', scope.location.href)})`, { weight: '100 900' });
+   await font.load(); scope.fonts.add(font); checkCancelled();
+   const layout = overlayLayout(context, composition.text), textCanvas = new OffscreenCanvas(layout.width, layout.height);
+   paintOverlay(textCanvas.getContext('2d')!, layout);
+   overlay = { canvas: textCanvas, x: layout.x - layout.width / 2, y: layout.y - layout.height / 2 };
+  }
   const fileHandle = await directory.getFileHandle('video.mp4', { create: true });
   output = new Output({ format: new Mp4OutputFormat({ fastStart: false }), target: new StreamTarget(await fileHandle.createWritable(), { chunked: true, chunkSize: 1024 * 1024 }) });
   const video = new CanvasSource(canvas, { codec: 'avc', bitrate: 6_000_000, keyFrameInterval: 2 });
@@ -93,6 +102,7 @@ scope.onmessage = async ({ data }) => {
     if (!frame) throw new Error('EDITOR_MEDIA_UNAVAILABLE');
     draw(context, frame.canvas, rect);
    }
+   if (overlay) context.drawImage(overlay.canvas, overlay.x, overlay.y);
    const pcm = new Float32Array(block * 2);
    for (const cursor of cursors) await mix(cursor, pcm, time);
    for (let sample = 0; sample < pcm.length; sample++) pcm[sample] = Math.max(-1, Math.min(1, pcm[sample]));

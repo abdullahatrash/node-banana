@@ -2,9 +2,10 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { clipActive, duration, roles, videoRects, type Composition, type EditorMedia, type MediaRole } from '@/lib/video-editor/composition';
 import type { EditorCopy } from './copy';
+import { TextOverlay } from './TextOverlay';
 import styles from './editor.module.css';
 export interface PreviewHandle { pause(): void; seek(time: number): void }
-export const Preview = forwardRef<PreviewHandle, { composition: Composition; media: Record<string, EditorMedia>; copy: EditorCopy; onChange(value: Composition): void }>(function Preview({ composition, media, copy, onChange }, ref) {
+export const Preview = forwardRef<PreviewHandle, { composition: Composition; media: Record<string, EditorMedia>; copy: EditorCopy; onChange(value: Composition): void; onSelectText(): void }>(function Preview({ composition, media, copy, onChange, onSelectText }, ref) {
  const elements = useRef<Partial<Record<MediaRole, HTMLMediaElement>>>({});
  const [playing, setPlaying] = useState(false), [time, setTime] = useState(0);
  const clock = useRef(0), latest = useRef(composition); latest.current = composition;
@@ -43,6 +44,7 @@ export const Preview = forwardRef<PreviewHandle, { composition: Composition; med
     const clip = composition[role], source = clip ? media[clip.assetId] : null, rect = rectangles[role];
     return source && <video key={role} aria-label={copy[role]} ref={element => { if (element) elements.current[role] = element; else delete elements.current[role]; }} src={source.url} preload="metadata" playsInline crossOrigin="anonymous" onLoadedMetadata={() => sync(clock.current, playing, true)} onEnded={role === 'main' ? pause : undefined} style={{ display: rect ? 'block' : 'none', left: `${(rect?.x || 0) * 100}%`, top: `${(rect?.y || 0) * 100}%`, width: `${(rect?.width || 1) * 100}%`, height: `${(rect?.height || 1) * 100}%` }} />;
    })}
+   {composition.text && <TextOverlay value={composition.text} copy={copy} onSelect={onSelectText} onChange={text => onChange({ ...composition, text })} />}
    {!main && <p>{copy.select}</p>}
   </div>
   <div className={styles.transport} dir="ltr">
