@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { requireOnboardingComplete } from "@/lib/onboarding/server-access";
 import { CONTENT_FORMATS, contentPieceSchema, type ContentFormat } from "@/lib/product-surfaces/definitions";
@@ -25,6 +26,7 @@ export default async function ContentPage({ searchParams }: { searchParams: Prom
   ]);
   const pieces = rows.map(({ id, title, revision, payload }) => ({ id, title, revision, payload }));
   const selectedPiece = pieces.find((piece) => piece.id === query.piece) ?? null;
+  if (selectedPiece?.payload.videoEditor) redirect(`/editor?piece=${encodeURIComponent(selectedPiece.id)}`);
   const selectedPayload = selectedPiece ? contentPieceSchema.parse(selectedPiece.payload) : null;
   const options = await loadContentEditorOptions(workspaceId, new Date(), selectedPayload ? { mediaSetRevisionRefs: selectedPayload.mediaSetRevisionRefs, themeRevisionRefs: selectedPayload.themeRevisionRefs } : undefined);
   const selectedFormat = selectedPayload?.format ?? requestedFormat;

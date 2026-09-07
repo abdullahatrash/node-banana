@@ -43,3 +43,7 @@ describe("asset media evidence", () => {
     await expect(collectStreamedAssetEvidence({ assetType: "document", mimeType: "text/plain", body, maximumBytes: 10 })).rejects.toThrow("ASSET_SIZE_LIMIT_EXCEEDED");
   });
 });
+
+it('rejects audio uploads whose bytes do not contain an audio track', async () => {
+  await expect(collectBufferedAssetEvidence({ assetType: 'audio', mimeType: 'audio/mpeg', bytes: Buffer.from('not audio') })).rejects.toThrow();
+});

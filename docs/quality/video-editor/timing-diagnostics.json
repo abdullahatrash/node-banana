@@ -1,0 +1,45 @@
+{
+  "method": "FFT band 580\u2013740 Hz; 5 ms RMS half-height onset. Approximate diagnostic, not sample-exact acceptance.",
+  "results": [
+    {
+      "file": "music-44100.mp3.mp4",
+      "musicRms": 0.08378869296711651,
+      "approximateOnsetMs": 1068.5833333333335,
+      "delayFromChosenStartMs": 68.58333333333344
+    },
+    {
+      "file": "music-44100.wav.mp4",
+      "musicRms": 0.08812653484659294,
+      "approximateOnsetMs": 1043.5208333333333,
+      "delayFromChosenStartMs": 43.52083333333323
+    },
+    {
+      "file": "music-mono.mp3.mp4",
+      "musicRms": 0.08378678959298297,
+      "approximateOnsetMs": 1068.5833333333335,
+      "delayFromChosenStartMs": 68.58333333333344
+    },
+    {
+      "file": "music-untagged.mp3.mp4",
+      "musicRms": 0.08378869296711651,
+      "approximateOnsetMs": 1068.5833333333335,
+      "delayFromChosenStartMs": 68.58333333333344
+    },
+    {
+      "file": "music-vbr.mp3.mp4",
+      "musicRms": 0.08813814912121046,
+      "approximateOnsetMs": 1068.6041666666665,
+      "delayFromChosenStartMs": 68.60416666666657
+    },
+    {
+      "file": "music.wav.mp4",
+      "musicRms": 0.08818259652467245,
+      "approximateOnsetMs": 1043.5416666666665,
+      "delayFromChosenStartMs": 43.541666666666586
+    },
+    {
+      "file": "muted.mp4",
+      "musicRms": 2.7945849335742766e-05
+    }
+  ]
+}

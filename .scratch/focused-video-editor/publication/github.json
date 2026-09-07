@@ -1,0 +1,94 @@
+{
+  "01": {
+    "number": 205,
+    "id": 5372118653,
+    "url": "https://github.com/abdullahatrash/node-banana/issues/205",
+    "title": "[Video Editor 01/09] Open, save, and export a main video",
+    "blockedBy": [],
+    "source": "01-main-video-edit-save-export.md"
+  },
+  "02": {
+    "number": 206,
+    "id": 5372118863,
+    "url": "https://github.com/abdullahatrash/node-banana/issues/206",
+    "title": "[Video Editor 02/09] Upload and recover Workspace media",
+    "blockedBy": [
+      "01"
+    ],
+    "source": "02-upload-workspace-media.md"
+  },
+  "03": {
+    "number": 207,
+    "id": 5372119094,
+    "url": "https://github.com/abdullahatrash/node-banana/issues/207",
+    "title": "[Video Editor 03/09] Compose and time a Secondary Video",
+    "blockedBy": [
+      "01"
+    ],
+    "source": "03-secondary-video-stack.md"
+  },
+  "04": {
+    "number": 208,
+    "id": 5372119392,
+    "url": "https://github.com/abdullahatrash/node-banana/issues/208",
+    "title": "[Video Editor 04/09] Switch between all three collage layouts",
+    "blockedBy": [
+      "03"
+    ],
+    "source": "04-collage-presets.md"
+  },
+  "05": {
+    "number": 209,
+    "id": 5372119662,
+    "url": "https://github.com/abdullahatrash/node-banana/issues/209",
+    "title": "[Video Editor 05/09] Edit and style Arabic text on the video",
+    "blockedBy": [
+      "01"
+    ],
+    "source": "05-arabic-text-overlay.md"
+  },
+  "06": {
+    "number": 211,
+    "id": 5372120075,
+    "url": "https://github.com/abdullahatrash/node-banana/issues/211",
+    "title": "[Video Editor 06/09] Add Music and Voiceover with independent controls",
+    "blockedBy": [
+      "02",
+      "03"
+    ],
+    "source": "06-music-voiceover-mixing.md"
+  },
+  "07": {
+    "number": 213,
+    "id": 5372120440,
+    "url": "https://github.com/abdullahatrash/node-banana/issues/213",
+    "title": "[Video Editor 07/09] Undo edits and recover interrupted saves",
+    "blockedBy": [
+      "04",
+      "05",
+      "06"
+    ],
+    "source": "07-undo-save-conflict-recovery.md"
+  },
+  "08": {
+    "number": 215,
+    "id": 5372120938,
+    "url": "https://github.com/abdullahatrash/node-banana/issues/215",
+    "title": "[Video Editor 08/09] Recover cleanly from export cancellation and failure",
+    "blockedBy": [
+      "06"
+    ],
+    "source": "08-export-cancellation-recovery.md"
+  },
+  "09": {
+    "number": 217,
+    "id": 5372121383,
+    "url": "https://github.com/abdullahatrash/node-banana/issues/217",
+    "title": "[Video Editor 09/09] Verify the approved editor workflow and performance",
+    "blockedBy": [
+      "07",
+      "08"
+    ],
+    "source": "09-complete-workflow-qualification.md"
+  }
+}

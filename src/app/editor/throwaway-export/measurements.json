@@ -1,0 +1,411 @@
+{
+  "measuredOn": "2026-09-07",
+  "hardware": {
+    "cpu": "Apple M1 Max",
+    "logicalCpus": 10,
+    "ramGiB": 32,
+    "headless": false,
+    "gpu": [
+      {
+        "vendorId": 4203,
+        "deviceId": 0,
+        "vendorString": "Google Inc. (Apple)",
+        "deviceString": "ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Max, Version 26.5.2 (Build 25F84))",
+        "driverVendor": "Apple",
+        "driverVersion": "26.5.2"
+      }
+    ],
+    "featureStatus": {
+      "2d_canvas": "enabled",
+      "direct_rendering_display_compositor": "disabled_off_ok",
+      "gpu_compositing": "enabled",
+      "multiple_raster_threads": "enabled_on",
+      "opengl": "enabled_on",
+      "rasterization": "enabled",
+      "raw_draw": "disabled_off_ok",
+      "skia_graphite": "enabled_on",
+      "trees_in_viz": "disabled_off",
+      "video_decode": "enabled",
+      "video_encode": "enabled",
+      "webgl": "enabled",
+      "webgpu": "enabled",
+      "webnn": "disabled_off"
+    }
+  },
+  "measurements": [
+    {
+      "status": "complete",
+      "clippedAudioSamples": 0,
+      "workerHeapPeakBytes": null,
+      "videoFrames": 1800,
+      "videoEncoderConfig": {
+        "codec": "avc1.640028",
+        "width": 1080,
+        "height": 1920,
+        "bitrate": 6000000,
+        "alpha": "discard",
+        "framerate": 30,
+        "latencyMode": "quality",
+        "avc": {
+          "format": "avc"
+        }
+      },
+      "audioPacketCount": 2816,
+      "audioFirstPacketTimestamp": 0,
+      "audioLastPacketEnd": 60.074666,
+      "durationSeconds": 60,
+      "exportMs": 5174.299999713898,
+      "outputBytes": 45926823,
+      "audioLayers": 4,
+      "layout": "stack",
+      "output": "H.264/AAC 1080x1920 30fps",
+      "outputStorage": "OPFS streamed, 1 MiB write chunks",
+      "inputBytes": 109270035,
+      "endToEndMs": 5189.799999713898,
+      "fixtureLoadMs": 198.80000019073486,
+      "mainFrameGapP95Ms": 17.5,
+      "mainFrameGapMaxMs": 17.699999999999818,
+      "mainLongTaskCount": 0,
+      "mainLongTaskMaxMs": 0,
+      "clickPaintP95Ms": 15.199999809265137,
+      "measuredClicks": 6,
+      "mainHeapPeakBytes": 2731368,
+      "heapWarning": "JS heap excludes worker/native/GPU memory; process memory must be measured separately.",
+      "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+      "logicalCpus": 10,
+      "reportedDeviceMemoryGiB": 32,
+      "config": {
+        "layout": "stack",
+        "duration": 60,
+        "reactionStart": 5,
+        "text": "\u0634\u0627\u0647\u062f \u0631\u062f\u0629 \u0627\u0644\u0641\u0639\u0644",
+        "mainGain": 0.6,
+        "reactionGain": 0.8,
+        "musicGain": 0.2,
+        "voiceGain": 0.8
+      },
+      "sessionRssBaselineBytes": 1310752768,
+      "sessionRssPeakBytes": 1375895552,
+      "rssNote": "Sum of browser-session process RSS, including shared pages; not unique/private memory.",
+      "memorySamples": 8
+    },
+    {
+      "status": "complete",
+      "clippedAudioSamples": 0,
+      "workerHeapPeakBytes": null,
+      "videoFrames": 1800,
+      "videoEncoderConfig": {
+        "codec": "avc1.640028",
+        "width": 1080,
+        "height": 1920,
+        "bitrate": 6000000,
+        "alpha": "discard",
+        "framerate": 30,
+        "latencyMode": "quality",
+        "avc": {
+          "format": "avc"
+        }
+      },
+      "durationSeconds": 60,
+      "exportMs": 5077.5,
+      "outputBytes": 45949276,
+      "audioLayers": 4,
+      "layout": "overlay",
+      "output": "H.264/AAC 1080x1920 30fps",
+      "outputStorage": "OPFS streamed, 1 MiB write chunks",
+      "inputBytes": 109270035,
+      "endToEndMs": 5093.300000190735,
+      "fixtureLoadMs": 219.5,
+      "mainFrameGapP95Ms": 17.199999999999818,
+      "mainFrameGapMaxMs": 17.600000000000364,
+      "mainLongTaskCount": 0,
+      "mainLongTaskMaxMs": 0,
+      "clickPaintP95Ms": 15,
+      "measuredClicks": 6,
+      "mainHeapPeakBytes": 2924635,
+      "heapWarning": "JS heap excludes worker/native/GPU memory; process memory must be measured separately.",
+      "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+      "logicalCpus": 10,
+      "reportedDeviceMemoryGiB": 32,
+      "config": {
+        "layout": "overlay",
+        "duration": 60,
+        "reactionStart": 5,
+        "text": "\u0634\u0627\u0647\u062f \u0631\u062f\u0629 \u0627\u0644\u0641\u0639\u0644",
+        "mainGain": 0.6,
+        "reactionGain": 0.8,
+        "musicGain": 0.2,
+        "voiceGain": 0.8
+      },
+      "sessionRssBaselineBytes": 1458552832,
+      "sessionRssPeakBytes": 1459519488,
+      "rssNote": "Sum of browser-session process RSS, including shared pages; not unique/private memory.",
+      "memorySamples": 8
+    },
+    {
+      "status": "complete",
+      "clippedAudioSamples": 0,
+      "workerHeapPeakBytes": null,
+      "videoFrames": 1800,
+      "videoEncoderConfig": {
+        "codec": "avc1.640028",
+        "width": 1080,
+        "height": 1920,
+        "bitrate": 6000000,
+        "alpha": "discard",
+        "framerate": 30,
+        "latencyMode": "quality",
+        "avc": {
+          "format": "avc"
+        }
+      },
+      "durationSeconds": 60,
+      "exportMs": 5182.5,
+      "outputBytes": 45994416,
+      "audioLayers": 4,
+      "layout": "side",
+      "output": "H.264/AAC 1080x1920 30fps",
+      "outputStorage": "OPFS streamed, 1 MiB write chunks",
+      "inputBytes": 109270035,
+      "endToEndMs": 5198.599999904633,
+      "fixtureLoadMs": 219.5,
+      "mainFrameGapP95Ms": 17.30000000000109,
+      "mainFrameGapMaxMs": 17.700000000000728,
+      "mainLongTaskCount": 0,
+      "mainLongTaskMaxMs": 0,
+      "clickPaintP95Ms": 15.099999904632568,
+      "measuredClicks": 6,
+      "mainHeapPeakBytes": 3404096,
+      "heapWarning": "JS heap excludes worker/native/GPU memory; process memory must be measured separately.",
+      "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+      "logicalCpus": 10,
+      "reportedDeviceMemoryGiB": 32,
+      "config": {
+        "layout": "side",
+        "duration": 60,
+        "reactionStart": 5,
+        "text": "\u0634\u0627\u0647\u062f \u0631\u062f\u0629 \u0627\u0644\u0641\u0639\u0644",
+        "mainGain": 0.6,
+        "reactionGain": 0.8,
+        "musicGain": 0.2,
+        "voiceGain": 0.8
+      },
+      "sessionRssBaselineBytes": 1463926784,
+      "sessionRssPeakBytes": 1463926784,
+      "rssNote": "Sum of browser-session process RSS, including shared pages; not unique/private memory.",
+      "memorySamples": 8
+    }
+  ],
+  "warmup": {
+    "status": "complete",
+    "clippedAudioSamples": 0,
+    "workerHeapPeakBytes": null,
+    "videoFrames": 150,
+    "videoEncoderConfig": {
+      "codec": "avc1.640028",
+      "width": 1080,
+      "height": 1920,
+      "bitrate": 6000000,
+      "alpha": "discard",
+      "framerate": 30,
+      "latencyMode": "quality",
+      "avc": {
+        "format": "avc"
+      }
+    },
+    "durationSeconds": 5,
+    "exportMs": 1305.5,
+    "outputBytes": 3818169,
+    "audioLayers": 4,
+    "layout": "stack",
+    "output": "H.264/AAC 1080x1920 30fps",
+    "outputStorage": "OPFS streamed, 1 MiB write chunks",
+    "inputBytes": 109270035,
+    "endToEndMs": 1335.2999997138977,
+    "fixtureLoadMs": 194.40000009536743,
+    "mainFrameGapP95Ms": 17.600000000000136,
+    "mainFrameGapMaxMs": 300.1999999999998,
+    "mainLongTaskCount": 0,
+    "mainLongTaskMaxMs": 0,
+    "clickPaintP95Ms": 13.299999713897705,
+    "measuredClicks": 1,
+    "mainHeapPeakBytes": 3284649,
+    "heapWarning": "JS heap excludes worker/native/GPU memory; process memory must be measured separately.",
+    "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+    "logicalCpus": 10,
+    "reportedDeviceMemoryGiB": 32,
+    "config": {
+      "layout": "stack",
+      "duration": 5,
+      "reactionStart": 0,
+      "text": "\u0634\u0627\u0647\u062f \u0631\u062f\u0629 \u0627\u0644\u0641\u0639\u0644",
+      "mainGain": 0.6,
+      "reactionGain": 0.8,
+      "musicGain": 0.2,
+      "voiceGain": 0.8
+    },
+    "hardware": {
+      "cpu": "Apple M1 Max",
+      "logicalCpus": 10,
+      "ramGiB": 32,
+      "headless": false,
+      "gpu": [
+        {
+          "vendorId": 4203,
+          "deviceId": 0,
+          "vendorString": "Google Inc. (Apple)",
+          "deviceString": "ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Max, Version 26.5.2 (Build 25F84))",
+          "driverVendor": "Apple",
+          "driverVersion": "26.5.2"
+        }
+      ],
+      "featureStatus": {
+        "2d_canvas": "enabled",
+        "direct_rendering_display_compositor": "disabled_off_ok",
+        "gpu_compositing": "enabled",
+        "multiple_raster_threads": "enabled_on",
+        "opengl": "enabled_on",
+        "rasterization": "enabled",
+        "raw_draw": "disabled_off_ok",
+        "skia_graphite": "enabled_on",
+        "trees_in_viz": "disabled_off",
+        "video_decode": "enabled",
+        "video_encode": "enabled",
+        "webgl": "enabled",
+        "webgpu": "enabled",
+        "webnn": "disabled_off"
+      }
+    },
+    "sessionRssBaselineBytes": 1208942592,
+    "sessionRssPeakBytes": 1254391808,
+    "rssNote": "Sum of browser-session process RSS, including shared pages; not unique/private memory.",
+    "memorySamples": 3
+  },
+  "cancellation": {
+    "status": "cancelled",
+    "cancelMs": 68,
+    "remainingTemporaryOutputs": []
+  },
+  "outputInspection": [
+    {
+      "layout": "stack",
+      "videoFrames": "1800",
+      "videoDuration": "60.000000",
+      "audioDuration": "60.074667",
+      "containerDuration": "60.074667",
+      "peakDecodedAudio": 0.3180859684944153,
+      "frequencyWindows": {
+        "1": {
+          "220": 1271.861,
+          "440": 0.27,
+          "660": 299.883,
+          "880": 0.315
+        },
+        "3": {
+          "220": 1270.441,
+          "440": 0.379,
+          "660": 299.185,
+          "880": 1197.802
+        },
+        "8": {
+          "220": 1270.0,
+          "440": 1693.798,
+          "660": 299.526,
+          "880": 1199.276
+        },
+        "15": {
+          "220": 1270.951,
+          "440": 1694.853,
+          "660": 299.064,
+          "880": 0.462
+        },
+        "25": {
+          "220": 1271.791,
+          "440": 0.19,
+          "660": 299.704,
+          "880": 0.233
+        }
+      }
+    },
+    {
+      "layout": "overlay",
+      "videoFrames": "1800",
+      "videoDuration": "60.000000",
+      "audioDuration": "60.074667",
+      "containerDuration": "60.074667",
+      "peakDecodedAudio": 0.3180859684944153,
+      "frequencyWindows": {
+        "1": {
+          "220": 1271.861,
+          "440": 0.27,
+          "660": 299.883,
+          "880": 0.315
+        },
+        "3": {
+          "220": 1270.441,
+          "440": 0.379,
+          "660": 299.185,
+          "880": 1197.802
+        },
+        "8": {
+          "220": 1270.0,
+          "440": 1693.798,
+          "660": 299.526,
+          "880": 1199.276
+        },
+        "15": {
+          "220": 1270.951,
+          "440": 1694.853,
+          "660": 299.064,
+          "880": 0.462
+        },
+        "25": {
+          "220": 1271.791,
+          "440": 0.19,
+          "660": 299.704,
+          "880": 0.233
+        }
+      }
+    },
+    {
+      "layout": "side",
+      "videoFrames": "1800",
+      "videoDuration": "60.000000",
+      "audioDuration": "60.074667",
+      "containerDuration": "60.074667",
+      "peakDecodedAudio": 0.3180859684944153,
+      "frequencyWindows": {
+        "1": {
+          "220": 1271.861,
+          "440": 0.27,
+          "660": 299.883,
+          "880": 0.315
+        },
+        "3": {
+          "220": 1270.441,
+          "440": 0.379,
+          "660": 299.185,
+          "880": 1197.802
+        },
+        "8": {
+          "220": 1270.0,
+          "440": 1693.798,
+          "660": 299.526,
+          "880": 1199.276
+        },
+        "15": {
+          "220": 1270.951,
+          "440": 1694.853,
+          "660": 299.064,
+          "880": 0.462
+        },
+        "25": {
+          "220": 1271.791,
+          "440": 0.19,
+          "660": 299.704,
+          "880": 0.233
+        }
+      }
+    }
+  ]
+}

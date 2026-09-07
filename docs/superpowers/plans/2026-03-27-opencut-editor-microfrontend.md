@@ -1,5 +1,7 @@
 # OpenCut Video Editor Microfrontend — Implementation Plan
 
+**Status:** Superseded by [ADR 0035](../../adr/0035-built-in-basic-video-editor.md). Retained as historical context; do not execute this plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Serve an OpenCut fork as a Vercel microfrontend at `/editor` within Node Banana, with shared auth, feature flag gating, and pillar navigation.

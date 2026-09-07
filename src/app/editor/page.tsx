@@ -1,5 +1,9 @@
 "use client";
 
+import dynamic from "next/dynamic";
+import { builtInEditorEnabled } from "@/lib/video-editor/enabled";
+const VideoEditor = dynamic(() => import("@/components/video-editor/VideoEditor").then(module => module.VideoEditor), { ssr: false });
+
 import Link from "next/link";
 import { useLocale, useTranslations } from "next-intl";
 import { getDirection } from "@/i18n/config";
@@ -7,6 +11,7 @@ import { getDirection } from "@/i18n/config";
 export default function EditorUpgradePage() {
   const t = useTranslations("editor");
   const locale = useLocale();
+  if (builtInEditorEnabled) return <VideoEditor locale={locale === "ar" ? "ar" : "en"} initialId={typeof window === "undefined" ? undefined : new URLSearchParams(window.location.search).get("piece") || undefined} />;
   return (
     <div lang={locale} dir={getDirection(locale === "ar" ? "ar" : "en")} className="flex min-h-screen items-center justify-center bg-neutral-950 px-4 py-8">
       <div className="max-w-lg text-center">

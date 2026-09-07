@@ -1,7 +1,7 @@
 # OpenCut Video Editor — Microfrontend Integration Design
 
 **Date:** 2026-03-27
-**Status:** Approved
+**Status:** Superseded by [ADR 0035](../../adr/0035-built-in-basic-video-editor.md). Retained as historical context; do not implement this integration plan.
 **Scope:** Phase 1 — Minimal integration (shared auth + feature flags + navigation)
 
 ## Summary

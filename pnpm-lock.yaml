@@ -113,6 +113,9 @@ importers:
       mediabunny:
         specifier: ^1.31.0
         version: 1.31.0
+      mediabunny-editor:
+        specifier: npm:mediabunny@1.55.7
+        version: mediabunny@1.55.7
       mime-types:
         specifier: ^3.0.2
         version: 3.0.2
@@ -246,6 +249,9 @@ importers:
       jsdom:
         specifier: ^27.4.0
         version: 27.4.0
+      mediabunny-reaction-prototype:
+        specifier: npm:mediabunny@1.55.7
+        version: mediabunny@1.55.7
       msw:
         specifier: ^2.12.14
         version: 2.12.14(@types/node@24.10.1)(typescript@5.9.3)
@@ -6434,6 +6440,9 @@ packages:
 
   mediabunny@1.31.0:
     resolution: {integrity: sha512-nqM+6cOpNC/aDxCAZKnZe7oXnGaCn4rlgprzAmiH6C8GRdOHFnB6bZC0+WXGTT6mtAxXQd+BXuZ2q2zkma7dWg==}
+
+  mediabunny@1.55.7:
+    resolution: {integrity: sha512-Sb/vI8frRiDPbPUwl3hz0n69NSe9yt4Nydcv5yxi8Rdgk0BgnujEGjZqE+uCTehFbafcqIu6gDAok8ln98dcqg==}
 
   memory-pager@1.5.0:
     resolution: {integrity: sha512-ZS4Bp4r/Zoeq6+NLJpP+0Zzm0pR8whtGPf1XExKLJBAczGMnSi3It14OiNCStjQjM6NU1okjQGSxgEZN8eBYKg==}
@@ -15370,6 +15379,11 @@ snapshots:
   media-typer@1.1.0: {}
 
   mediabunny@1.31.0:
+    dependencies:
+      '@types/dom-mediacapture-transform': 0.1.11
+      '@types/dom-webcodecs': 0.1.13
+
+  mediabunny@1.55.7:
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.11
       '@types/dom-webcodecs': 0.1.13

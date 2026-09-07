@@ -780,6 +780,30 @@ _Avoid_: output blob, generated file, media item, fake run output
 A stable Workspace-owned creative work in one declared content format, spanning its editable configuration, revisions, source references, executions, and produced Artifacts. Its lifecycle is `active`, `archived`, or terminally `deleted`; it is the Library's canonical editable-content item, while execution and publishing states remain on their owning resources.
 _Avoid_: Content item, generation, project, Artifact, Post
 
+**Video Editor**:
+Tasmeemai's focused surface for combining an AI influencer reaction with a person's recorded footage in a 9:16 short-form video using simple layout and timing controls.
+_Avoid_: Code editor, OpenCut, full production suite
+
+**Reaction Video**:
+A 9:16 Content Piece combining recorded main footage, such as a phone screen recording or camera video, with a generated AI influencer reaction. The reaction usually lasts 5–10 seconds, at most 15 seconds, and appears once at a creator-selected time while the main footage continues.
+_Avoid_: AI influencer generation, source clip, wide video
+
+**Video Collage Layout**:
+A preset arrangement showing the main footage and reaction together within a Reaction Video, such as stacked top-and-bottom panels, side-by-side panels, or a reaction overlay on the main footage. The arrangement does not change the finished video's 9:16 aspect ratio.
+_Avoid_: Aspect ratio, image collage, freeform timeline
+
+**Secondary Video**:
+The second video input and timeline track in the Video Editor, displayed alongside the main footage through the selected Video Collage Layout. It commonly contains the AI influencer reaction in the initial use case. User-facing labels use “Secondary video” in English and “الفيديو الثانوي” in Arabic across the track, media card, timing, and source-audio controls. This naming decision does not change the agreed clip limits.
+_Avoid_: Reaction as the user-facing name of the second video track
+
+**Music Layer**:
+An independently timed background-music contribution to a Reaction Video, separate from its Voiceover Layer and any audio contained in the source videos.
+_Avoid_: Voiceover, video audio, generated song
+
+**Voiceover Layer**:
+An independently timed spoken-narration contribution to a Reaction Video, separate from its Music Layer and any speech contained in the source videos.
+_Avoid_: Music, influencer reaction clip, source-video audio
+
 **Content Piece Draft**:
 A mutable autosaved working copy based on one exact Content Piece Revision and owned by one active editor. It uses optimistic versioning, is never executable or publishable, and becomes shared immutable history only when explicit Save, Preview, or Generate validation promotes it to a new Revision.
 _Avoid_: Current revision, unpublished Artifact, shared mutable document, form state

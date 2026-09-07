@@ -42,6 +42,11 @@ export async function listProductRecords(input: {
   return rows.map((row) => ({ ...row, kind: row.kind as ProductRecordKind, payload: parseProductPayload(row.kind as ProductRecordKind, row.payload) }));
 }
 
+export async function getProductRecord(workspaceId: string, id: string) {
+  const [row] = await getDb().select().from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, workspaceId), eq(workspaceProductRecords.id, id), sql`${workspaceProductRecords.archivedAt} is null`)).limit(1);
+  return row ? { ...row, kind: row.kind as ProductRecordKind, payload: parseProductPayload(row.kind as ProductRecordKind, row.payload) } : null;
+}
+
 export async function createProductRecord(input: {
   workspaceId: string;
   userId: string;

@@ -1,0 +1,398 @@
+{
+  "date": "2026-09-07",
+  "scope": "Subsequent audio preparation and timing diagnostics; synthetic fixtures, M1 Max, Chrome 152, Mediabunny 1.31.0. Not production qualification.",
+  "normalizedExport": {
+    "status": "complete",
+    "clippedAudioSamples": 0,
+    "workerHeapPeakBytes": null,
+    "videoFrames": 1800,
+    "normalizedAudioSources": [
+      {
+        "label": "music",
+        "sourceRate": 44100,
+        "sourceChannels": 2,
+        "targetRate": 48000,
+        "targetChannels": 2,
+        "trimLimitSeconds": 60,
+        "temporaryBytes": 23040044,
+        "elapsedMs": 220.69999980926514
+      },
+      {
+        "label": "voiceover",
+        "sourceRate": 24000,
+        "sourceChannels": 1,
+        "targetRate": 48000,
+        "targetChannels": 2,
+        "trimLimitSeconds": 58,
+        "temporaryBytes": 3840052,
+        "elapsedMs": 58.200000286102295
+      }
+    ],
+    "videoEncoderConfig": {
+      "codec": "avc1.640028",
+      "width": 1080,
+      "height": 1920,
+      "bitrate": 6000000,
+      "alpha": "discard",
+      "framerate": 30,
+      "latencyMode": "quality",
+      "avc": {
+        "format": "avc"
+      }
+    },
+    "audioPacketCount": 2816,
+    "audioFirstPacketTimestamp": 0,
+    "audioLastPacketEnd": 60.074666,
+    "durationSeconds": 60,
+    "exportMs": 5395,
+    "outputBytes": 45982896,
+    "audioLayers": 4,
+    "layout": "stack",
+    "output": "H.264/AAC 1080x1920 30fps",
+    "outputStorage": "OPFS streamed, 1 MiB write chunks",
+    "inputBytes": 106894035,
+    "endToEndMs": 5411.099999904633,
+    "fixtureLoadMs": 233.80000019073486,
+    "mainFrameGapP95Ms": 17.699999999999818,
+    "mainFrameGapMaxMs": 17.700000000000728,
+    "mainLongTaskCount": 0,
+    "mainLongTaskMaxMs": 0,
+    "clickPaintP95Ms": 14.699999809265137,
+    "measuredClicks": 6,
+    "mainHeapPeakBytes": 2894332,
+    "heapWarning": "JS heap excludes worker/native/GPU memory; process memory must be measured separately.",
+    "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+    "logicalCpus": 10,
+    "reportedDeviceMemoryGiB": 32,
+    "config": {
+      "layout": "stack",
+      "duration": 60,
+      "reactionStart": 5,
+      "text": "\u0634\u0627\u0647\u062f \u0631\u062f\u0629 \u0627\u0644\u0641\u0639\u0644",
+      "mainGain": 0.6,
+      "reactionGain": 0.8,
+      "musicGain": 0.2,
+      "voiceGain": 0.8,
+      "textPosition": {
+        "x": 0.5,
+        "y": 0.92
+      },
+      "textStyle": {
+        "fontSize": 76,
+        "fontWeight": 400,
+        "align": "center",
+        "color": "#ffffff",
+        "backgroundColor": "#000000",
+        "backgroundOpacity": 0.73
+      }
+    },
+    "hardware": {
+      "cpu": "Apple M1 Max",
+      "logicalCpus": 10,
+      "ramGiB": 32,
+      "headless": false,
+      "gpu": [
+        {
+          "vendorId": 4203,
+          "deviceId": 0,
+          "vendorString": "Google Inc. (Apple)",
+          "deviceString": "ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Max, Version 26.5.2 (Build 25F84))",
+          "driverVendor": "Apple",
+          "driverVersion": "26.5.2"
+        }
+      ],
+      "featureStatus": {
+        "2d_canvas": "enabled",
+        "direct_rendering_display_compositor": "disabled_off_ok",
+        "gpu_compositing": "enabled",
+        "multiple_raster_threads": "enabled_on",
+        "opengl": "enabled_on",
+        "rasterization": "enabled",
+        "raw_draw": "disabled_off_ok",
+        "skia_graphite": "enabled_on",
+        "trees_in_viz": "disabled_off",
+        "video_decode": "enabled",
+        "video_encode": "enabled",
+        "webgl": "enabled",
+        "webgpu": "enabled",
+        "webnn": "disabled_off"
+      }
+    },
+    "sessionRssBaselineBytes": 1308737536,
+    "sessionRssPeakBytes": 1508163584,
+    "rssNote": "Sum of browser-session process RSS, including shared pages; not unique/private memory.",
+    "memorySamples": 8,
+    "remainingTemporaryAudio": []
+  },
+  "preparationCancellation": {
+    "status": "cancelled",
+    "requestedPhase": "prepare",
+    "cancelMs": 60,
+    "remainingTemporaryOutputs": []
+  },
+  "renderCancellation": {
+    "status": "cancelled",
+    "cancelMs": 67,
+    "remainingTemporaryOutputs": []
+  },
+  "outputInspection": {
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "h264",
+          "width": 1080,
+          "height": 1920,
+          "duration": "60.000000",
+          "nb_frames": "1800"
+        },
+        {
+          "codec_name": "aac",
+          "sample_rate": "48000",
+          "channels": 2,
+          "duration": "60.074667",
+          "nb_frames": "2816"
+        }
+      ],
+      "format": {
+        "duration": "60.074667"
+      }
+    },
+    "toneWindows": [
+      {
+        "second": 1,
+        "toneMagnitudes": {
+          "220": 1271.63,
+          "440": 0.259,
+          "660": 299.752,
+          "880": 0.746
+        }
+      },
+      {
+        "second": 3,
+        "toneMagnitudes": {
+          "220": 1269.712,
+          "440": 0.757,
+          "660": 298.83,
+          "880": 1690.296
+        }
+      },
+      {
+        "second": 8,
+        "toneMagnitudes": {
+          "220": 1271.192,
+          "440": 1695.263,
+          "660": 299.155,
+          "880": 1689.519
+        }
+      },
+      {
+        "second": 15,
+        "toneMagnitudes": {
+          "220": 1270.883,
+          "440": 1694.989,
+          "660": 298.85,
+          "880": 0.787
+        }
+      },
+      {
+        "second": 25,
+        "toneMagnitudes": {
+          "220": 1271.724,
+          "440": 0.201,
+          "660": 299.495,
+          "880": 0.339
+        }
+      }
+    ],
+    "peakDecodedAmplitude": 0.35370102524757385
+  },
+  "timingDiagnostic": {
+    "results": [
+      {
+        "rate": 48000,
+        "extension": "wav",
+        "status": "complete",
+        "clippedAudioSamples": 0,
+        "workerHeapPeakBytes": null,
+        "videoFrames": 150,
+        "normalizedAudioSources": [],
+        "videoEncoderConfig": {
+          "codec": "avc1.640028",
+          "width": 1080,
+          "height": 1920,
+          "bitrate": 6000000,
+          "alpha": "discard",
+          "framerate": 30,
+          "latencyMode": "quality",
+          "avc": {
+            "format": "avc"
+          }
+        },
+        "audioPacketCount": 238,
+        "audioFirstPacketTimestamp": 0,
+        "audioLastPacketEnd": 5.077333,
+        "durationSeconds": 5,
+        "exportMs": 621.1999998092651,
+        "outputBytes": 3791664,
+        "audioLayers": 1,
+        "layout": "stack",
+        "output": "H.264/AAC 1080x1920 30fps",
+        "outputStorage": "OPFS streamed, 1 MiB write chunks",
+        "inputBytes": 107926001,
+        "endToEndMs": 637.3000001907349,
+        "fixtureLoadMs": 207.5,
+        "mainFrameGapP95Ms": 17.700000000000045,
+        "mainFrameGapMaxMs": 17.700000000000045,
+        "mainLongTaskCount": 0,
+        "mainLongTaskMaxMs": 0,
+        "clickPaintP95Ms": null,
+        "measuredClicks": 0,
+        "mainHeapPeakBytes": 3022525,
+        "heapWarning": "JS heap excludes worker/native/GPU memory; process memory must be measured separately.",
+        "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+        "logicalCpus": 10,
+        "reportedDeviceMemoryGiB": 32,
+        "config": {
+          "layout": "stack",
+          "duration": 5,
+          "reactionStart": 5,
+          "text": "\u0634\u0627\u0647\u062f \u0631\u062f\u0629 \u0627\u0644\u0641\u0639\u0644",
+          "mainGain": 0,
+          "reactionGain": 0,
+          "musicGain": 0,
+          "voiceGain": 1,
+          "textPosition": {
+            "x": 0.5,
+            "y": 0.92
+          },
+          "textStyle": {
+            "fontSize": 76,
+            "fontWeight": 400,
+            "align": "center",
+            "color": "#ffffff",
+            "backgroundColor": "#000000",
+            "backgroundOpacity": 0.73
+          }
+        },
+        "remainingTemporaryAudio": [],
+        "alignment": {
+          "file": "mixed-48000-wav.mp4",
+          "decodedFrames": 243712,
+          "correlationDelayFrames": 2112,
+          "correlationDelayMs": 44,
+          "correlation": 0.9998091597341547,
+          "trailingFramesAfterShift": 1600
+        }
+      },
+      {
+        "rate": 44100,
+        "extension": "wav",
+        "status": "complete",
+        "clippedAudioSamples": 0,
+        "workerHeapPeakBytes": null,
+        "videoFrames": 150,
+        "normalizedAudioSources": [
+          {
+            "label": "voiceover",
+            "sourceRate": 44100,
+            "sourceChannels": 2,
+            "targetRate": 48000,
+            "targetChannels": 2,
+            "trimLimitSeconds": 3,
+            "temporaryBytes": 1152044,
+            "elapsedMs": 25.90000009536743
+          }
+        ],
+        "videoEncoderConfig": {
+          "codec": "avc1.640028",
+          "width": 1080,
+          "height": 1920,
+          "bitrate": 6000000,
+          "alpha": "discard",
+          "framerate": 30,
+          "latencyMode": "quality",
+          "avc": {
+            "format": "avc"
+          }
+        },
+        "audioPacketCount": 238,
+        "audioFirstPacketTimestamp": 0,
+        "audioLastPacketEnd": 5.077333,
+        "durationSeconds": 5,
+        "exportMs": 595,
+        "outputBytes": 3792342,
+        "audioLayers": 1,
+        "layout": "stack",
+        "output": "H.264/AAC 1080x1920 30fps",
+        "outputStorage": "OPFS streamed, 1 MiB write chunks",
+        "inputBytes": 107879201,
+        "endToEndMs": 610.6000003814697,
+        "fixtureLoadMs": 207.5,
+        "mainFrameGapP95Ms": 17.700000000000045,
+        "mainFrameGapMaxMs": 17.700000000000045,
+        "mainLongTaskCount": 0,
+        "mainLongTaskMaxMs": 0,
+        "clickPaintP95Ms": null,
+        "measuredClicks": 0,
+        "mainHeapPeakBytes": 3276099,
+        "heapWarning": "JS heap excludes worker/native/GPU memory; process memory must be measured separately.",
+        "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+        "logicalCpus": 10,
+        "reportedDeviceMemoryGiB": 32,
+        "config": {
+          "layout": "stack",
+          "duration": 5,
+          "reactionStart": 5,
+          "text": "\u0634\u0627\u0647\u062f \u0631\u062f\u0629 \u0627\u0644\u0641\u0639\u0644",
+          "mainGain": 0,
+          "reactionGain": 0,
+          "musicGain": 0,
+          "voiceGain": 1,
+          "textPosition": {
+            "x": 0.5,
+            "y": 0.92
+          },
+          "textStyle": {
+            "fontSize": 76,
+            "fontWeight": 400,
+            "align": "center",
+            "color": "#ffffff",
+            "backgroundColor": "#000000",
+            "backgroundOpacity": 0.73
+          }
+        },
+        "remainingTemporaryAudio": [],
+        "alignment": {
+          "file": "mixed-44100-wav.mp4",
+          "decodedFrames": 243712,
+          "correlationDelayFrames": 2112,
+          "correlationDelayMs": 44,
+          "correlation": 0.9997958695122184,
+          "trailingFramesAfterShift": 1600
+        }
+      },
+      {
+        "rate": 44100,
+        "extension": "mp3",
+        "status": "error",
+        "message": "Could not read voiceover audio: Input has an unsupported or unrecognizable format.",
+        "remainingTemporaryAudio": []
+      }
+    ],
+    "direct": {
+      "end": 5.077333,
+      "count": 238,
+      "requestedFrames": 240000,
+      "alignment": {
+        "file": "direct.m4a",
+        "decodedFrames": 243712,
+        "correlationDelayFrames": 2112,
+        "correlationDelayMs": 44,
+        "correlation": 0.9997953194270446,
+        "trailingFramesAfterShift": 1600
+      }
+    }
+  }
+}

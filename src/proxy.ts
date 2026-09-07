@@ -1,3 +1,4 @@
+import { builtInEditorEnabled } from "./lib/video-editor/enabled";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { runMicrofrontendsMiddleware } from "@vercel/microfrontends/next/middleware";
@@ -43,9 +44,7 @@ export async function proxy(request: NextRequest) {
     return localizedResponse;
   }
 
-  // Phase 1: all /editor/* routes go directly to the OpenCut microfrontend.
-  // Phase 2 can add flag values here to gate access by plan.
-  const response = await runMicrofrontendsMiddleware({
+  const response = builtInEditorEnabled && (request.nextUrl.pathname === "/editor" || request.nextUrl.pathname.startsWith("/editor/")) ? null : await runMicrofrontendsMiddleware({
     request,
     flagValues: {},
   });

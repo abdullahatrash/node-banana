@@ -1,0 +1,27 @@
+{
+  "coldOpenMs": 149,
+  "warmOpenMs": 53,
+  "memoryPeakKiB": 1726112,
+  "memorySamples": 86,
+  "responsiveness": {
+    "samples": 377,
+    "p95TimerDelayMs": 1.299999713897705,
+    "maxTimerDelayMs": 16
+  },
+  "measurements": [
+    {
+      "layout": "stacked",
+      "elapsedMs": 5836
+    },
+    {
+      "layout": "pip",
+      "elapsedMs": 5837
+    },
+    {
+      "layout": "side-by-side",
+      "elapsedMs": 6340
+    }
+  ],
+  "browser": "152.0.7977.76",
+  "errors": []
+}

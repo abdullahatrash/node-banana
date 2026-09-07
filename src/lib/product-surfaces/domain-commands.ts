@@ -78,6 +78,7 @@ export async function saveContentCommand(input: Actor & { id?: string; expectedR
   const [current] = input.id ? await getDb().select({ payload: workspaceProductRecords.payload }).from(workspaceProductRecords).where(and(eq(workspaceProductRecords.workspaceId, input.workspaceId), eq(workspaceProductRecords.id, input.id), eq(workspaceProductRecords.kind, "content_piece"))).limit(1) : [];
   if (input.id && !current) return null;
   const authoritative = current ? contentPieceSchema.parse(current.payload) : null;
+  if (authoritative?.videoEditor || draft.videoEditor) throw new Error("CONTENT_USE_VIDEO_EDITOR");
   const requestedReference = authoritative?.formatDefinition ?? draft.formatDefinition ?? (await resolveActiveContentFormatDefinition(draft.format)).reference;
   const requested = contentPieceSchema.parse({ ...draft, formatDefinition: requestedReference });
   const validationIssues = await getDb().transaction((tx) => validateContentPayload(tx, input.workspaceId, requested));
