@@ -4,6 +4,18 @@
   font-weight: 100 900;
   font-display: swap;
 }
+@font-face {
+  font-family: EditorCairo;
+  src: url("/fonts/editor-cairo.ttf");
+  font-weight: 200 1000;
+  font-display: swap;
+}
+@font-face {
+  font-family: EditorNaskh;
+  src: url("/fonts/editor-naskh.ttf");
+  font-weight: 400 700;
+  font-display: swap;
+}
 .editor {
   --accent: #90dd9e;
   --surface: #181d20;

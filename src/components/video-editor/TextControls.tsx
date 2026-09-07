@@ -1,4 +1,5 @@
 import type { TextOverlay } from "@/lib/video-editor/composition";
+import { editorFonts, type EditorFont } from "@/lib/video-editor/fonts";
 import type { EditorCopy } from "./copy";
 export function TextControls({
   value,
@@ -12,6 +13,17 @@ export function TextControls({
   return (
     <>
       <h2>{copy.text}</h2>
+      <label>
+        {copy.typeface}
+        <select
+          value={value.fontFamily || "sans"}
+          onChange={(event) => onChange({ ...value, fontFamily: event.target.value as EditorFont })}
+        >
+          {(Object.keys(editorFonts) as EditorFont[]).map((font) => (
+            <option key={font} value={font}>{copy.fonts[font]}</option>
+          ))}
+        </select>
+      </label>
       <label>
         {copy.overlayText}
         <textarea

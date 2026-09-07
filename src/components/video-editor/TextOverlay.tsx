@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { overlayLayout, paintOverlay } from "@/lib/video-editor/overlay";
+import { overlayFont } from "@/lib/video-editor/fonts";
 import type { TextOverlay as TextValue } from "@/lib/video-editor/composition";
 import type { EditorCopy } from "./copy";
 import styles from "./editor.module.css";
@@ -56,7 +57,7 @@ export function TextOverlay({
     };
     draw();
     void document.fonts
-      ?.load(`${value.fontWeight} ${value.fontSize}px EditorArabic`)
+      ?.load(`${value.fontWeight} ${value.fontSize}px ${overlayFont(value).family}`)
       .then(draw)
       .catch(() => undefined);
     return () => {
@@ -155,6 +156,7 @@ export function TextOverlay({
           maxLength={1000}
           value={value.text}
           style={{
+            fontFamily: overlayFont(value).family,
             fontSize: value.fontSize * scale,
             fontWeight: value.fontWeight,
             textAlign: value.align,

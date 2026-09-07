@@ -18,6 +18,7 @@ import {
   canEncodeAudio,
 } from "mediabunny-editor";
 import { overlayLayout, paintOverlay } from "./overlay";
+import { overlayFont } from "./fonts";
 import {
   compositionSchema,
   duration,
@@ -265,10 +266,11 @@ scope.onmessage = async ({ data }) => {
     let overlay: { canvas: OffscreenCanvas; x: number; y: number } | null =
       null;
     if (composition.text?.text) {
+      const typeface = overlayFont(composition.text);
       const font = new FontFace(
-        "EditorArabic",
-        `url(${new URL("/fonts/editor-arabic.ttf", scope.location.href)})`,
-        { weight: "100 900" },
+        typeface.family,
+        `url(${new URL(`/fonts/${typeface.file}`, scope.location.href)})`,
+        { weight: typeface.weights },
       );
       await font.load();
       scope.fonts.add(font);

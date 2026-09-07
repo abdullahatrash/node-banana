@@ -23,6 +23,7 @@ export const textSchema = z
     x: z.number().finite().min(0).max(1),
     y: z.number().finite().min(0).max(1),
     fontSize: z.number().finite().min(24).max(160),
+    fontFamily: z.enum(["sans", "cairo", "naskh"]).optional(),
     fontWeight: z.union([
       z.literal(100),
       z.literal(300),

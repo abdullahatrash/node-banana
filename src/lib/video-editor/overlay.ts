@@ -1,4 +1,5 @@
 import type { TextOverlay } from "./composition";
+import { overlayFont } from "./fonts";
 type PaintContext =
   | CanvasRenderingContext2D
   | OffscreenCanvasRenderingContext2D;
@@ -52,7 +53,7 @@ export function overlayLayout(context: PaintContext, overlay: TextOverlay) {
     lineHeight = 0,
     height = 0;
   for (let attempt = 0; attempt < 4; attempt++) {
-    context.font = `${style.fontWeight} ${fontSize}px EditorArabic`;
+    context.font = `${style.fontWeight} ${fontSize}px ${overlayFont(style).family}`;
     lines = wrapLines(context, text, 936);
     lineHeight = fontSize * 1.6;
     height = Math.ceil(lines.length * lineHeight + 48);
@@ -87,7 +88,7 @@ export function paintOverlay(
   context.fillRect(0, 0, layout.width, layout.height);
   context.globalAlpha = 1;
   context.fillStyle = layout.color;
-  context.font = `${layout.fontWeight} ${layout.fontSize}px EditorArabic`;
+  context.font = `${layout.fontWeight} ${layout.fontSize}px ${overlayFont(layout).family}`;
   context.textAlign = layout.align;
   context.textBaseline = "middle";
   const x =
