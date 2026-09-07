@@ -348,10 +348,10 @@
 .trimHandle[data-edge="trimEnd"] {
   right: 0;
 }
-.track:nth-child(4) .clipSection {
+.track[data-role="music"] .clipSection {
   background: #353156;
 }
-.track:nth-child(5) .clipSection {
+.track[data-role="voiceover"] .clipSection {
   background: #4a3732;
 }
 .playheadLane {
@@ -647,4 +647,49 @@
   .timelineTools {
     flex-wrap: wrap;
   }
+}
+
+.ruler {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 24px;
+  color: #a4b1ad;
+  font-size: 10px;
+  border-bottom: 1px solid #526059;
+  cursor: ew-resize;
+  touch-action: none;
+  user-select: none;
+}
+.ruler span {
+  pointer-events: none;
+}
+.playheadGrip {
+  position: absolute;
+  top: 0;
+  left: -8px;
+  width: 17px;
+  height: 24px;
+  background: var(--accent);
+  clip-path: polygon(0 0, 100% 0, 100% 65%, 50% 100%, 0 65%);
+  pointer-events: auto;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.trackLane,
+.editor .clip {
+  touch-action: none;
+}
+.editor .clip {
+  cursor: ew-resize;
+  user-select: none;
+}
+.editor .clip[data-movable="true"] {
+  cursor: grab;
+}
+.editor .clip[data-movable="true"]:active {
+  cursor: grabbing;
+}
+.clip img {
+  pointer-events: none;
 }

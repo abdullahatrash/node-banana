@@ -62,6 +62,11 @@ export function useEditorDraft(api: EditorClient, copy: EditorCopy) {
   const past = useRef<Composition[]>([]),
     future = useRef<Composition[]>([]),
     group = useRef({ key: "", at: 0 });
+  const gesture = useRef({ active: false, changed: false });
+  const onGesture = useCallback((active: boolean) => {
+    gesture.current = { active, changed: false };
+    group.current.key = "";
+  }, []);
   const pending = useRef<Attempt | null>(null),
     inFlight = useRef<Promise<boolean> | null>(null),
     blocked = useRef(false),
@@ -96,8 +101,13 @@ export function useEditorDraft(api: EditorClient, copy: EditorCopy) {
       if (JSON.stringify(next) === JSON.stringify(latest.current)) return;
       const key = editGroup(latest.current, next),
         now = performance.now();
-      if (atomic || key !== group.current.key || now - group.current.at > 600)
+      if (
+        gesture.current.active
+          ? !gesture.current.changed
+          : atomic || key !== group.current.key || now - group.current.at > 600
+      )
         past.current = [...past.current.slice(-99), latest.current];
+      if (gesture.current.active) gesture.current.changed = true;
       group.current = { key: atomic ? "" : key, at: now };
       future.current = [];
       show(next);
@@ -261,6 +271,7 @@ export function useEditorDraft(api: EditorClient, copy: EditorCopy) {
   return {
     composition,
     change,
+    onGesture,
     current,
     status,
     error,

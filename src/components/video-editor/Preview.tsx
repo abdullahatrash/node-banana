@@ -130,7 +130,7 @@ export const Preview = forwardRef<
   useEffect(() => {
     pause();
     sync(0, false, true);
-  }, [main?.assetId, main?.trimStart, main?.trimEnd, pause, sync]);
+  }, [main?.assetId, pause, sync]);
   useEffect(() => {
     sync(Math.min(clock.current, duration(composition)), playing, true);
   }, [composition, playing, sync]);

@@ -652,6 +652,7 @@ export function VideoEditor({
         onSelect={selectSection}
         onChange={setComposition}
         onError={setError}
+        onGesture={draft.onGesture}
         preview={preview}
         media={media}
         api={api}

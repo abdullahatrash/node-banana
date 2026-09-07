@@ -1536,6 +1536,9 @@
     "fullscreen": "Fullscreen",
     "exitFullscreen": "Exit fullscreen",
     "fullscreenUnavailable": "Fullscreen is unavailable here. Hide the panels to give the preview more space.",
-    "selectedSection": "Selected section"
+    "selectedSection": "Selected section",
+    "scrub": "Playhead",
+    "scrubHelp": "Drag to preview any moment in your video.",
+    "moveHelp": "Drag to move this track. Drag its edges to trim."
   }
 }
