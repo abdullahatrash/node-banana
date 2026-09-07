@@ -16,11 +16,16 @@ export function TextControls({
       <label>
         {copy.typeface}
         <select
+          aria-label={copy.typeface}
           value={value.fontFamily || "sans"}
-          onChange={(event) => onChange({ ...value, fontFamily: event.target.value as EditorFont })}
+          onChange={(event) =>
+            onChange({ ...value, fontFamily: event.target.value as EditorFont })
+          }
         >
           {(Object.keys(editorFonts) as EditorFont[]).map((font) => (
-            <option key={font} value={font}>{copy.fonts[font]}</option>
+            <option key={font} value={font}>
+              {copy.fonts[font]}
+            </option>
           ))}
         </select>
       </label>

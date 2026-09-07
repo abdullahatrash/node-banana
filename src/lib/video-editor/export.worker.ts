@@ -22,8 +22,9 @@ import { overlayFont } from "./fonts";
 import {
   compositionSchema,
   duration,
-  clipDuration,
   clipActive,
+  clipSegments,
+  sourceTime,
   roles,
   videoRects,
   VIDEO_FPS,
@@ -58,7 +59,7 @@ async function mix(cursor: AudioCursor, pcm: Float32Array, start: number) {
   for (let j = 0; j < block; j++) {
     const compositionTime = start + j / rate;
     if (!clipActive(cursor.clip, compositionTime)) continue;
-    const time = cursor.offset + compositionTime - cursor.clip.start;
+    const time = sourceTime(cursor.clip, compositionTime) - cursor.offset;
     while (
       !cursor.done &&
       (!cursor.current || time >= cursor.current.end - 1e-9)
@@ -180,7 +181,7 @@ scope.onmessage = async ({ data }) => {
           throw new Error("EDITOR_MEDIA_UNAVAILABLE");
         const times = Array.from({ length: count }, (_, i) => i / fps)
           .filter((time) => clipActive(clip, time))
-          .map((time) => clip.trimStart + time - clip.start);
+          .map((time) => sourceTime(clip, time));
         const frames = new CanvasSink(track, {
           poolSize: 2,
         }).canvasesAtTimestamps(times);
@@ -188,7 +189,7 @@ scope.onmessage = async ({ data }) => {
         frameIterators.push(frames);
       }
       let audioTrack = await input.getPrimaryAudioTrack(),
-        offset = clip.trimStart;
+        offset = 0;
       if (!audioTrack || clip.muted || !clip.gain) continue;
       if (!(await audioTrack.canDecode()))
         throw new Error("EDITOR_MEDIA_UNAVAILABLE");
@@ -220,12 +221,7 @@ scope.onmessage = async ({ data }) => {
                 : { discard: true },
             trim: {
               start: clip.trimStart,
-              end:
-                clip.trimStart +
-                Math.min(
-                  clipDuration(clip),
-                  duration(composition) - clip.start,
-                ),
+              end: clip.trimEnd,
             },
             showWarnings: false,
           });
@@ -244,17 +240,22 @@ scope.onmessage = async ({ data }) => {
         });
         inputs.push(normalized);
         audioTrack = await normalized.getPrimaryAudioTrack();
-        offset = 0;
+        offset = clip.trimStart;
       }
       if (audioTrack)
         cursors.push({
           role,
           clip,
           offset,
-          samples: new AudioSampleSink(audioTrack).samples(
-            offset,
-            offset + clipDuration(clip),
-          ),
+          samples: (async function* () {
+            const sink = new AudioSampleSink(audioTrack!);
+            for (const segment of clipSegments(clip)) {
+              yield* sink.samples(
+                segment.trimStart - offset,
+                segment.trimEnd - offset,
+              );
+            }
+          })(),
           done: false,
           current: null,
         });

@@ -1520,6 +1520,21 @@
       "sans": "Noto Sans Arabic",
       "cairo": "Cairo",
       "naskh": "Noto Naskh Arabic"
-    }
+    },
+    "tracks": "Timeline tracks",
+    "section": "section",
+    "split": "Split at playhead",
+    "deleteSection": "Delete section",
+    "splitHelp": "Move the playhead inside a clip to split it. Up to 32 sections per track.",
+    "trimHelp": "Drag clip edges to trim. Deleting closes the gap in this track.",
+    "rippleHelp": "Deleting a Main section closes the same gap across all tracks.",
+    "view": "Editor view",
+    "properties": "Properties",
+    "hidePanels": "Hide panels",
+    "showPanels": "Show panels",
+    "fitScreen": "Fit to screen",
+    "fullscreen": "Fullscreen",
+    "exitFullscreen": "Exit fullscreen",
+    "fullscreenUnavailable": "Fullscreen is unavailable here. Hide the panels to give the preview more space."
   }
 }

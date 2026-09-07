@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createText,
+  clipSegments,
   createClip,
   duration,
   type EditorMedia,
@@ -18,6 +19,8 @@ import {
   exportComposition,
   type ExportResult,
 } from "@/lib/video-editor/export-client";
+import { Timeline, type TimelineHandle } from "./Timeline";
+import { trimSection, moveClip } from "@/lib/video-editor/editing";
 import { MediaThumbnail } from "./MediaThumbnail";
 import { TextControls } from "./TextControls";
 import { Preview, type PreviewHandle } from "./Preview";
@@ -48,6 +51,18 @@ export function VideoEditor({
     adopt,
   } = draft;
   const [textSelected, setTextSelected] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [visiblePanel, setVisiblePanel] = useState<
+    "none" | "media" | "properties"
+  >("none");
+  const [panelsHidden, setPanelsHidden] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const editorElement = useRef<HTMLElement>(null);
+  const timeline = useRef<TimelineHandle>(null);
+  const updateTime = useCallback(
+    (time: number) => timeline.current?.showTime(time),
+    [],
+  );
   const [selectedRole, setSelectedRole] = useState<MediaRole>("main");
   const [uploadPhase, setUploadPhase] = useState<
     "uploading" | "processing" | null
@@ -143,7 +158,27 @@ export function VideoEditor({
     },
     [],
   );
+  const selectedClip = composition[selectedRole];
+  const sectionIndex = selectedClip
+    ? Math.min(selectedIndex, clipSegments(selectedClip).length - 1)
+    : 0;
+  const selectedSection = selectedClip
+    ? clipSegments(selectedClip)[sectionIndex]
+    : null;
+  function selectSection(role: MediaRole, index: number) {
+    setSelectedRole(role);
+    setSelectedIndex(index);
+    setTextSelected(false);
+    setVisiblePanel("properties");
+  }
+  useEffect(() => {
+    const changed = () =>
+      setFullscreen(document.fullscreenElement === editorElement.current);
+    document.addEventListener("fullscreenchange", changed);
+    return () => document.removeEventListener("fullscreenchange", changed);
+  }, []);
   async function select(item: MediaItem) {
+    setSelectedIndex(0);
     setBusy(true);
     setError("");
     try {
@@ -223,7 +258,10 @@ export function VideoEditor({
   }
   return (
     <main
+      ref={editorElement}
       className={styles.editor}
+      data-panel={visiblePanel}
+      data-panels-hidden={panelsHidden}
       lang={locale}
       dir={locale === "ar" ? "rtl" : "ltr"}
     >
@@ -289,8 +327,60 @@ export function VideoEditor({
           )}
         </div>
       )}
+      <nav className={styles.viewTools} aria-label={copy.view}>
+        <button
+          aria-pressed={visiblePanel === "media"}
+          onClick={() =>
+            setVisiblePanel(visiblePanel === "media" ? "none" : "media")
+          }
+        >
+          {copy.media}
+        </button>
+        <button
+          aria-pressed={visiblePanel === "properties"}
+          onClick={() =>
+            setVisiblePanel(
+              visiblePanel === "properties" ? "none" : "properties",
+            )
+          }
+        >
+          {copy.properties}
+        </button>
+        <button
+          className={styles.desktopToggle}
+          aria-pressed={panelsHidden}
+          onClick={() => setPanelsHidden(!panelsHidden)}
+        >
+          {panelsHidden ? copy.showPanels : copy.hidePanels}
+        </button>
+        <button
+          onClick={() => {
+            setPanelsHidden(false);
+            setVisiblePanel("none");
+          }}
+        >
+          {copy.fitScreen}
+        </button>
+        <button
+          onClick={() => {
+            const operation = fullscreen
+              ? document.exitFullscreen?.()
+              : editorElement.current?.requestFullscreen?.();
+            if (!operation) {
+              setError(copy.fullscreenUnavailable);
+              return;
+            }
+            void operation.catch(() => setError(copy.fullscreenUnavailable));
+          }}
+        >
+          {fullscreen ? copy.exitFullscreen : copy.fullscreen}
+        </button>
+      </nav>
       <fieldset disabled={busy} className={styles.workspace} dir="ltr">
-        <aside className={styles.panel} dir={locale === "ar" ? "rtl" : "ltr"}>
+        <aside
+          className={`${styles.panel} ${styles.mediaPanel}`}
+          dir={locale === "ar" ? "rtl" : "ltr"}
+        >
           <h2>{copy.media}</h2>
           <p>{copy.limits}</p>
           <button
@@ -300,6 +390,7 @@ export function VideoEditor({
                 text: composition.text || createText(),
               });
               setTextSelected(true);
+              setVisiblePanel("properties");
             }}
           >
             {copy.addText}
@@ -310,6 +401,7 @@ export function VideoEditor({
               value={selectedRole}
               onChange={(event) => {
                 setSelectedRole(event.target.value as MediaRole);
+                setSelectedIndex(0);
                 setTextSelected(false);
               }}
             >
@@ -410,9 +502,16 @@ export function VideoEditor({
           media={media}
           copy={copy}
           onChange={setComposition}
-          onSelectText={() => setTextSelected(true)}
+          onTime={updateTime}
+          onSelectText={() => {
+            setTextSelected(true);
+            setVisiblePanel("properties");
+          }}
         />
-        <aside className={styles.panel} dir={locale === "ar" ? "rtl" : "ltr"}>
+        <aside
+          className={`${styles.panel} ${styles.propertiesPanel}`}
+          dir={locale === "ar" ? "rtl" : "ltr"}
+        >
           <h2>{!textSelected && copy[selectedRole]}</h2>
           {textSelected && composition.text && (
             <TextControls
@@ -449,15 +548,28 @@ export function VideoEditor({
                         : media[composition[selectedRole]!.assetId]?.duration ||
                           60
                     }
-                    value={composition[selectedRole]![field]}
+                    value={
+                      field === "start"
+                        ? selectedClip!.start
+                        : selectedSection![field]
+                    }
                     onChange={(e) =>
-                      setComposition({
-                        ...composition,
-                        [selectedRole]: {
-                          ...composition[selectedRole]!,
-                          [field]: Number(e.target.value),
-                        },
-                      })
+                      setComposition(
+                        field === "start"
+                          ? moveClip(
+                              composition,
+                              selectedRole,
+                              Number(e.target.value),
+                            )
+                          : trimSection(
+                              composition,
+                              selectedRole,
+                              sectionIndex,
+                              field,
+                              Number(e.target.value),
+                              media[selectedClip!.assetId]?.duration || 60,
+                            ),
+                      )
                     }
                   />
                 </label>
@@ -512,44 +624,20 @@ export function VideoEditor({
           )}
         </aside>
       </fieldset>
-      <section className={styles.timeline} dir="ltr">
-        {roles.map((role) => (
-          <div key={role} className={styles.track}>
-            <button
-              onClick={() => {
-                setSelectedRole(role);
-                setTextSelected(false);
-              }}
-            >
-              {copy[role]}
-            </button>
-            <div className={styles.trackLane}>
-              {composition[role] && (
-                <button
-                  className={styles.clip}
-                  onClick={() => {
-                    setSelectedRole(role);
-                    setTextSelected(false);
-                  }}
-                  style={{
-                    marginLeft: `${(100 * composition[role]!.start) / (duration(composition) || 1)}%`,
-                    width: `${(100 * (composition[role]!.trimEnd - composition[role]!.trimStart)) / (duration(composition) || 1)}%`,
-                  }}
-                >
-                  {mediaKind(role) === "video" && (
-                    <MediaThumbnail
-                      key={composition[role]!.assetId}
-                      id={composition[role]!.assetId}
-                      api={api}
-                    />
-                  )}
-                  {media[composition[role]!.assetId]?.name}
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
-      </section>
+      <Timeline
+        ref={timeline}
+        composition={composition}
+        selectedRole={selectedRole}
+        selectedIndex={sectionIndex}
+        onSelect={selectSection}
+        onChange={setComposition}
+        onError={setError}
+        preview={preview}
+        media={media}
+        api={api}
+        copy={copy}
+        busy={busy}
+      />
       {progress !== null && (
         <section role="status" className={styles.exportStatus}>
           {copy.exporting}

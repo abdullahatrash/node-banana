@@ -2,6 +2,16 @@ import { z } from "zod";
 
 export const VIDEO_FPS = 30;
 export const MAX_DURATION = 60;
+export const segmentSchema = z
+  .object({
+    trimStart: z.number().finite().min(0).max(86_400),
+    trimEnd: z.number().finite().positive().max(86_400),
+  })
+  .strict()
+  .refine(
+    (segment) => segment.trimEnd - segment.trimStart >= 1 / VIDEO_FPS - 1e-6,
+  );
+export type Segment = z.infer<typeof segmentSchema>;
 export const clipSchema = z
   .object({
     assetId: z.string().min(1).max(200),
@@ -10,11 +20,25 @@ export const clipSchema = z
     start: z.number().finite().min(0).max(MAX_DURATION),
     gain: z.number().finite().min(0).max(1),
     muted: z.boolean(),
+    // Main-track ripple edits can split other tracks beyond the 32 manual-split limit.
+    segments: z.array(segmentSchema).min(1).max(128).optional(),
   })
   .strict()
   .refine(
-    (clip) => clip.trimEnd - clip.trimStart >= 1 / VIDEO_FPS,
+    (clip) => clip.trimEnd - clip.trimStart >= 1 / VIDEO_FPS - 1e-6,
     "Select at least one frame",
+  )
+  .refine(
+    (clip) =>
+      !clip.segments ||
+      (clip.segments[0].trimStart === clip.trimStart &&
+        clip.segments.at(-1)!.trimEnd === clip.trimEnd &&
+        clip.segments.every(
+          (segment, index, segments) =>
+            index === 0 ||
+            segment.trimStart >= segments[index - 1].trimEnd - 1e-6,
+        )),
+    "Sections must stay ordered inside the source bounds",
   );
 
 export const textSchema = z
@@ -104,10 +128,13 @@ export type Composition = z.infer<typeof compositionSchema>;
 export type MediaRole = "main" | "secondary" | "music" | "voiceover";
 export const roles: MediaRole[] = ["main", "secondary", "music", "voiceover"];
 export function duration(composition: {
-  main: { trimEnd: number; trimStart: number } | null;
+  main: { trimEnd: number; trimStart: number; segments?: Segment[] } | null;
 }) {
   return composition.main
-    ? composition.main.trimEnd - composition.main.trimStart
+    ? clipSegments(composition.main).reduce(
+        (total, segment) => total + segment.trimEnd - segment.trimStart,
+        0,
+      )
     : 0;
 }
 export function emptyComposition(title = "Untitled video"): Composition {
@@ -148,7 +175,27 @@ export interface EditorMedia {
 }
 
 export function clipDuration(clip: Clip) {
-  return clip.trimEnd - clip.trimStart;
+  return duration({ main: clip });
+}
+export function clipSegments(clip: {
+  trimStart: number;
+  trimEnd: number;
+  segments?: Segment[];
+}): Segment[] {
+  return (
+    clip.segments || [{ trimStart: clip.trimStart, trimEnd: clip.trimEnd }]
+  );
+}
+/** Composition time to source time, shared by playback and worker export. */
+export function sourceTime(clip: Clip, time: number) {
+  let remaining = Math.max(0, time - clip.start);
+  const segments = clipSegments(clip);
+  for (const segment of segments) {
+    const length = segment.trimEnd - segment.trimStart;
+    if (remaining < length - 1e-9) return segment.trimStart + remaining;
+    remaining -= length;
+  }
+  return segments.at(-1)!.trimEnd;
 }
 export function clipActive(clip: Clip | null, time: number) {
   return Boolean(

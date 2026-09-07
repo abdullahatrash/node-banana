@@ -87,15 +87,18 @@ export function useEditorDraft(api: EditorClient, copy: EditorCopy) {
     [copy],
   );
   const change = useCallback(
-    (update: Composition | ((value: Composition) => Composition)) => {
+    (
+      update: Composition | ((value: Composition) => Composition),
+      atomic = false,
+    ) => {
       const next =
         typeof update === "function" ? update(latest.current) : update;
       if (JSON.stringify(next) === JSON.stringify(latest.current)) return;
       const key = editGroup(latest.current, next),
         now = performance.now();
-      if (key !== group.current.key || now - group.current.at > 600)
+      if (atomic || key !== group.current.key || now - group.current.at > 600)
         past.current = [...past.current.slice(-99), latest.current];
-      group.current = { key, at: now };
+      group.current = { key: atomic ? "" : key, at: now };
       future.current = [];
       show(next);
       setHistoryVersion((value) => value + 1);

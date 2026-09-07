@@ -20,14 +20,21 @@
   --accent: #90dd9e;
   --surface: #181d20;
   --line: #333b3e;
+  --track-label: 150px;
   background: #0e1214;
   color: #eff2f0;
-  min-height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
   font:
-    14px system-ui,
+    13px system-ui,
     EditorArabic,
     sans-serif;
-  padding: 0 16px 20px;
+  padding: 0 12px 8px;
   color-scheme: dark;
 }
 .editor * {
@@ -42,10 +49,10 @@
 .editor button,
 .editor select {
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 7px;
   background: #22292c;
   color: inherit;
-  padding: 10px 13px;
+  padding: 8px 10px;
   cursor: pointer;
 }
 .editor button:disabled {
@@ -77,13 +84,13 @@
   margin: 16px 0;
 }
 .editor h1 {
-  font-size: 17px;
+  font-size: 16px;
   margin: 0;
   white-space: nowrap;
 }
 .editor h2 {
   font-size: 15px;
-  margin: 0 0 18px;
+  margin: 0 0 14px;
 }
 .editor p,
 .editor small {
@@ -97,27 +104,31 @@
 .editor textarea:focus-visible,
 .editor select:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 3px;
+  outline-offset: 2px;
 }
 .header {
-  height: 74px;
+  min-height: 60px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 10px;
   border-bottom: 1px solid var(--line);
-  margin-bottom: 16px;
 }
 .header a {
-  font-size: 12px;
+  font-size: 11px;
   text-decoration: none;
 }
 .header input {
-  max-width: 220px;
+  max-width: 210px;
+  min-width: 80px;
 }
 .header span[role="status"] {
   margin-inline-end: auto;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--accent);
+}
+.header > span {
+  white-space: nowrap;
 }
 .editor .primary {
   background: var(--accent);
@@ -125,32 +136,69 @@
   font-weight: 700;
   border: 0;
 }
+.viewTools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  flex-shrink: 0;
+}
+.viewTools button {
+  padding: 5px 9px;
+  font-size: 11px;
+}
+.viewTools > button:nth-child(-n + 2) {
+  display: none;
+}
 .workspace {
   display: grid;
-  grid-template-columns: 260px minmax(320px, 1fr) 280px;
-  gap: 18px;
+  grid-template-columns: 240px minmax(0, 1fr) 260px;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  position: relative;
 }
 .panel {
   background: var(--surface);
   border: 1px solid #2a3235;
-  border-radius: 12px;
-  padding: 20px;
-  max-height: 650px;
+  border-radius: 10px;
+  padding: 16px;
+  min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 .panel select {
   width: 100%;
-  margin-bottom: 14px;
+  margin-bottom: 8px;
+}
+.editor[data-panels-hidden="true"] .workspace {
+  grid-template-columns: minmax(0, 1fr);
+}
+.editor[data-panels-hidden="true"] .panel {
+  display: none;
 }
 .stage {
   min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  justify-items: center;
+  gap: 8px;
+}
+.previewArea {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
 }
 .canvas {
-  height: min(61vh, 600px);
   aspect-ratio: 9/16;
   background: #060909;
   position: relative;
@@ -166,154 +214,197 @@
   inset: 0;
 }
 .canvas p {
-  padding: 24px;
+  padding: 16px;
   text-align: center;
 }
 .transport {
   display: flex;
-  gap: 16px;
+  gap: 10px;
   align-items: center;
   width: min(100%, 520px);
 }
 .transport output {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
+  font-size: 11px;
 }
 .transport input {
   flex: 1;
+  min-width: 0;
 }
 .editor .mediaCard {
   display: flex;
   justify-content: space-between;
   align-items: center;
   width: 100%;
-  margin: 10px 0;
+  margin: 8px 0;
   text-align: start;
-  gap: 12px;
-  min-height: 65px;
+  gap: 8px;
+  min-height: 58px;
+}
+.mediaCard span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .timeline {
-  display: grid;
-  grid-template-columns: 160px 1fr;
-  align-items: center;
-  gap: 10px;
-  margin-top: 18px;
-  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-top: 8px;
+  padding: 8px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 10px;
 }
-.clip {
-  background: #274434;
-  border: 1px solid #78b386;
-  border-radius: 6px;
-  padding: 14px;
+.timelineTools {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
 }
-.clip small {
-  float: right;
+.timelineTools button {
+  white-space: nowrap;
+}
+.timelineTools output {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.timelineTools small {
+  font-size: 11px;
+  margin-inline-start: auto;
+  max-width: 280px;
+}
+.trackArea {
+  position: relative;
+  display: grid;
+  gap: 5px;
+}
+.track {
+  display: grid;
+  grid-template-columns: var(--track-label) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+.track > button {
+  text-align: start;
+  height: 36px;
+  padding: 4px 8px;
+}
+.trackLane {
+  min-width: 0;
+  overflow: hidden;
+  background: #101719;
+  height: 36px;
+  border-radius: 6px;
+  position: relative;
+}
+.clipSection {
+  position: absolute;
+  height: 100%;
+  min-width: 3px;
+  border-radius: 5px;
+  padding: 0 9px;
+  background: #274434;
+  border: 1px solid #568a63;
+}
+.clipSection[data-selected="true"] {
+  border: 2px solid var(--accent);
+}
+.editor .clip {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 0 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: start;
+  border: 0;
+  background: transparent;
+}
+.clip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.editor .trimHandle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  border: 0;
+  border-radius: 2px;
+  padding: 0;
+  font-size: 9px;
+  background: #78b38666;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.trimHandle[data-edge="trimStart"] {
+  left: 0;
+}
+.trimHandle[data-edge="trimEnd"] {
+  right: 0;
+}
+.track:nth-child(4) .clipSection {
+  background: #353156;
+}
+.track:nth-child(5) .clipSection {
+  background: #4a3732;
+}
+.playheadLane {
+  position: absolute;
+  inset: 0 0 0 calc(var(--track-label) + 8px);
+  pointer-events: none;
+  z-index: 3;
+}
+.playhead {
+  position: absolute;
+  height: 100%;
+  width: 1px;
+  background: #fff9;
+  left: 0;
 }
 .error {
   background: #422828;
   color: #ffe1dc;
-  padding: 12px 20px;
-  margin: 10px 0;
+  padding: 8px 12px;
+  margin: 4px 0;
   border-radius: 9px;
+  max-height: 70px;
+  overflow: auto;
+  flex-shrink: 0;
 }
 .exportStatus {
   display: flex;
-  gap: 18px;
+  gap: 12px;
   align-items: center;
-  padding: 16px;
+  padding: 6px;
+  flex-shrink: 0;
 }
 .exportStatus progress {
   flex: 1;
   accent-color: var(--accent);
 }
 .download {
-  display: inline-block;
-  margin: 16px 0;
-  padding: 12px;
+  display: block;
+  align-self: flex-end;
+  margin: 4px 0 0;
+  padding: 6px 10px;
   border: 1px solid var(--accent);
-  border-radius: 8px;
-}
-@media (max-width: 1050px) {
-  .workspace {
-    grid-template-columns: 210px minmax(240px, 1fr) 230px;
-  }
-  .header {
-    gap: 10px;
-  }
-  .header input {
-    max-width: 160px;
-  }
-  .panel {
-    padding: 14px;
-  }
-  .canvas {
-    height: 54vh;
-  }
-}
-@media (max-width: 760px) {
-  .header {
-    height: auto;
-    flex-wrap: wrap;
-    padding: 12px 0;
-  }
-  .workspace {
-    grid-template-columns: 1fr;
-  }
-  .stage {
-    grid-row: 1;
-  }
-  .canvas {
-    height: 55vh;
-  }
-  .panel {
-    max-height: none;
-  }
-  .timeline {
-    grid-template-columns: 110px 1fr;
-  }
-}
-.timeline {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-}
-.track {
-  display: grid;
-  grid-template-columns: 160px 1fr;
-  gap: 12px;
-  align-items: center;
-}
-.trackLane {
-  min-width: 0;
-  overflow: hidden;
-  background: #101719;
-  min-height: 44px;
   border-radius: 7px;
-}
-.editor .clip {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-align: start;
-  min-height: 44px;
-  background: #274434;
-}
-.track > button {
-  text-align: start;
+  flex-shrink: 0;
 }
 .presets {
   display: flex;
   gap: 6px;
-  flex-wrap: wrap;
   justify-content: center;
 }
 .editor .presets button {
-  font-size: 12px;
-  padding: 8px;
+  font-size: 11px;
+  padding: 6px;
 }
 .editor button[aria-pressed="true"] {
   border-color: var(--accent);
@@ -335,37 +426,22 @@
   inset: 0;
   resize: none;
   padding: 6px;
-  font-family: EditorArabic, sans-serif;
   line-height: 1.6;
   background: #111a;
   width: 100%;
   height: 100%;
 }
 .editor input[type="color"] {
-  height: 40px;
+  height: 36px;
   padding: 4px;
 }
 .editor textarea {
   font-family: EditorArabic, system-ui, sans-serif;
 }
-.track:nth-child(3) .clip {
-  background: #353156;
-}
-.track:nth-child(4) .clip {
-  background: #4a3732;
-}
-
-.workspace {
-  border: 0;
-  margin: 0;
-  padding: 0;
-  min-width: 0;
-}
-
 .thumbnail {
   display: inline-flex;
-  width: 36px;
-  height: 48px;
+  width: 32px;
+  height: 42px;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
@@ -373,7 +449,7 @@
   border-radius: 4px;
   overflow: hidden;
   vertical-align: middle;
-  margin-inline-end: 8px;
+  margin-inline-end: 6px;
 }
 .thumbnail img {
   width: 100%;
@@ -381,9 +457,193 @@
   object-fit: cover;
 }
 .clip .thumbnail {
-  width: 24px;
-  height: 30px;
+  width: 18px;
+  height: 28px;
 }
-.editor .clip {
-  padding: 6px 10px;
+@media (max-width: 1100px) {
+  .workspace {
+    grid-template-columns: 200px minmax(0, 1fr) 220px;
+    gap: 8px;
+  }
+  .header {
+    gap: 6px;
+  }
+  .header input {
+    max-width: 150px;
+  }
+  .header h1,
+  .header > span[dir="ltr"] {
+    display: none;
+  }
+  .panel {
+    padding: 12px;
+  }
+}
+@media (max-width: 850px) {
+  .editor {
+    --track-label: 108px;
+    padding: 0 6px 6px;
+  }
+  .workspace,
+  .editor[data-panels-hidden="true"] .workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .stage {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .panel,
+  .editor[data-panels-hidden="true"] .panel {
+    display: none;
+    position: absolute;
+    inset-block: 0;
+    width: min(320px, 100%);
+    z-index: 5;
+    box-shadow: 0 8px 28px #0008;
+  }
+  .mediaPanel {
+    inset-inline-start: 0;
+  }
+  .propertiesPanel {
+    inset-inline-end: 0;
+  }
+  .editor[data-panel="media"] .mediaPanel,
+  .editor[data-panel="properties"] .propertiesPanel {
+    display: block;
+  }
+  .viewTools > button:nth-child(-n + 2) {
+    display: block;
+  }
+  .viewTools .desktopToggle {
+    display: none;
+  }
+  .timelineTools small,
+  .timelineTools strong {
+    display: none;
+  }
+}
+@media (max-width: 520px) {
+  .header {
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 6px 0;
+    min-height: 78px;
+  }
+  .header input {
+    max-width: calc(100% - 140px);
+    flex: 1;
+  }
+  .header span[role="status"] {
+    font-size: 10px;
+  }
+  .header > a {
+    width: 100px;
+  }
+  .header button {
+    font-size: 11px;
+    padding: 6px 8px;
+  }
+  .header .primary {
+    margin-inline-start: auto;
+  }
+  .viewTools {
+    gap: 4px;
+  }
+  .viewTools button {
+    font-size: 10px;
+    padding: 5px 6px;
+  }
+  .timelineTools {
+    gap: 5px;
+  }
+  .timelineTools button {
+    font-size: 10px;
+    padding: 6px;
+  }
+  .track > button {
+    font-size: 10px;
+  }
+  .timeline {
+    padding: 6px;
+  }
+  .editor {
+    --track-label: 90px;
+  }
+}
+@media (max-height: 600px) {
+  .header {
+    min-height: 42px;
+  }
+  .timeline {
+    margin-top: 4px;
+    padding: 5px;
+  }
+  .trackArea {
+    gap: 3px;
+  }
+  .trackLane,
+  .track > button {
+    height: 27px;
+  }
+  .timelineTools {
+    gap: 5px;
+  }
+  .timelineTools small {
+    display: none;
+  }
+  .timelineTools button {
+    padding: 4px 7px;
+    font-size: 10px;
+  }
+  .clip .thumbnail {
+    height: 22px;
+  }
+  .stage {
+    gap: 4px;
+  }
+  .transport button {
+    padding: 4px 8px;
+  }
+}
+@media (min-width: 600px) and (max-height: 500px) {
+  .editor {
+    display: grid;
+    grid-template-columns: minmax(240px, 40%) minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas: "header header" "view view" "stage tracks" "status status";
+    column-gap: 8px;
+  }
+  .header {
+    grid-area: header;
+  }
+  .viewTools {
+    grid-area: view;
+  }
+  .workspace {
+    grid-area: stage;
+  }
+  .timeline {
+    grid-area: tracks;
+    align-self: start;
+    margin-top: 0;
+  }
+  .download,
+  .exportStatus {
+    grid-area: status;
+  }
+  .error {
+    position: absolute;
+    inset: 80px 8px auto;
+    z-index: 10;
+  }
+  .presets {
+    width: 100%;
+  }
+  .editor .presets button {
+    font-size: 10px;
+    padding: 4px;
+  }
+  .timelineTools {
+    flex-wrap: wrap;
+  }
 }

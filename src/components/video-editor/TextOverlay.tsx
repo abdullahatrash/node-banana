@@ -57,7 +57,9 @@ export function TextOverlay({
     };
     draw();
     void document.fonts
-      ?.load(`${value.fontWeight} ${value.fontSize}px ${overlayFont(value).family}`)
+      ?.load(
+        `${value.fontWeight} ${value.fontSize}px ${overlayFont(value).family}`,
+      )
       .then(draw)
       .catch(() => undefined);
     return () => {

@@ -152,6 +152,49 @@ it("edits multiline Arabic text through properties and the video overlay", async
   );
 });
 
+it("splits, deletes and undoes individual sections, then reopens the cut and selected typeface for export", async () => {
+  const view = render(<VideoEditor locale="en" />);
+  fireEvent.click(await screen.findByRole("button", { name: /Phone footage/ }));
+  await screen.findByLabelText("Trim end");
+  for (const time of [3, 6]) {
+    fireEvent.change(screen.getByLabelText("Timeline", { exact: true }), {
+      target: { value: String(time) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Split at playhead" }));
+  }
+  expect(
+    screen.getAllByRole("button", { name: /Main video section/ }),
+  ).toHaveLength(3);
+  fireEvent.click(screen.getByRole("button", { name: "Main video section 2" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete section" }));
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(
+    screen.getAllByRole("button", { name: /Main video section/ }),
+  ).toHaveLength(3);
+  fireEvent.click(screen.getByRole("button", { name: "Redo" }));
+  expect(
+    screen.getAllByRole("button", { name: /Main video section/ }),
+  ).toHaveLength(2);
+  fireEvent.click(screen.getByRole("button", { name: "Add text" }));
+  fireEvent.change(screen.getByLabelText("Typeface"), {
+    target: { value: "naskh" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByText("Saved");
+  view.unmount();
+  render(<VideoEditor locale="en" initialId="piece" />);
+  await screen.findByLabelText("Trim end");
+  fireEvent.click(screen.getByRole("button", { name: "Add text" }));
+  expect(screen.getByLabelText("Typeface")).toHaveValue("naskh");
+  fireEvent.click(screen.getByRole("button", { name: "Export video" }));
+  await screen.findByRole("link", { name: "Download video" });
+  expect(exporter.mock.calls[0][0].main.segments).toEqual([
+    { trimStart: 0, trimEnd: 3 },
+    { trimStart: 6, trimEnd: 10 },
+  ]);
+  expect(exporter.mock.calls[0][0].text.fontFamily).toBe("naskh");
+});
+
 it("undoes a grouped edit and preserves it after a stale-revision save fails", async () => {
   render(<VideoEditor locale="en" />);
   fireEvent.click(await screen.findByRole("button", { name: /Phone footage/ }));
