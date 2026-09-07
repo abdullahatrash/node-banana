@@ -1535,6 +1535,7 @@
     "fitScreen": "ملاءمة الشاشة",
     "fullscreen": "ملء الشاشة",
     "exitFullscreen": "إنهاء ملء الشاشة",
-    "fullscreenUnavailable": "ملء الشاشة غير متاح هنا. أخفِ اللوحات لزيادة مساحة المعاينة."
+    "fullscreenUnavailable": "ملء الشاشة غير متاح هنا. أخفِ اللوحات لزيادة مساحة المعاينة.",
+    "selectedSection": "الجزء المحدد"
   }
 }

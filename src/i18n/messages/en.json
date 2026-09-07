@@ -1535,6 +1535,7 @@
     "fitScreen": "Fit to screen",
     "fullscreen": "Fullscreen",
     "exitFullscreen": "Exit fullscreen",
-    "fullscreenUnavailable": "Fullscreen is unavailable here. Hide the panels to give the preview more space."
+    "fullscreenUnavailable": "Fullscreen is unavailable here. Hide the panels to give the preview more space.",
+    "selectedSection": "Selected section"
   }
 }

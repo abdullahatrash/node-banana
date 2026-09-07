@@ -38,6 +38,9 @@ jobs:
       - name: Check authored localization and logical RTL layout
         run: pnpm i18n:check
 
+      - name: Check focused video editor editing and save contracts
+        run: pnpm test:run src/components/video-editor src/lib/video-editor src/app/api/video-editor/route.test.ts
+
       - name: Run Gate A deterministic tests
         run: pnpm test:gate-a
 
@@ -60,6 +63,7 @@ jobs:
     env:
       NODE_OPTIONS: --max-old-space-size=4096
       NODE_ENV: production
+      NEXT_PUBLIC_VIDEO_EDITOR_ENABLED: "true"
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/node_banana
       BETTER_AUTH_SECRET: ci-prodlike-auth-secret-7wqVb1L9pT2nX4mK8sR0dF6hJ3zQaC5
       BETTER_AUTH_URL: http://localhost:3000

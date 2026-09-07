@@ -19,10 +19,12 @@ import {
 } from "mediabunny-editor";
 import { overlayLayout, paintOverlay } from "./overlay";
 import { overlayFont } from "./fonts";
+import { sectionStart } from "./editing";
 import {
   compositionSchema,
   duration,
   clipActive,
+  clipDuration,
   clipSegments,
   sourceTime,
   roles,
@@ -56,6 +58,8 @@ type AudioCursor = {
   } | null;
 };
 async function mix(cursor: AudioCursor, pcm: Float32Array, start: number) {
+  const end = cursor.clip.start + clipDuration(cursor.clip);
+  if (start >= end || start + block / rate <= cursor.clip.start) return;
   for (let j = 0; j < block; j++) {
     const compositionTime = start + j / rate;
     if (!clipActive(cursor.clip, compositionTime)) continue;
@@ -134,6 +138,7 @@ scope.onmessage = async ({ data }) => {
   const inputs: Input[] = [],
     cursors: AudioCursor[] = [],
     frameIterators: ReturnType<CanvasSink["canvasesAtTimestamps"]>[] = [];
+  const preparedFiles: string[] = [];
   let output: Output | null = null;
   let result: File | null = null,
     errorCode: string | null = null,
@@ -188,77 +193,85 @@ scope.onmessage = async ({ data }) => {
         videos[role] = frames;
         frameIterators.push(frames);
       }
-      let audioTrack = await input.getPrimaryAudioTrack(),
-        offset = 0;
-      if (!audioTrack || clip.muted || !clip.gain) continue;
-      if (!(await audioTrack.canDecode()))
+      const sourceAudio = await input.getPrimaryAudioTrack();
+      if (!sourceAudio || clip.muted || !clip.gain) continue;
+      if (!(await sourceAudio.canDecode()))
         throw new Error("EDITOR_MEDIA_UNAVAILABLE");
-      if (audioTrack.sampleRate !== rate || audioTrack.numberOfChannels > 2) {
-        const handle = await directory.getFileHandle(`${role}.wav`, {
-          create: true,
-        });
-        const prepared = new Output({
-          format: new WavOutputFormat(),
-          target: new StreamTarget(await handle.createWritable(), {
-            chunked: true,
-            chunkSize: 1024 * 1024,
-          }),
-        });
-        try {
-          const selected = audioTrack;
-          conversion = await Conversion.init({
-            input,
-            output: prepared,
-            video: { discard: true },
-            audio: (candidate) =>
-              candidate === selected
-                ? {
-                    codec: "pcm-f32",
-                    sampleRate: rate,
-                    numberOfChannels: 2,
-                    forceTranscode: true,
-                  }
-                : { discard: true },
-            trim: {
-              start: clip.trimStart,
-              end: clip.trimEnd,
-            },
-            showWarnings: false,
+      for (const [index, segment] of clipSegments(clip).entries()) {
+        checkCancelled();
+        let audioTrack = sourceAudio,
+          offset = 0;
+        const section: Clip = {
+          ...clip,
+          ...segment,
+          start: sectionStart(clip, index),
+          segments: undefined,
+        };
+        if (
+          sourceAudio.sampleRate !== rate ||
+          sourceAudio.numberOfChannels > 2
+        ) {
+          const filename = `${role}-${index}.wav`;
+          preparedFiles.push(filename);
+          const handle = await directory.getFileHandle(filename, {
+            create: true,
           });
-          if (!conversion.isValid) throw new Error("EDITOR_MEDIA_UNAVAILABLE");
-          checkCancelled();
-          await conversion.execute();
-        } catch (error) {
-          await prepared.cancel().catch(() => undefined);
-          throw error;
-        } finally {
-          conversion = null;
+          const prepared = new Output({
+            format: new WavOutputFormat(),
+            target: new StreamTarget(await handle.createWritable(), {
+              chunked: true,
+              chunkSize: 1024 * 1024,
+            }),
+          });
+          try {
+            conversion = await Conversion.init({
+              input,
+              output: prepared,
+              video: { discard: true },
+              audio: (candidate) =>
+                candidate === sourceAudio
+                  ? {
+                      codec: "pcm-f32",
+                      sampleRate: rate,
+                      numberOfChannels: 2,
+                      forceTranscode: true,
+                    }
+                  : { discard: true },
+              trim: { start: segment.trimStart, end: segment.trimEnd },
+              showWarnings: false,
+            });
+            if (!conversion.isValid)
+              throw new Error("EDITOR_MEDIA_UNAVAILABLE");
+            checkCancelled();
+            await conversion.execute();
+          } catch (error) {
+            await prepared.cancel().catch(() => undefined);
+            throw error;
+          } finally {
+            conversion = null;
+          }
+          const normalized = new Input({
+            source: new BlobSource(await handle.getFile()),
+            formats: ALL_FORMATS,
+          });
+          inputs.push(normalized);
+          const track = await normalized.getPrimaryAudioTrack();
+          if (!track) throw new Error("EDITOR_MEDIA_UNAVAILABLE");
+          audioTrack = track;
+          offset = segment.trimStart;
         }
-        const normalized = new Input({
-          source: new BlobSource(await handle.getFile()),
-          formats: ALL_FORMATS,
-        });
-        inputs.push(normalized);
-        audioTrack = await normalized.getPrimaryAudioTrack();
-        offset = clip.trimStart;
-      }
-      if (audioTrack)
         cursors.push({
           role,
-          clip,
+          clip: section,
           offset,
-          samples: (async function* () {
-            const sink = new AudioSampleSink(audioTrack!);
-            for (const segment of clipSegments(clip)) {
-              yield* sink.samples(
-                segment.trimStart - offset,
-                segment.trimEnd - offset,
-              );
-            }
-          })(),
+          samples: new AudioSampleSink(audioTrack).samples(
+            segment.trimStart - offset,
+            segment.trimEnd - offset,
+          ),
           done: false,
           current: null,
         });
+      }
     }
     affectedRole = null;
     checkCancelled();
@@ -353,8 +366,8 @@ scope.onmessage = async ({ data }) => {
     output = null;
     checkCancelled();
     result = await fileHandle.getFile();
-    for (const role of roles)
-      await directory.removeEntry(`${role}.wav`).catch(() => undefined);
+    for (const filename of preparedFiles)
+      await directory.removeEntry(filename).catch(() => undefined);
   } catch (error) {
     await output?.cancel().catch(() => undefined);
     errorCode = cancelled

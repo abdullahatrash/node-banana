@@ -525,6 +525,26 @@ export function VideoEditor({
           )}
           {!textSelected && composition[selectedRole] && (
             <>
+              <label>
+                {copy.selectedSection}
+                <select
+                  aria-label={copy.selectedSection}
+                  value={sectionIndex}
+                  onChange={(event) =>
+                    setSelectedIndex(Number(event.target.value))
+                  }
+                >
+                  {clipSegments(composition[selectedRole]!).map(
+                    (segment, index) => (
+                      <option key={index} value={index}>
+                        {copy.section} {index + 1} ·{" "}
+                        {segment.trimStart.toFixed(2)}–
+                        {segment.trimEnd.toFixed(2)}s
+                      </option>
+                    ),
+                  )}
+                </select>
+              </label>
               {(
                 [
                   "trimStart",

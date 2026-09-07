@@ -142,6 +142,8 @@ try {
     [390, 844],
     [360, 640],
     [844, 390],
+    [1024, 400],
+    [1280, 400],
   ]) {
     await page.setViewportSize({ width, height });
     await page

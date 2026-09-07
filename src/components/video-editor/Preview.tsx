@@ -10,6 +10,7 @@ import {
 import {
   clipActive,
   sourceTime,
+  clipSegments,
   duration,
   roles,
   videoRects,
@@ -57,6 +58,7 @@ export const Preview = forwardRef<
   }, []);
   const [playing, setPlaying] = useState(false),
     [time, setTime] = useState(0);
+  const lastSection = useRef<Partial<Record<MediaRole, number>>>({});
   const clock = useRef(0),
     latest = useRef(composition);
   latest.current = composition;
@@ -73,7 +75,30 @@ export const Preview = forwardRef<
         if (!clip || !element) continue;
         const active = clipActive(clip, value),
           position = sourceTime(clip, value);
-        if (force || Math.abs(element.currentTime - position) > 0.1)
+        const segments = clipSegments(clip);
+        let remaining = value - clip.start;
+        let index = 0;
+        while (
+          index < segments.length - 1 &&
+          remaining >=
+            segments[index].trimEnd - segments[index].trimStart - 1e-9
+        ) {
+          remaining -= segments[index].trimEnd - segments[index].trimStart;
+          index++;
+        }
+        const previous = lastSection.current[role];
+        const crossedCut =
+          previous !== undefined &&
+          previous !== index &&
+          Math.abs(
+            segments[index].trimStart - (segments[previous]?.trimEnd ?? -1),
+          ) > 1e-6;
+        lastSection.current[role] = index;
+        if (
+          force ||
+          crossedCut ||
+          Math.abs(element.currentTime - position) > 0.1
+        )
           element.currentTime = position;
         element.volume = clip.gain;
         element.muted = clip.muted;

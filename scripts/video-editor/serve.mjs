@@ -216,7 +216,11 @@ const server = createServer(async (req, res) => {
     }
     const resource = path.startsWith("/media/")
       ? join(fixtures, path.split("/").at(-1))
-      : ["/fonts/editor-arabic.ttf", "/fonts/editor-cairo.ttf", "/fonts/editor-naskh.ttf"].includes(path)
+      : [
+            "/fonts/editor-arabic.ttf",
+            "/fonts/editor-cairo.ttf",
+            "/fonts/editor-naskh.ttf",
+          ].includes(path)
         ? join(root, "public", path)
         : [
               "/app.js",
