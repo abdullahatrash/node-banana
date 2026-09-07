@@ -1,15 +1,74 @@
+import { overlayLayout, paintOverlay } from '/overlay.mjs';
 const $=id=>document.getElementById(id);
 const files={};const objectUrls={};let worker=null;let playing=false;let running=false;let outputName=null;
 let frameTimes=[],longTasks=[],pingTimes=[],heapPeak=0,lastFrame=performance.now(),progressStarted=0;
 window.prototypeResults=null;
 const percentile=(values,p)=>values.length?[...values].sort((a,b)=>a-b)[Math.min(values.length-1,Math.floor(values.length*p))]:null;
-const config=()=>Object.fromEntries(['layout','duration','reactionStart','text','mainGain','reactionGain','musicGain','voiceGain'].map(key=>[key,['layout','text'].includes(key)?$(key).value:Number($(key).value)]));
+let textPosition={x:0.5,y:0.92};let textEditing=false;let overlayDrag=null;let overlayState;
+const config=()=>({...Object.fromEntries(['layout','duration','reactionStart','text','mainGain','reactionGain','musicGain','voiceGain'].map(key=>[key,['layout','text'].includes(key)?$(key).value:Number($(key).value)])),textPosition:{...textPosition}});
+function renderOverlay(){
+  const canvas=$('captionCanvas'),context=canvas.getContext('2d');
+  overlayState=overlayLayout(context,$('text').value,textPosition);
+  textPosition={x:overlayState.x/1080,y:overlayState.y/1920};
+  const scale=$('preview').clientWidth/1080;
+  Object.assign($('caption').style,{left:`${textPosition.x*100}%`,top:`${textPosition.y*100}%`,width:`${overlayState.width*scale}px`,height:`${overlayState.height*scale}px`});
+  Object.assign($('captionEditor').style,{font:`${overlayState.fontSize*scale}px ReactionArabic`,lineHeight:`${overlayState.height*scale}px`,padding:`0 ${32*scale}px`});
+  canvas.width=overlayState.width;canvas.height=overlayState.height;
+  if($('text').value)paintOverlay(context,$('text').value,overlayState);
+  if(!textEditing)$('captionEditor').textContent=$('text').value;
+  $('caption').setAttribute('aria-label',`Text overlay: ${$('text').value||'empty'}. Drag to move; Enter to edit; arrow keys to move.`);
+}
+function startTextEdit(){
+  pause();textEditing=true;$('caption').classList.add('editing','selected');
+  $('captionEditor').textContent=$('text').value;$('captionEditor').focus();
+  const range=document.createRange();range.selectNodeContents($('captionEditor'));
+  const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);
+}
+function finishTextEdit(){
+  textEditing=false;$('caption').classList.remove('editing');renderOverlay();
+}
+$('caption').ondblclick=()=>{if(!textEditing)startTextEdit();};
+$('caption').onpointerdown=e=>{
+  if(textEditing||e.button!==0)return;
+  $('caption').focus({preventScroll:true});$('caption').classList.add('selected');
+  overlayDrag={id:e.pointerId,x:e.clientX,y:e.clientY,start:{...textPosition}};
+  $('caption').setPointerCapture(e.pointerId);
+};
+$('caption').onpointermove=e=>{
+  if(!overlayDrag||e.pointerId!==overlayDrag.id)return;
+  const bounds=$('preview').getBoundingClientRect();
+  const dx=e.clientX-overlayDrag.x,dy=e.clientY-overlayDrag.y;
+  if(Math.abs(dx)+Math.abs(dy)<3)return;
+  $('caption').classList.add('dragging');
+  textPosition={x:overlayDrag.start.x+dx/bounds.width,y:overlayDrag.start.y+dy/bounds.height};renderOverlay();
+};
+function endOverlayDrag(){overlayDrag=null;$('caption').classList.remove('dragging');}
+$('caption').onpointerup=endOverlayDrag;$('caption').onpointercancel=endOverlayDrag;$('caption').onlostpointercapture=endOverlayDrag;
+$('caption').onkeydown=e=>{
+  if(textEditing)return;
+  if(e.key==='Enter'){e.preventDefault();startTextEdit();return;}
+  const steps={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
+  if(steps[e.key]){e.preventDefault();const [x,y]=steps[e.key],step=e.shiftKey?20:4;textPosition={x:textPosition.x+x*step/1080,y:textPosition.y+y*step/1920};renderOverlay();}
+};
+$('captionEditor').oninput=()=>{$('text').value=$('captionEditor').textContent.replace(/[\r\n]+/g,' ');renderOverlay();};
+$('captionEditor').onkeydown=e=>{
+  if(e.isComposing)return;
+  if(e.key==='Enter'||e.key==='Escape'){e.preventDefault();e.stopPropagation();$('captionEditor').blur();$('caption').focus();}
+};
+$('captionEditor').onblur=finishTextEdit;
+$('captionEditor').onpaste=e=>{
+  e.preventDefault();const value=e.clipboardData.getData('text/plain').replace(/[\r\n]+/g,' ');
+  const selection=window.getSelection();if(!selection.rangeCount)return;
+  const range=selection.getRangeAt(0);range.deleteContents();const node=document.createTextNode(value);range.insertNode(node);range.setStartAfter(node);range.collapse(true);selection.removeAllRanges();selection.addRange(range);
+  $('captionEditor').dispatchEvent(new Event('input'));
+};
+$('text').addEventListener('input',renderOverlay);
+document.fonts.load('76px ReactionArabic').then(renderOverlay);new ResizeObserver(renderOverlay).observe($('preview'));
 if(PerformanceObserver.supportedEntryTypes.includes('longtask'))new PerformanceObserver(list=>{if(running)longTasks.push(...list.getEntries().map(e=>e.duration));}).observe({type:'longtask'});
 function sync(){
   const c=config(),t=$('main').currentTime;
   const reactionEnd=Math.min($('reaction').duration||15,15);
   $('preview').className=`preview ${c.layout}${t>=c.reactionStart&&t<c.reactionStart+reactionEnd?' active':''}`;
-  $('preview').querySelector('.caption').textContent=c.text;
   for(const [name,start] of [['reaction',c.reactionStart],['music',0],['voice',2]]){
     const media=$(name);const local=t-start;const active=local>=0&&local<Math.min(media.duration||0,name==='reaction'?15:60);
     if(!active){media.pause();continue;}

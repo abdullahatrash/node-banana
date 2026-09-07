@@ -35,6 +35,7 @@ const routes = new Map([
   ['/', [join(here,'index.html'),'text/html']],
   ['/app.mjs', [join(here,'app.mjs'),'text/javascript']],
   ['/worker.mjs', [join(here,'worker.mjs'),'text/javascript']],
+  ['/overlay.mjs', [join(here,'overlay.mjs'),'text/javascript']],
   ['/mediabunny.mjs', [library,'text/javascript']],
   ['/font.ttf', [join(root,'assets/fonts/creative/NotoSansArabic.ttf'),'font/ttf']],
   ...fixtures.map(([name]) => [`/media/${name}`,[join(media,name),name.endsWith('.mp4')?'video/mp4':'audio/wav']]),

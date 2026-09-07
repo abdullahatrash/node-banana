@@ -32,3 +32,7 @@ Cancellation completed in 68 ms in one observed run, leaving no temporary output
 Continue evaluating browser export before funding a render-worker service. The measured path consumed no server rendering or AI-provider work. These observations do not establish zero operating cost: Workspace storage, transfers, application hosting, support, and future generation remain separate costs.
 
 Production adoption remains open until we qualify representative lower-spec laptops and browser versions with real footage, handle common input audio rates such as 44.1 kHz, verify sustained memory behavior and interactive preview/scrubbing, and resolve AAC duration/alignment. No production performance threshold or export architecture was accepted by this experiment.
+
+## Subsequent overlay interaction check
+
+The preview now supports direct text editing and movement, sharing text rasterization and normalized placement with export. An isolated Chrome check edited the Arabic sentence in place, dragged it upward and right, moved it with an arrow key, and verified that dragging beyond the canvas clamps the overlay inside the frame. A five-second MP4 retained the edited sentence and chosen position, confirmed by frame extraction and visual inspection. No page errors occurred. The full 60-second performance numbers above predate this interaction change and are not a new benchmark of it.

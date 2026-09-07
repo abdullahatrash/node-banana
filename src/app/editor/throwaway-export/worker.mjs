@@ -2,6 +2,7 @@
 import { Input, BlobSource, ALL_FORMATS, CanvasSink, CanvasSource, AudioSample,
   AudioSampleSink, AudioSampleSource, Output, Mp4OutputFormat, StreamTarget,
   canEncodeVideo, canEncodeAudio } from '/mediabunny.mjs';
+import { overlayLayout, paintOverlay } from '/overlay.mjs';
 
 let cancelled = false;
 onmessage = async ({ data }) => {
@@ -54,10 +55,9 @@ onmessage = async ({ data }) => {
     }
     const canvas=new OffscreenCanvas(width,height),ctx=canvas.getContext('2d',{alpha:false});
     // Shape text once, then reuse exactly the same raster for every frame.
-    const textCanvas=new OffscreenCanvas(width,170),textCtx=textCanvas.getContext('2d');
-    textCtx.fillStyle='#000b';textCtx.fillRect(40,0,width-80,170);
-    textCtx.fillStyle='white';textCtx.font='76px ReactionArabic';textCtx.textAlign='center';textCtx.direction='rtl';
-    textCtx.fillText(config.text,width/2,112,width-120);
+    const textLayout=overlayLayout(ctx,config.text,config.textPosition);
+    const textCanvas=new OffscreenCanvas(textLayout.width,textLayout.height),textCtx=textCanvas.getContext('2d');
+    paintOverlay(textCtx,config.text,textLayout);
     const root=await navigator.storage.getDirectory();
     destination=await root.getFileHandle(data.outputName,{create:true});
     const writable=await destination.createWritable();
@@ -85,7 +85,7 @@ onmessage = async ({ data }) => {
       if (b && config.layout==='stack') {draw(a.canvas,0,0,width,height/2);draw(b.canvas,0,height/2,width,height/2);}
       else if (b && config.layout==='side') {draw(a.canvas,0,0,width/2,height);draw(b.canvas,width/2,0,width/2,height);}
       else {draw(a.canvas,0,0,width,height);if(b)draw(b.canvas,690,1100,330,587);}
-      if(config.text)ctx.drawImage(textCanvas,0,1690);
+      if(config.text)ctx.drawImage(textCanvas,textLayout.x-textLayout.width/2,textLayout.y-textLayout.height/2);
       const mix=new Float32Array(block*2);
       for (const sound of sounds) {
         for(let j=0;j<block;j++) {
