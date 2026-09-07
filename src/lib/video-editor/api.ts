@@ -29,3 +29,21 @@ export async function resolveMedia(item: MediaItem): Promise<EditorMedia> {
   if (item.type !== 'video' && item.type !== 'audio') throw new EditorApiError('EDITOR_MEDIA_UNAVAILABLE');
   return { id: item.id, name: item.name, type: item.type, duration: item.durationSeconds || 0, width: item.width || 0, height: item.height || 0, url: downloadUrl };
 }
+
+/** Upload uses the same reservation, quota and server inspection path as Workspace media. */
+export async function uploadMedia(file: File, onPhase: (phase: 'uploading' | 'processing') => void): Promise<MediaItem> {
+  const type = /^(video\/(mp4|webm|quicktime))$/.test(file.type) ? 'video' : /^(audio\/(mpeg|mp3|wav|x-wav|wave))$/.test(file.type) ? 'audio' : null;
+  if (!type || !file.size || file.size > 500 * 1024 * 1024) throw new EditorApiError('EDITOR_UPLOAD_FORMAT');
+  onPhase('uploading');
+  const { assetId, uploadUrl } = await editorRequest('/api/studio/assets/presign', { fileName: file.name, contentType: file.type, assetType: type, expectedSizeBytes: file.size });
+  try {
+    const uploaded = await fetch(uploadUrl, { method: 'PUT', headers: { 'content-type': file.type }, body: file });
+    if (!uploaded.ok) throw new EditorApiError('EDITOR_UPLOAD_FAILED');
+    onPhase('processing');
+    const { asset } = await editorRequest(`/api/studio/assets/${encodeURIComponent(assetId)}`, { uploadState: 'ready' }, 'PATCH');
+    return { id: assetId, name: file.name, type, durationSeconds: asset.durationSeconds, width: asset.width, height: asset.height };
+  } catch (error) {
+    await editorRequest(`/api/studio/assets/${encodeURIComponent(assetId)}`, { uploadState: 'failed', error: 'Editor upload did not complete' }, 'PATCH').catch(() => undefined);
+    throw error;
+  }
+}

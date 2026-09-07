@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createClip, duration, emptyComposition, type Composition, type EditorMedia, type EditorRecord } from '@/lib/video-editor/composition';
-import { listMedia, loadRecords, resolveMedia, saveComposition, type MediaItem } from '@/lib/video-editor/api';
+import { uploadMedia, listMedia, loadRecords, resolveMedia, saveComposition, type MediaItem } from '@/lib/video-editor/api';
 import { exportComposition, type ExportResult } from '@/lib/video-editor/export-client';
 import { Preview, type PreviewHandle } from './Preview';
 import { editorCopy, errorCopy } from './copy';
@@ -10,6 +10,7 @@ import styles from './editor.module.css';
 export function VideoEditor({ locale = 'ar', initialId }: { locale?: 'ar' | 'en'; initialId?: string }) {
  const copy = editorCopy[locale];
  const [composition, setComposition] = useState<Composition>(() => emptyComposition(copy.untitled));
+ const [uploadPhase, setUploadPhase] = useState<'uploading' | 'processing' | null>(null);
  const [assets, setAssets] = useState<MediaItem[]>([]), [cursor, setCursor] = useState<string | null>(null);
  const [media, setMedia] = useState<Record<string, EditorMedia>>({});
  const [records, setRecords] = useState<EditorRecord[]>([]);
@@ -78,8 +79,12 @@ export function VideoEditor({ locale = 'ar', initialId }: { locale?: 'ar' | 'en'
   <div className={styles.workspace} dir="ltr">
    <aside className={styles.panel} dir={locale === 'ar' ? 'rtl' : 'ltr'}>
     <h2>{copy.media}</h2>
+    <label>{copy.upload}<input type="file" accept="video/mp4,video/webm,video/quicktime,audio/mpeg,audio/wav,audio/x-wav" disabled={Boolean(uploadPhase)} onChange={(event) => {
+     const file = event.target.files?.[0]; event.target.value = ''; if (!file) return; setError('');
+     void uploadMedia(file, setUploadPhase).then((item) => { setAssets((items) => [item, ...items.filter((value) => value.id !== item.id)]); }).catch((failure) => setError(errorCopy(failure, copy))).finally(() => setUploadPhase(null));
+    }} /></label>{uploadPhase && <p role="status">{copy[uploadPhase]}</p>}
     <select aria-label={copy.open} value={current.current?.id || ''} onChange={(e) => { const record = records.find((item) => item.id === e.target.value); if (record) void open(record).catch((failure) => setError(errorCopy(failure, copy))); }}><option value="">{copy.open}</option>{records.map((record) => <option key={record.id} value={record.id}>{record.composition.title}</option>)}</select>
-    {assets.filter((item) => item.type === 'video').map((item) => <button className={styles.mediaCard} key={item.id} disabled={busy} onClick={() => void select(item)}>{item.name}<small>{item.durationSeconds}s</small></button>)}
+    {assets.filter((item) => item.type === 'video' || item.type === 'audio').map((item) => <button className={styles.mediaCard} key={item.id} disabled={busy || item.type !== 'video'} onClick={() => void select(item)}>{item.name}<small>{item.durationSeconds}s</small></button>)}
     {!assets.length && <p>{copy.empty}</p>}
     {cursor && <button onClick={() => void listMedia(cursor).then((page) => { setAssets([...assets, ...page.items]); setCursor(page.nextCursor); }).catch((failure) => setError(errorCopy(failure, copy)))}>{copy.more}</button>}
    </aside>

@@ -33,3 +33,15 @@ it('selects Workspace footage, saves a trim, reopens, and requests an export of 
  await screen.findByRole('link', { name: 'Download video' });
  expect(exporter.mock.calls[0][0].main).toMatchObject({ assetId: 'main', trimStart: 0, trimEnd: 5 });
 });
+
+it('retains the selected trim after a quota denial and allows another upload attempt', async () => {
+ render(<VideoEditor locale="en" />);
+ fireEvent.click(await screen.findByRole('button', { name: /Phone footage/ }));
+ fireEvent.change(await screen.findByLabelText('Trim end'), { target: { value: '5' } });
+ const original = vi.mocked(fetch).getMockImplementation()!;
+ vi.mocked(fetch).mockImplementation(async (url, init) => String(url).endsWith('/presign') ? Response.json({ success: false }, { status: 403 }) : original(url, init));
+ fireEvent.change(screen.getByLabelText('Upload video or audio'), { target: { files: [new File(['test'], 'phone.mp4', { type: 'video/mp4' })] } });
+ await screen.findByRole('alert');
+ expect(screen.getByLabelText('Trim end')).toHaveValue(5);
+ expect(screen.getByLabelText('Upload video or audio')).toBeEnabled();
+});
