@@ -537,7 +537,11 @@ export function VideoEditor({
                   }}
                 >
                   {mediaKind(role) === "video" && (
-                    <MediaThumbnail id={composition[role]!.assetId} api={api} />
+                    <MediaThumbnail
+                      key={composition[role]!.assetId}
+                      id={composition[role]!.assetId}
+                      api={api}
+                    />
                   )}
                   {media[composition[role]!.assetId]?.name}
                 </button>

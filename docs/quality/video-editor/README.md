@@ -12,6 +12,8 @@ The nine-ticket implementation is ready for local review in one unmerged PR. Thi
 - Real production UI and workers, synthetic Workspace service: upload two videos; select MP3 music and 24 kHz WAV voiceover; trim/time; edit multiline mixed Arabic/English text inline and in properties; drag and move by keyboard; style; save/reopen; undo/redo; export all layouts. Production authorization/upload/quota tests are reused separately.
 - Unsupported-browser, injected browser quota failure, cancel/retry, and orphan cleanup passed. One live download attempt remained in OPFS; superseded and cancelled attempts were removed. No Workspace media deletion or server render fallback occurs.
 - WAV 48/44.1 kHz and CBR/VBR/mono/untagged MP3 import/export passed. Malformed audio preserves the composition. Mute output has negligible music-band energy. The repeated-edit scenario made 100 gain/scrub edits and checked undo/redo and Arabic RTL.
+- A three-minute soak completed **194 edit/export cycles** with no page errors. Every sample contained exactly one current export directory; replaced exports were removed. Browser-process RSS started at 1,168,432 KiB, peaked at 1,441,216 KiB, and ended at 1,280,288 KiB. The trace includes memory reclamation; this short run does not establish a long-term memory bound. See [soak results](soak-results.json).
+- Separate Standards and Spec reviews were completed, and their save/recovery/thumbnail findings were fixed. See [review results](review.md).
 
 ## Measurements and artifact inspection
 
