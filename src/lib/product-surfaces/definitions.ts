@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { compositionSchema } from "@/lib/video-editor/composition";
 import { supportAttachmentReferencesSchema } from "@/lib/product-support/attachment-policy";
 
 export const PRODUCT_RECORD_KINDS = [
@@ -206,6 +207,7 @@ const qualifiedContentRenderProofSchema = z.object({
 });
 
 export const contentPieceSchema = z.object({
+  videoEditor: compositionSchema.optional(),
   format: z.enum(CONTENT_FORMATS),
   formatDefinition: z.object({ id: text(200), revision: z.number().int().positive(), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).nullable().default(null),
   contentLanguage: z.enum(["ar", "en", "mixed"]),
@@ -213,7 +215,7 @@ export const contentPieceSchema = z.object({
   prompt: optionalText(10_000),
   script: optionalText(25_000),
   aspectRatio: z.enum(["9:16", "1:1", "16:9"]).default("9:16"),
-  durationSeconds: z.number().int().min(4).max(60).default(15),
+  durationSeconds: z.number().min(1 / 30).max(60).default(15),
   captionStyle: optionalText(100),
   speaker: optionalText(500),
   scene: optionalText(1_000),
@@ -241,6 +243,8 @@ export const contentPieceSchema = z.object({
     operationId: text(200),
     contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   }).nullable().default(null),
+}).superRefine((piece, context) => {
+  if (!piece.videoEditor && (!Number.isInteger(piece.durationSeconds) || piece.durationSeconds < 4)) context.addIssue({ code: 'custom', path: ['durationSeconds'], message: 'Generation duration must be an integer of at least four seconds' });
 });
 
 export const campaignPayloadSchema = z.object({

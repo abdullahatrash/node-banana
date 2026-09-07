@@ -1,0 +1,32 @@
+import { createRequire } from 'node:module';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+const require = createRequire(import.meta.url);
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '/Users/neoak/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const out = process.env.EDITOR_TEST_OUTPUT || join(tmpdir(), 'tasmeemai-editor-acceptance');
+await mkdir(out, { recursive: true });
+const browser = await chromium.launch({ channel: 'chrome', headless: true });
+try {
+ const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
+ const errors = []; page.on('pageerror', e => errors.push(e.message));
+ page.on('console', msg => { if (msg.type() === 'error') console.error(msg.text()); });
+ await page.goto('http://127.0.0.1:3048/?lang=en');
+ await page.getByRole('button', { name: /Phone footage/ }).click();
+ await page.getByLabel('Trim end', { exact: true }).fill('5');
+ await page.getByRole('button', { name: 'Save', exact: true }).click();
+ await page.getByText('Saved', { exact: true }).waitFor();
+ await page.reload();
+ await page.getByLabel('Trim end', { exact: true }).waitFor();
+ if (await page.getByLabel('Trim end', { exact: true }).inputValue() !== '5') throw Error('Trim did not survive reopen');
+ const started = Date.now();
+ await page.getByRole('button', { name: 'Export video', exact: true }).click();
+ await page.getByRole('link', { name: 'Download video' }).waitFor({ timeout: 120000 });
+ const elapsed = Date.now() - started;
+ const pending = page.waitForEvent('download'); await page.getByRole('link', { name: 'Download video' }).click();
+ await (await pending).saveAs(join(out, 'main.mp4'));
+ await page.screenshot({ path: join(out, 'main.png'), fullPage: true });
+ if (errors.length) throw Error(errors.join('\n'));
+ await writeFile(join(out, 'main-check.json'), JSON.stringify({ elapsedMs: elapsed, browser: browser.version(), errors }, null, 2));
+ console.log(JSON.stringify({ elapsedMs: elapsed, output: out }));
+} finally { await browser.close(); }

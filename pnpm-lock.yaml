@@ -113,6 +113,9 @@ importers:
       mediabunny:
         specifier: ^1.31.0
         version: 1.31.0
+      mediabunny-editor:
+        specifier: npm:mediabunny@1.55.7
+        version: mediabunny@1.55.7
       mime-types:
         specifier: ^3.0.2
         version: 3.0.2

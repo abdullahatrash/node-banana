@@ -1,0 +1,22 @@
+const en = {
+ title: 'Video editor', untitled: 'Untitled video', back: 'Back to studio', media: 'Workspace media', main: 'Main video',
+ save: 'Save', saving: 'Saving…', saved: 'Saved', unsaved: 'Unsaved changes', open: 'Open a saved video', newVideo: 'New video',
+ export: 'Export video', download: 'Download video', cancel: 'Cancel', exporting: 'Preparing video…', cancelled: 'Export cancelled',
+ start: 'Trim start', end: 'Trim end', play: 'Play', pause: 'Pause', seek: 'Timeline', more: 'Load more', name: 'Video name',
+ select: 'Choose a video to begin', empty: 'No videos in this Workspace yet.', retry: 'Retry',
+ errors: { WORKSPACE_REQUIRED: 'Choose a Workspace in the app first.', EDITOR_ACCESS_OR_QUOTA: 'Workspace access or storage limit prevented this action.', EDITOR_SAVE_CONFLICT: 'This video changed elsewhere. Your edits are still here. Reload the saved version or save a copy.', EDITOR_MEDIA_LIMIT: 'Use video up to 1080p and a valid trim range.', EDITOR_MEDIA_UNAVAILABLE: 'This media is unavailable. Choose another file.', EDITOR_COMPOSITION_INVALID: 'Check the clip timing and video title.', EDITOR_REQUEST_FAILED: 'The request failed. Your edits are still here. Please retry.', EDITOR_EXPORT_FAILED: 'Export failed. Check the selected media and retry.', EDITOR_UNSUPPORTED: 'This browser cannot export this video. Try a current Chrome browser.', EDITOR_STORAGE_FULL: 'Your device has insufficient temporary storage for this export.' },
+};
+const ar: typeof en = {
+ title: 'محرر الفيديو', untitled: 'فيديو جديد', back: 'العودة للاستوديو', media: 'وسائط مساحة العمل', main: 'الفيديو الأساسي',
+ save: 'حفظ', saving: 'جارٍ الحفظ…', saved: 'تم الحفظ', unsaved: 'تغييرات غير محفوظة', open: 'فتح فيديو محفوظ', newVideo: 'فيديو جديد',
+ export: 'تصدير الفيديو', download: 'تنزيل الفيديو', cancel: 'إلغاء', exporting: 'جارٍ تجهيز الفيديو…', cancelled: 'تم إلغاء التصدير',
+ start: 'بداية المقطع', end: 'نهاية المقطع', play: 'تشغيل', pause: 'إيقاف', seek: 'الخط الزمني', more: 'تحميل المزيد', name: 'اسم الفيديو',
+ select: 'اختر فيديو للبدء', empty: 'لا توجد فيديوهات في مساحة العمل بعد.', retry: 'إعادة المحاولة',
+ errors: { WORKSPACE_REQUIRED: 'اختر مساحة عمل في التطبيق أولاً.', EDITOR_ACCESS_OR_QUOTA: 'تعذر الإجراء بسبب صلاحية الوصول أو حد التخزين.', EDITOR_SAVE_CONFLICT: 'تم تعديل الفيديو في مكان آخر. تعديلاتك محفوظة هنا. أعد تحميل النسخة المحفوظة أو احفظ نسخة جديدة.', EDITOR_MEDIA_LIMIT: 'استخدم فيديو بدقة لا تتجاوز 1080p وحدد مدة قص صالحة.', EDITOR_MEDIA_UNAVAILABLE: 'هذه الوسائط غير متاحة. اختر ملفاً آخر.', EDITOR_COMPOSITION_INVALID: 'تحقق من توقيت المقاطع واسم الفيديو.', EDITOR_REQUEST_FAILED: 'تعذر إتمام الطلب. تعديلاتك ما زالت هنا. حاول مجدداً.', EDITOR_EXPORT_FAILED: 'تعذر التصدير. تحقق من الوسائط وحاول مجدداً.', EDITOR_UNSUPPORTED: 'هذا المتصفح لا يدعم تصدير الفيديو. جرّب إصداراً حديثاً من Chrome.', EDITOR_STORAGE_FULL: 'لا توجد مساحة مؤقتة كافية على جهازك للتصدير.' },
+};
+export const editorCopy = { en, ar };
+export type EditorCopy = typeof en;
+export function errorCopy(error: unknown, copy: EditorCopy): string {
+ const code = error instanceof Error ? error.message : '';
+ return copy.errors[code as keyof typeof copy.errors] || copy.errors.EDITOR_REQUEST_FAILED;
+}

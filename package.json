@@ -96,6 +96,7 @@
     "googleapis": "^171.4.0",
     "lucide-react": "^1.7.0",
     "mediabunny": "^1.31.0",
+    "mediabunny-editor": "npm:mediabunny@1.55.7",
     "mime-types": "^3.0.2",
     "nanoid": "^5.1.11",
     "next": "^16.0.7",
