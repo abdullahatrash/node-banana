@@ -1,62 +1,183 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 export const VIDEO_FPS = 30;
 export const MAX_DURATION = 60;
-export const clipSchema = z.object({
-  assetId: z.string().min(1).max(200),
-  trimStart: z.number().finite().min(0).max(86_400),
-  trimEnd: z.number().finite().positive().max(86_400),
-  start: z.number().finite().min(0).max(MAX_DURATION),
-  gain: z.number().finite().min(0).max(1),
-  muted: z.boolean(),
-}).strict().refine((clip) => clip.trimEnd - clip.trimStart >= 1 / VIDEO_FPS, 'Select at least one frame');
+export const clipSchema = z
+  .object({
+    assetId: z.string().min(1).max(200),
+    trimStart: z.number().finite().min(0).max(86_400),
+    trimEnd: z.number().finite().positive().max(86_400),
+    start: z.number().finite().min(0).max(MAX_DURATION),
+    gain: z.number().finite().min(0).max(1),
+    muted: z.boolean(),
+  })
+  .strict()
+  .refine(
+    (clip) => clip.trimEnd - clip.trimStart >= 1 / VIDEO_FPS,
+    "Select at least one frame",
+  );
 
-export const textSchema = z.object({
- text: z.string().max(1000), x: z.number().finite().min(0).max(1), y: z.number().finite().min(0).max(1),
- fontSize: z.number().finite().min(24).max(160), fontWeight: z.union([z.literal(100), z.literal(300), z.literal(400), z.literal(700)]),
- align: z.enum(['left', 'center', 'right']), color: z.string().regex(/^#[0-9a-f]{6}$/i), backgroundColor: z.string().regex(/^#[0-9a-f]{6}$/i), backgroundOpacity: z.number().finite().min(0).max(1),
-}).strict();
+export const textSchema = z
+  .object({
+    text: z.string().max(1000),
+    x: z.number().finite().min(0).max(1),
+    y: z.number().finite().min(0).max(1),
+    fontSize: z.number().finite().min(24).max(160),
+    fontWeight: z.union([
+      z.literal(100),
+      z.literal(300),
+      z.literal(400),
+      z.literal(700),
+    ]),
+    align: z.enum(["left", "center", "right"]),
+    color: z.string().regex(/^#[0-9a-f]{6}$/i),
+    backgroundColor: z.string().regex(/^#[0-9a-f]{6}$/i),
+    backgroundOpacity: z.number().finite().min(0).max(1),
+  })
+  .strict();
 export type TextOverlay = z.infer<typeof textSchema>;
-export function createText(): TextOverlay { return { text: 'اكتب نصك هنا', x: 0.5, y: 0.8, fontSize: 76, fontWeight: 400, align: 'center', color: '#ffffff', backgroundColor: '#000000', backgroundOpacity: 0.73 }; }
+export function createText(): TextOverlay {
+  return {
+    text: "اكتب نصك هنا",
+    x: 0.5,
+    y: 0.8,
+    fontSize: 76,
+    fontWeight: 400,
+    align: "center",
+    color: "#ffffff",
+    backgroundColor: "#000000",
+    backgroundOpacity: 0.73,
+  };
+}
 
-export const compositionSchema = z.object({
-  version: z.literal(1),
-  title: z.string().trim().min(1).max(240),
-  main: clipSchema.nullable(),
-  text: textSchema.nullable().default(null),
-  music: clipSchema.nullable().default(null),
-  voiceover: clipSchema.nullable().default(null),
-  secondary: clipSchema.nullable().default(null),
-  layout: z.enum(['stacked', 'pip', 'side-by-side']).default('stacked'),
-}).strict().superRefine((composition, context) => {
-  for (const role of ['music', 'voiceover'] as const) { const clip = composition[role]; if (clip && clip.start + clipDuration(clip) > duration(composition) + 1e-6) context.addIssue({ code: 'custom', path: [role], message: 'Audio must fit the composition' }); }
-  if (composition.secondary && (clipDuration(composition.secondary) > 15 || composition.secondary.start + clipDuration(composition.secondary) > duration(composition) + 1e-6)) context.addIssue({ code: 'custom', path: ['secondary'], message: 'Secondary video must fit the composition and last at most 15 seconds' });
-  if (composition.main && (composition.main.start !== 0 || duration(composition) > MAX_DURATION)) {
-    context.addIssue({ code: 'custom', path: ['main'], message: 'The main video starts at zero and lasts at most 60 seconds' });
-  }
-});
+export const compositionSchema = z
+  .object({
+    version: z.literal(1),
+    title: z.string().trim().min(1).max(240),
+    main: clipSchema.nullable(),
+    text: textSchema.nullable().default(null),
+    music: clipSchema.nullable().default(null),
+    voiceover: clipSchema.nullable().default(null),
+    secondary: clipSchema.nullable().default(null),
+    layout: z.enum(["stacked", "pip", "side-by-side"]).default("stacked"),
+  })
+  .strict()
+  .superRefine((composition, context) => {
+    for (const role of ["music", "voiceover"] as const) {
+      const clip = composition[role];
+      if (
+        clip &&
+        clip.start + clipDuration(clip) > duration(composition) + 1e-6
+      )
+        context.addIssue({
+          code: "custom",
+          path: [role],
+          message: "Audio must fit the composition",
+        });
+    }
+    if (
+      composition.secondary &&
+      (clipDuration(composition.secondary) > 15 ||
+        composition.secondary.start + clipDuration(composition.secondary) >
+          duration(composition) + 1e-6)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["secondary"],
+        message:
+          "Secondary video must fit the composition and last at most 15 seconds",
+      });
+    if (
+      composition.main &&
+      (composition.main.start !== 0 || duration(composition) > MAX_DURATION)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["main"],
+        message: "The main video starts at zero and lasts at most 60 seconds",
+      });
+    }
+  });
 export type Clip = z.infer<typeof clipSchema>;
 export type Composition = z.infer<typeof compositionSchema>;
-export type MediaRole = 'main' | 'secondary' | 'music' | 'voiceover';
-export const roles: MediaRole[] = ['main', 'secondary', 'music', 'voiceover'];
-export function duration(composition: { main: { trimEnd: number; trimStart: number } | null }) {
-  return composition.main ? composition.main.trimEnd - composition.main.trimStart : 0;
+export type MediaRole = "main" | "secondary" | "music" | "voiceover";
+export const roles: MediaRole[] = ["main", "secondary", "music", "voiceover"];
+export function duration(composition: {
+  main: { trimEnd: number; trimStart: number } | null;
+}) {
+  return composition.main
+    ? composition.main.trimEnd - composition.main.trimStart
+    : 0;
 }
-export function emptyComposition(title = 'Untitled video'): Composition { return { version: 1, title, main: null, text: null, music: null, voiceover: null, secondary: null, layout: 'stacked' }; }
+export function emptyComposition(title = "Untitled video"): Composition {
+  return {
+    version: 1,
+    title,
+    main: null,
+    text: null,
+    music: null,
+    voiceover: null,
+    secondary: null,
+    layout: "stacked",
+  };
+}
 export function createClip(assetId: string, seconds: number): Clip {
-  return { assetId, trimStart: 0, trimEnd: Math.min(seconds, MAX_DURATION), start: 0, gain: 1, muted: false };
+  return {
+    assetId,
+    trimStart: 0,
+    trimEnd: Math.min(seconds, MAX_DURATION),
+    start: 0,
+    gain: 1,
+    muted: false,
+  };
 }
-export interface EditorRecord { id: string; revision: number; composition: Composition }
-export interface EditorMedia { id: string; name: string; type: 'video' | 'audio'; duration: number; width: number; height: number; url: string }
+export interface EditorRecord {
+  id: string;
+  revision: number;
+  composition: Composition;
+}
+export interface EditorMedia {
+  id: string;
+  name: string;
+  type: "video" | "audio";
+  duration: number;
+  width: number;
+  height: number;
+  url: string;
+}
 
-export function clipDuration(clip: Clip) { return clip.trimEnd - clip.trimStart; }
-export function clipActive(clip: Clip | null, time: number) { return Boolean(clip && time >= clip.start && time < clip.start + clipDuration(clip)); }
+export function clipDuration(clip: Clip) {
+  return clip.trimEnd - clip.trimStart;
+}
+export function clipActive(clip: Clip | null, time: number) {
+  return Boolean(
+    clip && time >= clip.start && time < clip.start + clipDuration(clip),
+  );
+}
 export type Rect = { x: number; y: number; width: number; height: number };
 /** Normalized geometry shared by preview and export. Center crop each panel. */
-export function videoRects(_layout: Composition['layout'], secondaryActive: boolean): { main: Rect; secondary: Rect | null } {
- if (secondaryActive && _layout === 'pip') return { main: { x: 0, y: 0, width: 1, height: 1 }, secondary: { x: 0.61, y: 0.04, width: 0.35, height: 0.35 } };
- if (secondaryActive && _layout === 'side-by-side') return { main: { x: 0, y: 0, width: 0.5, height: 1 }, secondary: { x: 0.5, y: 0, width: 0.5, height: 1 } };
- return secondaryActive ? { main: { x: 0, y: 0.5, width: 1, height: 0.5 }, secondary: { x: 0, y: 0, width: 1, height: 0.5 } } : { main: { x: 0, y: 0, width: 1, height: 1 }, secondary: null };
+export function videoRects(
+  _layout: Composition["layout"],
+  secondaryActive: boolean,
+): { main: Rect; secondary: Rect | null } {
+  if (secondaryActive && _layout === "pip")
+    return {
+      main: { x: 0, y: 0, width: 1, height: 1 },
+      secondary: { x: 0.61, y: 0.04, width: 0.35, height: 0.35 },
+    };
+  if (secondaryActive && _layout === "side-by-side")
+    return {
+      main: { x: 0, y: 0, width: 0.5, height: 1 },
+      secondary: { x: 0.5, y: 0, width: 0.5, height: 1 },
+    };
+  return secondaryActive
+    ? {
+        main: { x: 0, y: 0.5, width: 1, height: 0.5 },
+        secondary: { x: 0, y: 0, width: 1, height: 0.5 },
+      }
+    : { main: { x: 0, y: 0, width: 1, height: 1 }, secondary: null };
 }
 
-export function mediaKind(role: MediaRole): 'audio' | 'video' { return role === 'main' || role === 'secondary' ? 'video' : 'audio'; }
+export function mediaKind(role: MediaRole): "audio" | "video" {
+  return role === "main" || role === "secondary" ? "video" : "audio";
+}

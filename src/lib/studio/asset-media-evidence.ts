@@ -45,10 +45,12 @@ async function inspectVideo(source: Buffer | string): Promise<Omit<AssetMediaEvi
   }
 }
 
-async function inspectAudio(source: Buffer | string): Promise<Omit<AssetMediaEvidence, "checksum">> {
-  const { ALL_FORMATS, BlobSource, FilePathSource, Input } = await import("mediabunny-editor");
+async function inspectAudio(source: Buffer | string, mimeType: string): Promise<Omit<AssetMediaEvidence, "checksum">> {
+  const { ALL_FORMATS, BlobSource, FilePathSource, Input, MP3, WAVE } = await import("mediabunny-editor");
   const media = new Input({ formats: ALL_FORMATS, source: typeof source === 'string' ? new FilePathSource(source) : new BlobSource(new Blob([new Uint8Array(source)])) });
   try {
+    const format = await media.getFormat();
+    if ((['audio/mpeg', 'audio/mp3'].includes(mimeType) && format !== MP3) || (['audio/wav', 'audio/x-wav', 'audio/wave'].includes(mimeType) && format !== WAVE)) throw new Error('ASSET_AUDIO_FORMAT_UNSUPPORTED');
     const track = await media.getPrimaryAudioTrack();
     const duration = track ? await track.computeDuration() : 0;
     if (!track || !Number.isFinite(duration) || duration <= 0 || await media.getPrimaryVideoTrack()) throw new Error('ASSET_AUDIO_DECODE_FAILED');
@@ -60,7 +62,7 @@ async function inspectDecodedMedia(assetType: IngestedAssetType, mimeType: strin
   assertMediaMimeType(assetType, mimeType);
   if (assetType === "image") return inspectImage(source);
   if (assetType === "video") return inspectVideo(source);
-  if (assetType === "audio") return inspectAudio(source);
+  if (assetType === "audio") return inspectAudio(source, mimeType);
   return {};
 }
 

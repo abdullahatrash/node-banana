@@ -1,0 +1,32 @@
+[
+  {
+    "layout": "stacked",
+    "time": 6.5,
+    "meanAbsoluteRgbError": 2.3270318930041154
+  },
+  {
+    "layout": "stacked",
+    "time": 22,
+    "meanAbsoluteRgbError": 1.8225308641975309
+  },
+  {
+    "layout": "pip",
+    "time": 6.5,
+    "meanAbsoluteRgbError": 3.4476337448559673
+  },
+  {
+    "layout": "pip",
+    "time": 22,
+    "meanAbsoluteRgbError": 1.8225308641975309
+  },
+  {
+    "layout": "side-by-side",
+    "time": 6.5,
+    "meanAbsoluteRgbError": 8.649202674897118
+  },
+  {
+    "layout": "side-by-side",
+    "time": 22,
+    "meanAbsoluteRgbError": 1.8225308641975309
+  }
+]

@@ -1,0 +1,31 @@
+{
+  "results": [
+    {
+      "name": "music.wav",
+      "elapsedMs": 850
+    },
+    {
+      "name": "music-44100.wav",
+      "elapsedMs": 845
+    },
+    {
+      "name": "music-44100.mp3",
+      "elapsedMs": 845
+    },
+    {
+      "name": "music-vbr.mp3",
+      "elapsedMs": 847
+    },
+    {
+      "name": "music-mono.mp3",
+      "elapsedMs": 848
+    },
+    {
+      "name": "music-untagged.mp3",
+      "elapsedMs": 844
+    }
+  ],
+  "repeatedEdits": 100,
+  "errors": [],
+  "browser": "152.0.7977.76"
+}
