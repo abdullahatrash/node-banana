@@ -16,7 +16,7 @@ onmessage = async ({ data }) => {
     const { files, config } = data;
     const width=1080,height=1920,fps=30,rate=48000,block=rate/fps;
     if (!await canEncodeVideo('avc',{width,height,bitrate:6_000_000}) || !await canEncodeAudio('aac',{sampleRate:rate,numberOfChannels:2,bitrate:128_000})) throw new Error('This browser cannot encode the required H.264 + AAC MP4.');
-    const font = new FontFace('ReactionArabic', await (await fetch('/font.ttf')).arrayBuffer());
+    const font = new FontFace('ReactionArabic', await (await fetch('/font.ttf')).arrayBuffer(), { weight:'100 900' });
     await font.load(); self.fonts.add(font);
     async function open(file) {
       if (!file) return null;
@@ -55,7 +55,7 @@ onmessage = async ({ data }) => {
     }
     const canvas=new OffscreenCanvas(width,height),ctx=canvas.getContext('2d',{alpha:false});
     // Shape text once, then reuse exactly the same raster for every frame.
-    const textLayout=overlayLayout(ctx,config.text,config.textPosition);
+    const textLayout=overlayLayout(ctx,config.text,config.textPosition,config.textStyle);
     const textCanvas=new OffscreenCanvas(textLayout.width,textLayout.height),textCtx=textCanvas.getContext('2d');
     paintOverlay(textCtx,config.text,textLayout);
     const root=await navigator.storage.getDirectory();

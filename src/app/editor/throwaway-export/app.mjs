@@ -5,24 +5,26 @@ let frameTimes=[],longTasks=[],pingTimes=[],heapPeak=0,lastFrame=performance.now
 window.prototypeResults=null;
 const percentile=(values,p)=>values.length?[...values].sort((a,b)=>a-b)[Math.min(values.length-1,Math.floor(values.length*p))]:null;
 let textPosition={x:0.5,y:0.92};let textEditing=false;let overlayDrag=null;let overlayState;
-const config=()=>({...Object.fromEntries(['layout','duration','reactionStart','text','mainGain','reactionGain','musicGain','voiceGain'].map(key=>[key,['layout','text'].includes(key)?$(key).value:Number($(key).value)])),textPosition:{...textPosition}});
+const textStyle=()=>({fontSize:Number($('textSize').value),fontWeight:Number($('textWeight').value),align:$('textAlign').value,color:$('textColor').value,backgroundColor:$('textBackground').value,backgroundOpacity:Number($('textOpacity').value)/100});
+const config=()=>({...Object.fromEntries(['layout','duration','reactionStart','text','mainGain','reactionGain','musicGain','voiceGain'].map(key=>[key,['layout','text'].includes(key)?$(key).value:Number($(key).value)])),textPosition:{...textPosition},textStyle:textStyle()});
 function renderOverlay(){
   const canvas=$('captionCanvas'),context=canvas.getContext('2d');
-  overlayState=overlayLayout(context,$('text').value,textPosition);
+  overlayState=overlayLayout(context,$('text').value,textPosition,textStyle());
   textPosition={x:overlayState.x/1080,y:overlayState.y/1920};
   const scale=$('preview').clientWidth/1080;
   Object.assign($('caption').style,{left:`${textPosition.x*100}%`,top:`${textPosition.y*100}%`,width:`${overlayState.width*scale}px`,height:`${overlayState.height*scale}px`});
-  Object.assign($('captionEditor').style,{font:`${overlayState.fontSize*scale}px ReactionArabic`,lineHeight:`${overlayState.height*scale}px`,padding:`0 ${32*scale}px`});
+  const background=overlayState.backgroundColor;
+  const rgb=[1,3,5].map(start=>parseInt(background.slice(start,start+2),16)).join(',');
+  Object.assign($('captionEditor').style,{font:`${overlayState.fontWeight} ${overlayState.fontSize*scale}px ReactionArabic`,lineHeight:`${overlayState.lineHeight*scale}px`,padding:`${24*scale}px ${32*scale}px`,textAlign:overlayState.align,color:overlayState.color,backgroundColor:`rgba(${rgb},${overlayState.backgroundOpacity})`});
   canvas.width=overlayState.width;canvas.height=overlayState.height;
   if($('text').value)paintOverlay(context,$('text').value,overlayState);
-  if(!textEditing)$('captionEditor').textContent=$('text').value;
+  if(!textEditing)$('captionEditor').value=$('text').value;
+  $('opacityValue').textContent=`${$('textOpacity').value}%`;
   $('caption').setAttribute('aria-label',`Text overlay: ${$('text').value||'empty'}. Drag to move; Enter to edit; arrow keys to move.`);
 }
 function startTextEdit(){
   pause();textEditing=true;$('caption').classList.add('editing','selected');
-  $('captionEditor').textContent=$('text').value;$('captionEditor').focus();
-  const range=document.createRange();range.selectNodeContents($('captionEditor'));
-  const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);
+  $('captionEditor').value=$('text').value;$('captionEditor').focus();$('captionEditor').select();
 }
 function finishTextEdit(){
   textEditing=false;$('caption').classList.remove('editing');renderOverlay();
@@ -50,20 +52,15 @@ $('caption').onkeydown=e=>{
   const steps={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
   if(steps[e.key]){e.preventDefault();const [x,y]=steps[e.key],step=e.shiftKey?20:4;textPosition={x:textPosition.x+x*step/1080,y:textPosition.y+y*step/1920};renderOverlay();}
 };
-$('captionEditor').oninput=()=>{$('text').value=$('captionEditor').textContent.replace(/[\r\n]+/g,' ');renderOverlay();};
+$('captionEditor').oninput=()=>{$('text').value=$('captionEditor').value;renderOverlay();};
 $('captionEditor').onkeydown=e=>{
   if(e.isComposing)return;
-  if(e.key==='Enter'||e.key==='Escape'){e.preventDefault();e.stopPropagation();$('captionEditor').blur();$('caption').focus();}
+  if(e.key==='Escape'||e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();e.stopPropagation();$('captionEditor').blur();$('caption').focus();}
 };
 $('captionEditor').onblur=finishTextEdit;
-$('captionEditor').onpaste=e=>{
-  e.preventDefault();const value=e.clipboardData.getData('text/plain').replace(/[\r\n]+/g,' ');
-  const selection=window.getSelection();if(!selection.rangeCount)return;
-  const range=selection.getRangeAt(0);range.deleteContents();const node=document.createTextNode(value);range.insertNode(node);range.setStartAfter(node);range.collapse(true);selection.removeAllRanges();selection.addRange(range);
-  $('captionEditor').dispatchEvent(new Event('input'));
-};
 $('text').addEventListener('input',renderOverlay);
-document.fonts.load('76px ReactionArabic').then(renderOverlay);new ResizeObserver(renderOverlay).observe($('preview'));
+for(const id of ['textSize','textWeight','textAlign','textColor','textBackground','textOpacity'])$(id).addEventListener('input',renderOverlay);
+Promise.all([100,300,400,700].map(weight=>document.fonts.load(`${weight} 76px ReactionArabic`))).then(renderOverlay);new ResizeObserver(renderOverlay).observe($('preview'));
 if(PerformanceObserver.supportedEntryTypes.includes('longtask'))new PerformanceObserver(list=>{if(running)longTasks.push(...list.getEntries().map(e=>e.duration));}).observe({type:'longtask'});
 function sync(){
   const c=config(),t=$('main').currentTime;
