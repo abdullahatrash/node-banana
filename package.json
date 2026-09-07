@@ -16,6 +16,7 @@
     "mcp:stdio": "tsx scripts/mcp-stdio.ts",
     "prototype:capabilities": "tsx prototypes/throwaway-capability-catalog-v1/cli.ts",
     "prototype:runtime-boundary": "tsx prototypes/throwaway-runtime-boundary-v1/cli.ts",
+    "prototype:reaction-export": "node src/app/editor/throwaway-export/server.mjs",
     "proxy": "microfrontends proxy --local-apps node-banana",
     "build": "next build --webpack",
     "start": "next start",
