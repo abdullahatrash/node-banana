@@ -22,9 +22,19 @@ describe('Workspace Video Editor drafts', () => {
   const response = await POST(request({ composition, idempotencyKey: 'save-main-001' }));
   expect(response.status).toBe(200);
   const saved = (await response.json()).record;
-  expect(saved.composition).toEqual(composition);
+  expect(saved.composition).toMatchObject(composition);
   mocks.list.mockResolvedValue([{ id: saved.id, revision: 1, kind: 'content_piece', payload: { videoEditor: composition } }]);
   const reopened = await GET(new NextRequest('http://localhost/api/video-editor'));
   expect((await reopened.json()).records[0]).toMatchObject({ id: saved.id, composition });
  });
+});
+
+it('saves a timed Secondary video and rejects a segment longer than 15 seconds', async () => {
+ const secondary = { ...composition.main, assetId: 'secondary', trimStart: 0, trimEnd: 2, start: 2 };
+ const next = { ...composition, secondary, layout: 'stacked' };
+ const response = await POST(request({ composition: next, idempotencyKey: 'two-video-001' }));
+ expect(response.status).toBe(200);
+ expect((await response.json()).record.composition.secondary).toEqual(secondary);
+ const invalid = await POST(request({ composition: { ...next, secondary: { ...secondary, trimEnd: 16 } }, idempotencyKey: 'two-video-002' }));
+ expect(invalid.status).toBe(400);
 });

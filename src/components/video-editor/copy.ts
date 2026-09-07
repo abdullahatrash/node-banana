@@ -1,5 +1,5 @@
 const en = {
- upload: 'Upload video or audio', uploading: 'Uploading…', processing: 'Checking media…', title: 'Video editor', untitled: 'Untitled video', back: 'Back to studio', media: 'Workspace media', main: 'Main video',
+ upload: 'Upload video or audio', uploading: 'Uploading…', processing: 'Checking media…', secondary: 'Secondary video', position: 'Start on timeline', remove: 'Remove', addTo: 'Add media to', title: 'Video editor', untitled: 'Untitled video', back: 'Back to studio', media: 'Workspace media', main: 'Main video',
  save: 'Save', saving: 'Saving…', saved: 'Saved', unsaved: 'Unsaved changes', open: 'Open a saved video', newVideo: 'New video',
  export: 'Export video', download: 'Download video', cancel: 'Cancel', exporting: 'Preparing video…', cancelled: 'Export cancelled',
  start: 'Trim start', end: 'Trim end', play: 'Play', pause: 'Pause', seek: 'Timeline', more: 'Load more', name: 'Video name',
@@ -7,7 +7,7 @@ const en = {
  errors: { EDITOR_UPLOAD_FORMAT: 'Use MP4, WebM, MOV, MP3 or WAV, up to 500 MB. Workspace limits also apply.', EDITOR_UPLOAD_FAILED: 'Upload failed. Choose the file again to retry.', WORKSPACE_REQUIRED: 'Choose a Workspace in the app first.', EDITOR_ACCESS_OR_QUOTA: 'Workspace access or storage limit prevented this action.', EDITOR_SAVE_CONFLICT: 'This video changed elsewhere. Your edits are still here. Reload the saved version or save a copy.', EDITOR_MEDIA_LIMIT: 'Use video up to 1080p and a valid trim range.', EDITOR_MEDIA_UNAVAILABLE: 'This media is unavailable. Choose another file.', EDITOR_COMPOSITION_INVALID: 'Check the clip timing and video title.', EDITOR_REQUEST_FAILED: 'The request failed. Your edits are still here. Please retry.', EDITOR_EXPORT_FAILED: 'Export failed. Check the selected media and retry.', EDITOR_UNSUPPORTED: 'This browser cannot export this video. Try a current Chrome browser.', EDITOR_STORAGE_FULL: 'Your device has insufficient temporary storage for this export.' },
 };
 const ar: typeof en = {
- upload: 'رفع فيديو أو صوت', uploading: 'جارٍ الرفع…', processing: 'جارٍ فحص الوسائط…', title: 'محرر الفيديو', untitled: 'فيديو جديد', back: 'العودة للاستوديو', media: 'وسائط مساحة العمل', main: 'الفيديو الأساسي',
+ upload: 'رفع فيديو أو صوت', uploading: 'جارٍ الرفع…', processing: 'جارٍ فحص الوسائط…', secondary: 'الفيديو الثانوي', position: 'البداية على الخط الزمني', remove: 'إزالة', addTo: 'إضافة الوسائط إلى', title: 'محرر الفيديو', untitled: 'فيديو جديد', back: 'العودة للاستوديو', media: 'وسائط مساحة العمل', main: 'الفيديو الأساسي',
  save: 'حفظ', saving: 'جارٍ الحفظ…', saved: 'تم الحفظ', unsaved: 'تغييرات غير محفوظة', open: 'فتح فيديو محفوظ', newVideo: 'فيديو جديد',
  export: 'تصدير الفيديو', download: 'تنزيل الفيديو', cancel: 'إلغاء', exporting: 'جارٍ تجهيز الفيديو…', cancelled: 'تم إلغاء التصدير',
  start: 'بداية المقطع', end: 'نهاية المقطع', play: 'تشغيل', pause: 'إيقاف', seek: 'الخط الزمني', more: 'تحميل المزيد', name: 'اسم الفيديو',

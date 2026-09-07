@@ -19,6 +19,17 @@ try {
  await page.reload();
  await page.getByLabel('Trim end', { exact: true }).waitFor();
  if (await page.getByLabel('Trim end', { exact: true }).inputValue() !== '5') throw Error('Trim did not survive reopen');
+ await page.getByLabel('Add media to').selectOption('secondary');
+ await page.getByRole('button', { name: /AI influencer/ }).click();
+ await page.getByLabel('Trim end', { exact: true }).fill('2');
+ await page.getByLabel('Start on timeline').fill('2');
+ await page.getByRole('button', { name: 'Save', exact: true }).click();
+ await page.getByText('Saved', { exact: true }).waitFor();
+ await page.getByLabel('Timeline', { exact: true }).fill('3');
+ const secondary = page.getByLabel('Secondary video', { exact: true });
+ if (!await secondary.isVisible()) throw Error('Secondary video absent during segment');
+ await page.getByLabel('Timeline', { exact: true }).fill('4.5');
+ if (await secondary.isVisible()) throw Error('Secondary video did not disappear');
  const started = Date.now();
  await page.getByRole('button', { name: 'Export video', exact: true }).click();
  await page.getByRole('link', { name: 'Download video' }).waitFor({ timeout: 120000 });
