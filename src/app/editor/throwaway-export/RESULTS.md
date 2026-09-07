@@ -25,13 +25,13 @@ Cancellation completed in 68 ms in one observed run, leaving no temporary output
 - FFprobe confirms H.264 1080×1920 at 30 fps, 1,800 video frames, and stereo 48 kHz AAC for all layouts.
 - Frame extraction and visual inspection confirmed connected Arabic text, both videos in the overlay and stacked composition, and full-frame main footage after the reaction ends. This checks one Arabic sentence, not typography or bidi qualification.
 - Frequency analysis at 1, 3, 8, 15, and 25 seconds confirms the main/music tones persist, voiceover is present in its expected interior windows, and reaction audio is present during its expected interior windows. No digital clipping was observed for these fixture gains. This does not prove sample-exact onset alignment or speech quality.
-- **Unresolved correctness gap:** video duration is exactly 60.000 seconds, but AAC and container duration are 60.074667 seconds (2,816 AAC packets). The installed library exposes no public encoder priming/padding or MP4 edit-list control. The subsequent five-second marker diagnostic below identifies a leading delay as well. Do not hide the gap by shortening the input or relabeling the output duration. Exact duration and A/V alignment must be resolved before release.
+- **Unresolved correctness gap:** video duration is exactly 60.000 seconds, but AAC and container duration are 60.074667 seconds (2,816 AAC packets). The installed library exposes no public encoder priming/padding or MP4 edit-list control. The subsequent five-second marker diagnostic below identifies a leading delay as well. Do not hide the gap by shortening the input or relabeling the output duration. The user subsequently accepted the measured 44 ms delay for now and deferred its correction; the timing defect remains documented, without being a current release blocker.
 
 ## Decision supported by this evidence
 
 Continue evaluating browser export before funding a render-worker service. The measured path consumed no server rendering or AI-provider work. These observations do not establish zero operating cost: Workspace storage, transfers, application hosting, support, and future generation remain separate costs.
 
-Production adoption remains open until we qualify representative lower-spec laptops and browser versions with real footage, handle common input formats reliably, verify sustained memory behavior and interactive preview/scrubbing, and resolve AAC duration/alignment. Common WAV sample rates now pass the checks below. No production performance threshold or export architecture was accepted by this experiment.
+Production adoption remains open until we qualify representative lower-spec laptops and browser versions with real footage, handle common input formats reliably, verify sustained memory behavior and interactive preview/scrubbing. AAC timing correction is deferred by user decision. Common WAV sample rates now pass the checks below. No production performance threshold or export architecture was accepted by this experiment.
 
 ## Subsequent overlay interaction check
 
