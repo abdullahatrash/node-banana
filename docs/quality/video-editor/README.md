@@ -2,6 +2,8 @@
 
 The nine-ticket implementation is ready for local review in one unmerged PR. This is a development validation report, not production launch approval.
 
+See [local-review improvements](local-review-improvements.md) for the subsequent cuts, typefaces, viewport changes, and updated validation.
+
 ## Evidence
 
 - Root suite before review fixes: **661 test files passed**, 9 skipped; **3,983 tests passed**, 18 skipped. Run: `pnpm test:run --maxWorkers=2`.

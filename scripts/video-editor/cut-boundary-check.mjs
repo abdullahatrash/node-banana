@@ -35,16 +35,14 @@ try {
   );
   await page.evaluate(() => {
     window.cutSeeks = [];
-    document
-      .querySelector("video")
-      .addEventListener("seeking", () =>
-        window.cutSeeks.push({
-          time: Number(
-            document.querySelector('input[aria-label="Timeline"]').value,
-          ),
-          source: document.querySelector("video").currentTime,
-        }),
-      );
+    document.querySelector("video").addEventListener("seeking", () =>
+      window.cutSeeks.push({
+        time: Number(
+          document.querySelector('input[aria-label="Timeline"]').value,
+        ),
+        source: document.querySelector("video").currentTime,
+      }),
+    );
   });
   await page.getByRole("button", { name: "Play", exact: true }).click();
   await page.waitForFunction(

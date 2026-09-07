@@ -1,0 +1,143 @@
+{
+  "playback": {
+    "time": 3.66666666666667,
+    "source": 6.650199
+  },
+  "fonts": [
+    {
+      "font": "sans",
+      "url": "http://127.0.0.1:3048/editor?lang=en&piece=f19f3b81-334d-4d0a-993d-d9b0acd465b8"
+    },
+    {
+      "font": "cairo",
+      "url": "http://127.0.0.1:3048/editor?lang=en&piece=f19f3b81-334d-4d0a-993d-d9b0acd465b8"
+    },
+    {
+      "font": "naskh",
+      "url": "http://127.0.0.1:3048/editor?lang=en&piece=f19f3b81-334d-4d0a-993d-d9b0acd465b8"
+    }
+  ],
+  "viewports": [
+    {
+      "width": 1440,
+      "height": 900,
+      "timelineBottom": 858,
+      "canvasBottom": 591,
+      "canvasRight": 839.09375,
+      "canvasLeft": 580.90625,
+      "timelineRight": 1428,
+      "timelineLeft": 12,
+      "canvasWidth": 258.1875,
+      "canvasHeight": 459,
+      "timelineTop": 641,
+      "scrollHeight": 900,
+      "scrollWidth": 1440
+    },
+    {
+      "width": 1280,
+      "height": 720,
+      "timelineBottom": 678,
+      "canvasBottom": 411,
+      "canvasRight": 708.46875,
+      "canvasLeft": 551.53125,
+      "timelineRight": 1268,
+      "timelineLeft": 12,
+      "canvasWidth": 156.9375,
+      "canvasHeight": 279,
+      "timelineTop": 461,
+      "scrollHeight": 720,
+      "scrollWidth": 1280
+    },
+    {
+      "width": 1024,
+      "height": 600,
+      "timelineBottom": 558,
+      "canvasBottom": 367,
+      "canvasRight": 574.28125,
+      "canvasLeft": 429.71875,
+      "timelineRight": 1012,
+      "timelineLeft": 12,
+      "canvasWidth": 144.5625,
+      "canvasHeight": 257,
+      "timelineTop": 401,
+      "scrollHeight": 600,
+      "scrollWidth": 1024
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "timelineBottom": 804,
+      "canvasBottom": 549,
+      "canvasRight": 307.5,
+      "canvasLeft": 82.5,
+      "timelineRight": 384,
+      "timelineLeft": 6,
+      "canvasWidth": 225,
+      "canvasHeight": 400,
+      "timelineTop": 599,
+      "scrollHeight": 844,
+      "scrollWidth": 390
+    },
+    {
+      "width": 360,
+      "height": 640,
+      "timelineBottom": 600,
+      "canvasBottom": 345,
+      "canvasRight": 234.84375,
+      "canvasLeft": 125.15625,
+      "timelineRight": 354,
+      "timelineLeft": 6,
+      "canvasWidth": 109.6875,
+      "canvasHeight": 195,
+      "timelineTop": 395,
+      "scrollHeight": 640,
+      "scrollWidth": 360
+    },
+    {
+      "width": 844,
+      "height": 390,
+      "timelineBottom": 236,
+      "canvasBottom": 320,
+      "canvasRight": 232.859375,
+      "canvasLeft": 111.921875,
+      "timelineRight": 838,
+      "timelineLeft": 346.796875,
+      "canvasWidth": 120.9375,
+      "canvasHeight": 215,
+      "timelineTop": 79,
+      "scrollHeight": 390,
+      "scrollWidth": 844
+    },
+    {
+      "width": 1024,
+      "height": 400,
+      "timelineBottom": 236,
+      "canvasBottom": 330,
+      "canvasRight": 271.671875,
+      "canvasLeft": 145.109375,
+      "timelineRight": 1018,
+      "timelineLeft": 418.796875,
+      "canvasWidth": 126.5625,
+      "canvasHeight": 225,
+      "timelineTop": 79,
+      "scrollHeight": 400,
+      "scrollWidth": 1024
+    },
+    {
+      "width": 1280,
+      "height": 400,
+      "timelineBottom": 236,
+      "canvasBottom": 330,
+      "canvasRight": 322.875,
+      "canvasLeft": 196.3125,
+      "timelineRight": 1274,
+      "timelineLeft": 521.1875,
+      "canvasWidth": 126.5625,
+      "canvasHeight": 225,
+      "timelineTop": 79,
+      "scrollHeight": 400,
+      "scrollWidth": 1280
+    }
+  ],
+  "errors": []
+}
