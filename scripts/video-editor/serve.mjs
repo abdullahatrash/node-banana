@@ -208,7 +208,7 @@ const server = createServer(async (req, res) => {
       res.writeHead(204).end();
       return;
     }
-    if (path === "/") {
+    if (path === "/" || path === "/editor" || path.startsWith("/editor/")) {
       res.writeHead(200, { "content-type": "text/html" });
       return res.end(
         '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Video editor · local acceptance</title><link rel="stylesheet" href="/app.css"><style>body{margin:0}</style><div id="root"></div><script type="module" src="/app.js"></script>',

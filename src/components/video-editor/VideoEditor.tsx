@@ -18,6 +18,7 @@ import {
   exportComposition,
   type ExportResult,
 } from "@/lib/video-editor/export-client";
+import { MediaThumbnail } from "./MediaThumbnail";
 import { TextControls } from "./TextControls";
 import { Preview, type PreviewHandle } from "./Preview";
 import { editorCopy, errorCopy } from "./copy";
@@ -72,27 +73,16 @@ export function VideoEditor({
         ),
       ];
       const resolved = await Promise.allSettled(
-        items.map(async (id) => {
-          const { asset } = await api.request(
-            `/api/studio/assets/${encodeURIComponent(id)}`,
-          );
-          return api.resolveMedia({
-            id,
-            name: asset.metadata?.originalFileName || id,
-            type: asset.type,
-            durationSeconds: asset.durationSeconds,
-            width: asset.width,
-            height: asset.height,
-          });
-        }),
+        items.map((id) => api.resolveAsset(id)),
       );
-      setMedia(
-        Object.fromEntries(
+      setMedia((existing) => ({
+        ...(retainUndo ? existing : {}),
+        ...Object.fromEntries(
           resolved.flatMap((item) =>
             item.status === "fulfilled" ? [[item.value.id, item.value]] : [],
           ),
         ),
-      );
+      }));
       setBusy(false);
       if (resolved.some((item) => item.status === "rejected"))
         setError(copy.errors.EDITOR_MEDIA_UNAVAILABLE);
@@ -112,17 +102,7 @@ export function VideoEditor({
         if (record) await open(record);
         else if (initialId) setError(copy.errors.EDITOR_NOT_FOUND);
         else if (initialAsset) {
-          const { asset } = await api.request(
-            `/api/studio/assets/${encodeURIComponent(initialAsset)}`,
-          );
-          const item = await api.resolveMedia({
-            id: initialAsset,
-            name: asset.metadata?.originalFileName || initialAsset,
-            type: asset.type,
-            durationSeconds: asset.durationSeconds,
-            width: asset.width,
-            height: asset.height,
-          });
+          const item = await api.resolveAsset(initialAsset);
           if (
             item.type !== "video" ||
             Math.max(item.width, item.height) > 1920 ||
@@ -400,7 +380,10 @@ export function VideoEditor({
                 disabled={busy || item.type !== mediaKind(selectedRole)}
                 onClick={() => void select(item)}
               >
-                {item.name}
+                {item.type === "video" && (
+                  <MediaThumbnail id={item.id} api={api} />
+                )}
+                <span>{item.name}</span>
                 <small>{item.durationSeconds}s</small>
               </button>
             ))}
@@ -553,6 +536,9 @@ export function VideoEditor({
                     width: `${(100 * (composition[role]!.trimEnd - composition[role]!.trimStart)) / (duration(composition) || 1)}%`,
                   }}
                 >
+                  {mediaKind(role) === "video" && (
+                    <MediaThumbnail id={composition[role]!.assetId} api={api} />
+                  )}
                   {media[composition[role]!.assetId]?.name}
                 </button>
               )}

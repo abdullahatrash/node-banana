@@ -13,6 +13,41 @@ export class EditorApiError extends Error {
     super(code);
   }
 }
+type ProbeResult = {
+  duration: number;
+  width: number;
+  height: number;
+  thumbnail?: Blob;
+};
+function probe(
+  url: string,
+  type: "audio" | "video",
+  thumbnail = false,
+): Promise<ProbeResult> {
+  if (!globalThis.Worker) throw new EditorApiError("EDITOR_UNSUPPORTED");
+  return new Promise<ProbeResult>((resolve, reject) => {
+    const worker = new Worker(new URL("./probe.worker.ts", import.meta.url), {
+      type: "module",
+    });
+    const timeout = setTimeout(
+      () => finish(new EditorApiError("EDITOR_MEDIA_UNAVAILABLE")),
+      30_000,
+    );
+    function finish(error?: Error, value?: ProbeResult) {
+      clearTimeout(timeout);
+      worker.terminate();
+      if (error) reject(error);
+      else resolve(value!);
+    }
+    worker.onerror = () =>
+      finish(new EditorApiError("EDITOR_MEDIA_UNAVAILABLE"));
+    worker.onmessage = ({ data }) =>
+      data.error
+        ? finish(new EditorApiError(data.error))
+        : finish(undefined, data);
+    worker.postMessage({ url, type, thumbnail });
+  });
+}
 export function createEditorClient(workspace: string | null) {
   async function editorRequest(
     path: string,
@@ -82,36 +117,7 @@ export function createEditorClient(workspace: string | null) {
     );
     if (item.type !== "video" && item.type !== "audio")
       throw new EditorApiError("EDITOR_MEDIA_UNAVAILABLE");
-    if (!globalThis.Worker) throw new EditorApiError("EDITOR_UNSUPPORTED");
-    const evidence = await new Promise<{
-      duration: number;
-      width: number;
-      height: number;
-    }>((resolve, reject) => {
-      const worker = new Worker(new URL("./probe.worker.ts", import.meta.url), {
-        type: "module",
-      });
-      const timeout = setTimeout(
-        () => finish(new EditorApiError("EDITOR_MEDIA_UNAVAILABLE")),
-        30_000,
-      );
-      function finish(
-        error?: Error,
-        value?: { duration: number; width: number; height: number },
-      ) {
-        clearTimeout(timeout);
-        worker.terminate();
-        if (error) reject(error);
-        else resolve(value!);
-      }
-      worker.onerror = () =>
-        finish(new EditorApiError("EDITOR_MEDIA_UNAVAILABLE"));
-      worker.onmessage = ({ data }) =>
-        data.error
-          ? finish(new EditorApiError(data.error))
-          : finish(undefined, data);
-      worker.postMessage({ url: downloadUrl, type: item.type });
-    });
+    const evidence = await probe(downloadUrl, item.type);
     return {
       id: item.id,
       name: item.name,
@@ -119,6 +125,44 @@ export function createEditorClient(workspace: string | null) {
       ...evidence,
       url: downloadUrl,
     };
+  }
+
+  async function resolveAsset(id: string): Promise<EditorMedia> {
+    const { asset } = await editorRequest(
+      `/api/studio/assets/${encodeURIComponent(id)}`,
+    );
+    return resolveMedia({
+      id,
+      name: asset.metadata?.originalFileName || id,
+      type: asset.type,
+      durationSeconds: asset.durationSeconds,
+      width: asset.width,
+      height: asset.height,
+    });
+  }
+
+  let thumbnailQueue = Promise.resolve();
+  const thumbnails = new Map<string, Promise<Blob>>();
+  function thumbnail(id: string): Promise<Blob> {
+    const existing = thumbnails.get(id);
+    if (existing) return existing;
+    const task = thumbnailQueue.then(async () => {
+      const { downloadUrl } = await editorRequest(
+        `/api/studio/assets/${encodeURIComponent(id)}/download`,
+      );
+      const result = await probe(downloadUrl, "video", true);
+      if (!result.thumbnail)
+        throw new EditorApiError("EDITOR_MEDIA_UNAVAILABLE");
+      return result.thumbnail;
+    });
+    thumbnailQueue = task.then(
+      () => undefined,
+      () => undefined,
+    );
+    thumbnails.set(id, task);
+    if (thumbnails.size > 32)
+      thumbnails.delete(thumbnails.keys().next().value!);
+    return task;
   }
 
   /** Upload uses the same reservation, quota and server inspection path as Workspace media. */
@@ -180,6 +224,8 @@ export function createEditorClient(workspace: string | null) {
     saveComposition,
     listMedia,
     resolveMedia,
+    resolveAsset,
+    thumbnail,
     uploadMedia,
   };
 }

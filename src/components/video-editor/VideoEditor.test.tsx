@@ -8,6 +8,13 @@ vi.mock("@/lib/video-editor/export-client", () => ({
 }));
 beforeEach(() => {
   vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.stubGlobal(
     "Worker",
     class {
       onmessage?: (event: { data: unknown }) => void;
@@ -205,4 +212,95 @@ it("retries an uncertain save with the same key and stays in its original Worksp
   expect(writes).toHaveLength(2);
   expect(writes[0][1]?.body).toBe(writes[1][1]?.body);
   expect(new Headers(writes[1][1]?.headers).get("x-workspace-id")).toBe("ws");
+});
+
+it("saves a whitespace-normalized title once and gives asset links a reopenable draft URL", async () => {
+  window.history.replaceState(null, "", "/editor/main");
+  render(<VideoEditor locale="en" />);
+  fireEvent.click(await screen.findByRole("button", { name: /Phone footage/ }));
+  await screen.findByLabelText("Trim end");
+  fireEvent.change(screen.getByLabelText("Video name"), {
+    target: { value: "Campaign " },
+  });
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  let writes = 0;
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    if (url === "/api/video-editor" && init?.method === "POST" && ++writes > 1)
+      throw new Error("Unexpected repeated save");
+    return original(url, init);
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByText("Saved");
+  expect(writes).toBe(1);
+  expect(window.location.pathname).toBe("/editor");
+  expect(new URLSearchParams(window.location.search).get("piece")).toBe(
+    "piece",
+  );
+});
+
+it("keeps the old media playable when undoing a conflict reload with a different source", async () => {
+  render(<VideoEditor locale="en" />);
+  fireEvent.click(await screen.findByRole("button", { name: /Phone footage/ }));
+  fireEvent.change(await screen.findByLabelText("Trim end"), {
+    target: { value: "5" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByText("Saved");
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    if (String(url).startsWith("/api/video-editor"))
+      return init?.method === "POST"
+        ? Response.json(
+            { success: false, code: "EDITOR_SAVE_CONFLICT" },
+            { status: 409 },
+          )
+        : Response.json({
+            success: true,
+            records: [
+              {
+                id: "piece",
+                revision: 2,
+                composition: {
+                  version: 1,
+                  title: "Remote edit",
+                  main: {
+                    assetId: "other",
+                    trimStart: 0,
+                    trimEnd: 8,
+                    start: 0,
+                    gain: 1,
+                    muted: false,
+                  },
+                },
+              },
+            ],
+          });
+    if (url === "/api/studio/assets/other")
+      return Response.json({
+        success: true,
+        asset: {
+          type: "video",
+          durationSeconds: 10,
+          width: 1080,
+          height: 1920,
+        },
+      });
+    return original(url, init);
+  });
+  fireEvent.change(screen.getByLabelText("Trim end"), {
+    target: { value: "4" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByRole("alert");
+  fireEvent.click(screen.getByRole("button", { name: "Reload saved version" }));
+  await waitFor(() => expect(screen.getByLabelText("Trim end")).toHaveValue(8));
+  await waitFor(() => expect(screen.getByLabelText("Trim end")).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(screen.getByLabelText("Trim end")).toHaveValue(4);
+  expect(screen.getByLabelText("Main video")).toHaveAttribute(
+    "src",
+    "https://media.example/main.mp4",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Export video" }));
+  await screen.findByRole("link", { name: "Download video" });
 });

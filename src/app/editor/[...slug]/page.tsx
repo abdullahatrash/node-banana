@@ -2,7 +2,13 @@
 
 import dynamic from "next/dynamic";
 import { builtInEditorEnabled } from "@/lib/video-editor/enabled";
-const VideoEditor = dynamic(() => import("@/components/video-editor/VideoEditor").then(module => module.VideoEditor), { ssr: false });
+const VideoEditor = dynamic(
+  () =>
+    import("@/components/video-editor/VideoEditor").then(
+      (module) => module.VideoEditor,
+    ),
+  { ssr: false },
+);
 
 import Link from "next/link";
 import { useLocale, useTranslations } from "next-intl";
@@ -11,17 +17,33 @@ import { getDirection } from "@/i18n/config";
 export default function EditorCatchAll() {
   const t = useTranslations("editor");
   const locale = useLocale();
-  if (builtInEditorEnabled) return <VideoEditor locale={locale === "ar" ? "ar" : "en"} initialAsset={typeof window === "undefined" ? undefined : decodeURIComponent(window.location.pathname.split("/")[2] || "")} />;
+  if (builtInEditorEnabled)
+    return (
+      <VideoEditor
+        locale={locale === "ar" ? "ar" : "en"}
+        initialId={
+          typeof window === "undefined"
+            ? undefined
+            : new URLSearchParams(window.location.search).get("piece") ||
+              undefined
+        }
+        initialAsset={
+          typeof window === "undefined"
+            ? undefined
+            : decodeURIComponent(window.location.pathname.split("/")[2] || "")
+        }
+      />
+    );
   return (
-    <div lang={locale} dir={getDirection(locale === "ar" ? "ar" : "en")} className="flex min-h-screen items-center justify-center bg-neutral-950 px-4 py-8">
+    <div
+      lang={locale}
+      dir={getDirection(locale === "ar" ? "ar" : "en")}
+      className="flex min-h-screen items-center justify-center bg-neutral-950 px-4 py-8"
+    >
       <div className="max-w-lg text-center">
         <h1 className="text-2xl font-bold text-white">{t("title")}</h1>
-        <p className="mt-2 text-neutral-400">
-          {t("unavailable")}
-        </p>
-        <p className="mt-1 text-sm text-neutral-500">
-          {t("unavailableHelp")}
-        </p>
+        <p className="mt-2 text-neutral-400">{t("unavailable")}</p>
+        <p className="mt-1 text-sm text-neutral-500">{t("unavailableHelp")}</p>
         <Link
           href="/simple-studio/videos"
           className="mt-4 inline-block rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-500"

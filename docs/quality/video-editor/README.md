@@ -4,7 +4,8 @@ The nine-ticket implementation is ready for local review in one unmerged PR. Thi
 
 ## Evidence
 
-- Root suite: **661 test files passed**, 9 skipped; **3,983 tests passed**, 18 skipped. Run: `pnpm test:run --maxWorkers=2`.
+- Root suite before review fixes: **661 test files passed**, 9 skipped; **3,983 tests passed**, 18 skipped. Run: `pnpm test:run --maxWorkers=2`.
+- After review fixes, 14 targeted editor/API/route regression tests passed, including normalized titles, canonical draft URLs, and conflict-reload undo with different media. Lazy thumbnails are decoded in a worker with one request at a time and a bounded cache.
 - Lint: zero errors; 161 existing repository warnings. Targeted editor lint is clean.
 - TypeScript passed. A production build with `NEXT_PUBLIC_VIDEO_EDITOR_ENABLED=true` passed using disposable local build configuration. No shared database was used; a successful build is not a live database/storage integration test.
 - Browser: Chrome **152.0.7977.76**, Apple **M1 Max**, 10 CPU cores, 32 GiB RAM. Media library: isolated **mediabunny-editor 1.55.7**; existing app media consumers retain their prior version.
@@ -16,12 +17,12 @@ The nine-ticket implementation is ready for local review in one unmerged PR. Thi
 
 | Measure | Observed |
 | --- | --- |
-| Cold/warm fixture opening | 194 / 78 ms |
-| 60-second stacked export | 6,894 ms |
-| 60-second picture-in-picture export | 6,343 ms |
-| 60-second side-by-side export | 6,871 ms |
-| 50 ms timer-delay probe | p95 1.2 ms, maximum 4.7 ms, 421 samples |
-| Sampled browser-process RSS sum | peak 1,519,120 KiB; 98 samples |
+| Cold/warm fixture opening | 149 / 53 ms |
+| 60-second stacked export | 5,836 ms |
+| 60-second picture-in-picture export | 5,837 ms |
+| 60-second side-by-side export | 6,340 ms |
+| 50 ms timer-delay probe | p95 1.3 ms, maximum 16 ms, 377 samples |
+| Sampled browser-process RSS sum | peak 1,726,112 KiB; 86 samples |
 | Video track | H.264, 1080×1920, 30 fps, 1,800 frames, 60.000 seconds |
 | AAC audio/container padding | audio track 60.074667 seconds |
 

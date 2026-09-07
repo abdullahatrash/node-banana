@@ -13,6 +13,16 @@ type Attempt = {
   base: EditorRecord | null;
   key: string;
 };
+function compositionKey(value: Composition) {
+  const canonical = compositionSchema.safeParse(value);
+  return JSON.stringify(canonical.success ? canonical.data : value);
+}
+function showDraftUrl(id: string) {
+  const url = new URL(window.location.href);
+  url.pathname = "/editor";
+  url.searchParams.set("piece", id);
+  window.history.replaceState(null, "", url);
+}
 function editGroup(before: Composition, after: Composition) {
   return Object.keys(after)
     .filter(
@@ -48,7 +58,7 @@ export function useEditorDraft(api: EditorClient, copy: EditorCopy) {
     [historyVersion, setHistoryVersion] = useState(0);
   const latest = useRef(composition),
     record = useRef(current),
-    saved = useRef(JSON.stringify(composition));
+    saved = useRef(compositionKey(composition));
   const past = useRef<Composition[]>([]),
     future = useRef<Composition[]>([]),
     group = useRef({ key: "", at: 0 });
@@ -67,7 +77,11 @@ export function useEditorDraft(api: EditorClient, copy: EditorCopy) {
       latest.current = next;
       render(next);
       setStatus(
-        JSON.stringify(next) === saved.current ? copy.saved : copy.unsaved,
+        inFlight.current
+          ? copy.saving
+          : compositionKey(next) === saved.current
+            ? copy.saved
+            : copy.unsaved,
       );
     },
     [copy],
@@ -112,8 +126,9 @@ export function useEditorDraft(api: EditorClient, copy: EditorCopy) {
       future.current = [];
       group.current.key = "";
       record.current = next;
+      showDraftUrl(next.id);
       setCurrent(next);
-      saved.current = JSON.stringify(next.composition);
+      saved.current = compositionKey(next.composition);
       pending.current = null;
       blocked.current = false;
       setConflict(false);
@@ -128,7 +143,7 @@ export function useEditorDraft(api: EditorClient, copy: EditorCopy) {
     if (blocked.current) return Promise.resolve(false);
     if (
       !latest.current.main ||
-      (JSON.stringify(latest.current) === saved.current && !pending.current)
+      (compositionKey(latest.current) === saved.current && !pending.current)
     )
       return Promise.resolve(true);
     if (!pending.current) {
@@ -157,7 +172,7 @@ export function useEditorDraft(api: EditorClient, copy: EditorCopy) {
             attempt.key,
           );
           record.current = next;
-          saved.current = JSON.stringify(attempt.composition);
+          saved.current = compositionKey(attempt.composition);
           pending.current = null;
           if (!mounted.current) return true;
           setCurrent(next);
@@ -166,10 +181,8 @@ export function useEditorDraft(api: EditorClient, copy: EditorCopy) {
             ...items.filter((item) => item.id !== next.id),
           ]);
           setError("");
-          const url = new URL(window.location.href);
-          url.searchParams.set("piece", next.id);
-          window.history.replaceState(null, "", url);
-          if (JSON.stringify(latest.current) === saved.current) {
+          showDraftUrl(next.id);
+          if (compositionKey(latest.current) === saved.current) {
             setStatus(copy.saved);
             return true;
           }
@@ -222,7 +235,7 @@ export function useEditorDraft(api: EditorClient, copy: EditorCopy) {
   useEffect(() => {
     if (
       !composition.main ||
-      JSON.stringify(composition) === saved.current ||
+      compositionKey(composition) === saved.current ||
       blocked.current
     )
       return;
@@ -233,7 +246,7 @@ export function useEditorDraft(api: EditorClient, copy: EditorCopy) {
     const protect = (event: BeforeUnloadEvent) => {
       if (
         latest.current.main &&
-        JSON.stringify(latest.current) !== saved.current
+        compositionKey(latest.current) !== saved.current
       ) {
         event.preventDefault();
         event.returnValue = "";

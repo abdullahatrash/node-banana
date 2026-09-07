@@ -14,6 +14,7 @@ EDITOR_TEST_OUTPUT=/tmp/editor-variants node scripts/video-editor/variants.mjs
 python3 scripts/video-editor/verify-output.py /tmp/editor-60/stacked.mp4
 python3 scripts/video-editor/verify-frames.py /tmp/editor-60 "$EDITOR_FIXTURES"
 python3 scripts/video-editor/inspect-variants.py /tmp/editor-variants
+EDITOR_SOAK_SECONDS=180 node scripts/video-editor/soak.mjs
 ```
 
 The fixture generator prints its default directory; supply that path as `EDITOR_FIXTURES` when inspecting frames. Set `EDITOR_TEST_OUTPUT` to preserve output MP4s, screenshots, and measurement JSON. Test service data lives under the OS temporary directory. The server binds only to loopback. Uploaded bytes are local test fixtures and are inspected with FFprobe by the fixture service; production uses its existing server inspection API.

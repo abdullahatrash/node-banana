@@ -1,25 +1,25 @@
 {
-  "coldOpenMs": 194,
-  "warmOpenMs": 78,
-  "memoryPeakKiB": 1519120,
-  "memorySamples": 98,
+  "coldOpenMs": 149,
+  "warmOpenMs": 53,
+  "memoryPeakKiB": 1726112,
+  "memorySamples": 86,
   "responsiveness": {
-    "samples": 421,
-    "p95TimerDelayMs": 1.1999998092651367,
-    "maxTimerDelayMs": 4.700000286102295
+    "samples": 377,
+    "p95TimerDelayMs": 1.299999713897705,
+    "maxTimerDelayMs": 16
   },
   "measurements": [
     {
       "layout": "stacked",
-      "elapsedMs": 6894
+      "elapsedMs": 5836
     },
     {
       "layout": "pip",
-      "elapsedMs": 6343
+      "elapsedMs": 5837
     },
     {
       "layout": "side-by-side",
-      "elapsedMs": 6871
+      "elapsedMs": 6340
     }
   ],
   "browser": "152.0.7977.76",
