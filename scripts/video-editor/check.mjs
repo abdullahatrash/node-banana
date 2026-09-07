@@ -30,14 +30,19 @@ try {
  if (!await secondary.isVisible()) throw Error('Secondary video absent during segment');
  await page.getByLabel('Timeline', { exact: true }).fill('4.5');
  if (await secondary.isVisible()) throw Error('Secondary video did not disappear');
- const started = Date.now();
- await page.getByRole('button', { name: 'Export video', exact: true }).click();
- await page.getByRole('link', { name: 'Download video' }).waitFor({ timeout: 120000 });
- const elapsed = Date.now() - started;
- const pending = page.waitForEvent('download'); await page.getByRole('link', { name: 'Download video' }).click();
- await (await pending).saveAs(join(out, 'main.mp4'));
- await page.screenshot({ path: join(out, 'main.png'), fullPage: true });
+ const measurements = [];
+ for (const [layout, label] of [['stacked', 'Stacked'], ['pip', 'Picture in picture'], ['side-by-side', 'Side by side']]) {
+  await page.getByRole('button', { name: label, exact: true }).click();
+  const started = Date.now();
+  await page.getByRole('button', { name: 'Export video', exact: true }).click();
+  await page.getByRole('link', { name: 'Download video' }).waitFor({ timeout: 120000 });
+  measurements.push({ layout, elapsedMs: Date.now() - started });
+  const pending = page.waitForEvent('download'); await page.getByRole('link', { name: 'Download video' }).click();
+  await (await pending).saveAs(join(out, `${layout}.mp4`));
+  await page.screenshot({ path: join(out, `${layout}.png`), fullPage: true });
+ }
+
  if (errors.length) throw Error(errors.join('\n'));
- await writeFile(join(out, 'main-check.json'), JSON.stringify({ elapsedMs: elapsed, browser: browser.version(), errors }, null, 2));
- console.log(JSON.stringify({ elapsedMs: elapsed, output: out }));
+ await writeFile(join(out, 'main-check.json'), JSON.stringify({ measurements, browser: browser.version(), errors }, null, 2));
+ console.log(JSON.stringify({ measurements, output: out }));
 } finally { await browser.close(); }

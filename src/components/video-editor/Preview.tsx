@@ -4,7 +4,7 @@ import { clipActive, duration, roles, videoRects, type Composition, type EditorM
 import type { EditorCopy } from './copy';
 import styles from './editor.module.css';
 export interface PreviewHandle { pause(): void; seek(time: number): void }
-export const Preview = forwardRef<PreviewHandle, { composition: Composition; media: Record<string, EditorMedia>; copy: EditorCopy }>(function Preview({ composition, media, copy }, ref) {
+export const Preview = forwardRef<PreviewHandle, { composition: Composition; media: Record<string, EditorMedia>; copy: EditorCopy; onChange(value: Composition): void }>(function Preview({ composition, media, copy, onChange }, ref) {
  const elements = useRef<Partial<Record<MediaRole, HTMLMediaElement>>>({});
  const [playing, setPlaying] = useState(false), [time, setTime] = useState(0);
  const clock = useRef(0), latest = useRef(composition); latest.current = composition;
@@ -37,6 +37,7 @@ export const Preview = forwardRef<PreviewHandle, { composition: Composition; med
  }, [playing, pause, sync]);
  const rectangles = videoRects(composition.layout, clipActive(composition.secondary, time));
  return <section className={styles.stage}>
+  <div className={styles.presets}>{(['stacked', 'pip', 'side-by-side'] as const).map(layout => <button key={layout} aria-pressed={composition.layout === layout} onClick={() => onChange({ ...composition, layout })}>{copy.layouts[layout]}</button>)}</div>
   <div className={styles.canvas}>
    {(['main', 'secondary'] as const).map(role => {
     const clip = composition[role], source = clip ? media[clip.assetId] : null, rect = rectangles[role];

@@ -38,3 +38,11 @@ it('saves a timed Secondary video and rejects a segment longer than 15 seconds',
  const invalid = await POST(request({ composition: { ...next, secondary: { ...secondary, trimEnd: 16 } }, idempotencyKey: 'two-video-002' }));
  expect(invalid.status).toBe(400);
 });
+
+it('preserves each portrait collage preset on save and reopen', async () => {
+ for (const layout of ['stacked', 'pip', 'side-by-side']) {
+  const response = await POST(request({ composition: { ...composition, layout }, idempotencyKey: `layout-${layout}` }));
+  expect(response.status).toBe(200);
+  expect((await response.json()).record.composition.layout).toBe(layout);
+ }
+});

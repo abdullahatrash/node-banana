@@ -90,7 +90,7 @@ export function VideoEditor({ locale = 'ar', initialId }: { locale?: 'ar' | 'en'
     {!assets.length && <p>{copy.empty}</p>}
     {cursor && <button onClick={() => void listMedia(cursor).then((page) => { setAssets([...assets, ...page.items]); setCursor(page.nextCursor); }).catch((failure) => setError(errorCopy(failure, copy)))}>{copy.more}</button>}
    </aside>
-   <Preview ref={preview} composition={composition} media={media} copy={copy} />
+   <Preview ref={preview} composition={composition} media={media} copy={copy} onChange={setComposition} />
    <aside className={styles.panel} dir={locale === 'ar' ? 'rtl' : 'ltr'}><h2>{copy[selectedRole]}</h2>
     {composition[selectedRole] && <>{(['trimStart', 'trimEnd', ...(selectedRole === 'main' ? [] : ['start'])] as ('trimStart' | 'trimEnd' | 'start')[]).map((field) => <label key={field}>{field === 'trimStart' ? copy.start : field === 'trimEnd' ? copy.end : copy.position}<input type="number" step={1 / 30} min={0} max={field === 'start' ? duration(composition) : media[composition[selectedRole]!.assetId]?.duration || 60} value={composition[selectedRole]![field]} onChange={(e) => setComposition({ ...composition, [selectedRole]: { ...composition[selectedRole]!, [field]: Number(e.target.value) } })} /></label>)}
      {selectedRole !== 'main' && <button onClick={() => setComposition({ ...composition, [selectedRole]: null })}>{copy.remove}</button>}

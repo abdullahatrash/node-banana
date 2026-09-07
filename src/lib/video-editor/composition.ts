@@ -16,7 +16,7 @@ export const compositionSchema = z.object({
   title: z.string().trim().min(1).max(240),
   main: clipSchema.nullable(),
   secondary: clipSchema.nullable().default(null),
-  layout: z.literal('stacked').default('stacked'),
+  layout: z.enum(['stacked', 'pip', 'side-by-side']).default('stacked'),
 }).strict().superRefine((composition, context) => {
   if (composition.secondary && (clipDuration(composition.secondary) > 15 || composition.secondary.start + clipDuration(composition.secondary) > duration(composition) + 1e-6)) context.addIssue({ code: 'custom', path: ['secondary'], message: 'Secondary video must fit the composition and last at most 15 seconds' });
   if (composition.main && (composition.main.start !== 0 || duration(composition) > MAX_DURATION)) {
@@ -42,5 +42,7 @@ export function clipActive(clip: Clip | null, time: number) { return Boolean(cli
 export type Rect = { x: number; y: number; width: number; height: number };
 /** Normalized geometry shared by preview and export. Center crop each panel. */
 export function videoRects(_layout: Composition['layout'], secondaryActive: boolean): { main: Rect; secondary: Rect | null } {
+ if (secondaryActive && _layout === 'pip') return { main: { x: 0, y: 0, width: 1, height: 1 }, secondary: { x: 0.61, y: 0.04, width: 0.35, height: 0.35 } };
+ if (secondaryActive && _layout === 'side-by-side') return { main: { x: 0, y: 0, width: 0.5, height: 1 }, secondary: { x: 0.5, y: 0, width: 0.5, height: 1 } };
  return secondaryActive ? { main: { x: 0, y: 0.5, width: 1, height: 0.5 }, secondary: { x: 0, y: 0, width: 1, height: 0.5 } } : { main: { x: 0, y: 0, width: 1, height: 1 }, secondary: null };
 }
