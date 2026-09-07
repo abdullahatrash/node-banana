@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createText, createClip, duration, emptyComposition, type Composition, type EditorMedia, type EditorRecord, type MediaRole, roles } from '@/lib/video-editor/composition';
+import { createText, createClip, duration, emptyComposition, type Composition, type EditorMedia, type EditorRecord, type MediaRole, roles, mediaKind } from '@/lib/video-editor/composition';
 import { uploadMedia, listMedia, loadRecords, resolveMedia, saveComposition, type MediaItem } from '@/lib/video-editor/api';
 import { exportComposition, type ExportResult } from '@/lib/video-editor/export-client';
 import { TextControls } from './TextControls';
@@ -59,7 +59,7 @@ export function VideoEditor({ locale = 'ar', initialId }: { locale?: 'ar' | 'en'
  useEffect(() => () => { controller.current?.abort(); void result.current?.release(); }, []);
  async function select(item: MediaItem) {
   setBusy(true); setError('');
-  try { const selected = await resolveMedia(item); if (selected.duration <= 0 || Math.max(selected.width, selected.height) > 1920 || Math.min(selected.width, selected.height) > 1080) throw new Error('EDITOR_MEDIA_LIMIT'); setMedia((items) => ({ ...items, [item.id]: selected })); setComposition((value) => ({ ...value, [selectedRole]: { ...createClip(item.id, selected.duration), trimEnd: Math.min(selected.duration, selectedRole === 'secondary' ? Math.min(15, duration(value)) : 60) } })); }
+  try { const selected = await resolveMedia(item); if (selected.duration <= 0 || (selected.type === 'video' && (Math.max(selected.width, selected.height) > 1920 || Math.min(selected.width, selected.height) > 1080))) throw new Error('EDITOR_MEDIA_LIMIT'); setMedia((items) => ({ ...items, [item.id]: selected })); setComposition((value) => ({ ...value, [selectedRole]: { ...createClip(item.id, selected.duration), trimEnd: Math.min(selected.duration, selectedRole === 'main' ? 60 : Math.min(selectedRole === 'secondary' ? 15 : 60, duration(value))) } })); }
   catch (failure) { setError(errorCopy(failure, copy)); } finally { setBusy(false); }
  }
  async function runExport() {
@@ -88,14 +88,17 @@ export function VideoEditor({ locale = 'ar', initialId }: { locale?: 'ar' | 'en'
      void uploadMedia(file, setUploadPhase).then((item) => { setAssets((items) => [item, ...items.filter((value) => value.id !== item.id)]); }).catch((failure) => setError(errorCopy(failure, copy))).finally(() => setUploadPhase(null));
     }} /></label>{uploadPhase && <p role="status">{copy[uploadPhase]}</p>}
     <select aria-label={copy.open} value={current.current?.id || ''} onChange={(e) => { const record = records.find((item) => item.id === e.target.value); if (record) void open(record).catch((failure) => setError(errorCopy(failure, copy))); }}><option value="">{copy.open}</option>{records.map((record) => <option key={record.id} value={record.id}>{record.composition.title}</option>)}</select>
-    {assets.filter((item) => item.type === 'video' || item.type === 'audio').map((item) => <button className={styles.mediaCard} key={item.id} disabled={busy || item.type !== 'video'} onClick={() => void select(item)}>{item.name}<small>{item.durationSeconds}s</small></button>)}
+    {assets.filter((item) => item.type === 'video' || item.type === 'audio').map((item) => <button className={styles.mediaCard} key={item.id} disabled={busy || item.type !== mediaKind(selectedRole)} onClick={() => void select(item)}>{item.name}<small>{item.durationSeconds}s</small></button>)}
     {!assets.length && <p>{copy.empty}</p>}
     {cursor && <button onClick={() => void listMedia(cursor).then((page) => { setAssets([...assets, ...page.items]); setCursor(page.nextCursor); }).catch((failure) => setError(errorCopy(failure, copy)))}>{copy.more}</button>}
    </aside>
    <Preview ref={preview} composition={composition} media={media} copy={copy} onChange={setComposition} onSelectText={() => setTextSelected(true)} />
    <aside className={styles.panel} dir={locale === 'ar' ? 'rtl' : 'ltr'}><h2>{!textSelected && copy[selectedRole]}</h2>
     {textSelected && composition.text && <TextControls value={composition.text} copy={copy} onChange={text => setComposition({ ...composition, text })} />}
+    {!textSelected && mediaKind(selectedRole) === 'audio' && <button disabled>{copy.generateLater}</button>}
     {!textSelected && composition[selectedRole] && <>{(['trimStart', 'trimEnd', ...(selectedRole === 'main' ? [] : ['start'])] as ('trimStart' | 'trimEnd' | 'start')[]).map((field) => <label key={field}>{field === 'trimStart' ? copy.start : field === 'trimEnd' ? copy.end : copy.position}<input type="number" step={1 / 30} min={0} max={field === 'start' ? duration(composition) : media[composition[selectedRole]!.assetId]?.duration || 60} value={composition[selectedRole]![field]} onChange={(e) => setComposition({ ...composition, [selectedRole]: { ...composition[selectedRole]!, [field]: Number(e.target.value) } })} /></label>)}
+     <label>{copy.gain}<input type="range" min={0} max={1} step={0.01} value={composition[selectedRole]!.gain} onChange={event => setComposition({ ...composition, [selectedRole]: { ...composition[selectedRole]!, gain: Number(event.target.value) } })} /></label>
+     <label><span>{copy.muted} · {copy[selectedRole]}</span><input type="checkbox" checked={composition[selectedRole]!.muted} onChange={event => setComposition({ ...composition, [selectedRole]: { ...composition[selectedRole]!, muted: event.target.checked } })} /></label>
      {selectedRole !== 'main' && <button onClick={() => setComposition({ ...composition, [selectedRole]: null })}>{copy.remove}</button>}
     </>}
    </aside>

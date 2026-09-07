@@ -46,6 +46,18 @@ try {
  await page.reload();
  await page.getByRole('button', { name: 'Move or edit text' }).click();
  if (await page.getByLabel('Overlay text', { exact: true }).inputValue() !== 'السطر الأول\nHello 2026') throw Error('Multiline text did not survive reopen');
+ for (const [role, name, end, start, gain] of [['music', 'Music', '5', '0', '0.2'], ['voiceover', 'Voice over', '1', '3', '0.7']]) {
+  await page.getByLabel('Add media to').selectOption(role);
+  await page.getByRole('button', { name: new RegExp(`^${name} `) }).click();
+  await page.getByLabel('Trim end', { exact: true }).fill(end);
+  await page.getByLabel('Start on timeline').fill(start);
+  await page.getByLabel('Volume', { exact: true }).fill(gain);
+ }
+ await page.getByRole('button', { name: 'Save', exact: true }).click();
+ await page.getByText('Saved', { exact: true }).waitFor();
+ await page.reload();
+ await page.getByLabel('Add media to').selectOption('voiceover');
+ if (await page.getByLabel('Volume', { exact: true }).inputValue() !== '0.7') throw Error('Audio gain did not survive reopen');
  const measurements = [];
  for (const [layout, label] of [['stacked', 'Stacked'], ['pip', 'Picture in picture'], ['side-by-side', 'Side by side']]) {
   await page.getByRole('button', { name: label, exact: true }).click();

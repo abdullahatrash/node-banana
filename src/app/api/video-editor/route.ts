@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { withStudioAuth } from '@/lib/studio/withStudioAuth';
 import { getAsset } from '@/lib/studio/repository';
 import { createProductRecord, listProductRecords, updateProductRecord, ProductRecordConflictError, ProductRecordIdempotencyError } from '@/lib/product-surfaces/repository';
-import { compositionSchema, duration, roles } from '@/lib/video-editor/composition';
+import { compositionSchema, duration, roles, mediaKind } from '@/lib/video-editor/composition';
 
 const command = z.object({
   id: z.string().min(1).max(200).optional(), expectedRevision: z.number().int().positive().optional(),
@@ -28,8 +28,8 @@ export const POST = withStudioAuth<undefined>({ route: '/api/video-editor', acti
     const clip = composition[role];
     if (!clip) continue;
     const asset = await getAsset(authz.workspaceId, clip.assetId);
-    if (!asset || !asset.checksum || asset.metadata?.uploadState !== 'ready' || asset.type !== 'video') return json({ success: false, code: 'EDITOR_MEDIA_UNAVAILABLE', role }, 400);
-    if (!asset.width || !asset.height || Math.max(asset.width, asset.height) > 1920 || Math.min(asset.width, asset.height) > 1080 || !asset.durationSeconds || clip.trimEnd > asset.durationSeconds + 0.5) return json({ success: false, code: 'EDITOR_MEDIA_LIMIT', role }, 400);
+    if (!asset || !asset.checksum || asset.metadata?.uploadState !== 'ready' || asset.type !== mediaKind(role)) return json({ success: false, code: 'EDITOR_MEDIA_UNAVAILABLE', role }, 400);
+    if ((mediaKind(role) === 'video' && (!asset.width || !asset.height || Math.max(asset.width, asset.height) > 1920 || Math.min(asset.width, asset.height) > 1080)) || !asset.durationSeconds || clip.trimEnd > asset.durationSeconds + 0.5) return json({ success: false, code: 'EDITOR_MEDIA_LIMIT', role }, 400);
   }
   const payload = { format: 'custom_upload', contentLanguage: 'mixed', aspectRatio: '9:16', durationSeconds: duration(composition), sourceAssetIds: roles.flatMap((role) => composition[role]?.assetId ?? []), videoEditor: composition };
   try {

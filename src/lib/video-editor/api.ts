@@ -27,7 +27,17 @@ export async function listMedia(cursor: string | null = null): Promise<{ items: 
 export async function resolveMedia(item: MediaItem): Promise<EditorMedia> {
   const { downloadUrl } = await editorRequest(`/api/studio/assets/${encodeURIComponent(item.id)}/download`);
   if (item.type !== 'video' && item.type !== 'audio') throw new EditorApiError('EDITOR_MEDIA_UNAVAILABLE');
-  return { id: item.id, name: item.name, type: item.type, duration: item.durationSeconds || 0, width: item.width || 0, height: item.height || 0, url: downloadUrl };
+  // Lazy metadata inspection: avoid loading codec tooling until a creator selects media.
+  const { Input, UrlSource, ALL_FORMATS } = await import('mediabunny-editor');
+  const input = new Input({ source: new UrlSource(downloadUrl), formats: ALL_FORMATS });
+  try {
+    const video = item.type === 'video' ? await input.getPrimaryVideoTrack() : null;
+    const track = video || await input.getPrimaryAudioTrack();
+    if (!track || !await track.canDecode()) throw new EditorApiError('EDITOR_MEDIA_UNAVAILABLE');
+    const seconds = await track.computeDuration();
+    if (!Number.isFinite(seconds) || seconds <= 0) throw new EditorApiError('EDITOR_MEDIA_UNAVAILABLE');
+    return { id: item.id, name: item.name, type: item.type, duration: seconds, width: video?.displayWidth || 0, height: video?.displayHeight || 0, url: downloadUrl };
+  } finally { input.dispose(); }
 }
 
 /** Upload uses the same reservation, quota and server inspection path as Workspace media. */

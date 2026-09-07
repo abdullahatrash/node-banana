@@ -2,9 +2,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { VideoEditor } from './VideoEditor';
 const exporter = vi.hoisted(() => vi.fn());
+vi.mock('mediabunny-editor', () => ({ ALL_FORMATS: [], UrlSource: class {}, Input: class { getPrimaryVideoTrack() { return Promise.resolve({ canDecode: () => true, computeDuration: () => 10, displayWidth: 1080, displayHeight: 1920 }); } dispose() {} } }));
 vi.mock('@/lib/video-editor/export-client', () => ({ exportComposition: exporter }));
 beforeEach(() => {
- vi.clearAllMocks(); vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {}); localStorage.setItem('node-banana-active-workspace-id', 'ws');
+ vi.clearAllMocks(); vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null); vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {}); localStorage.setItem('node-banana-active-workspace-id', 'ws');
  let saved: unknown[] = [];
  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
   if (url === '/api/video-editor' && init?.method === 'POST') {

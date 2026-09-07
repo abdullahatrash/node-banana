@@ -15,8 +15,8 @@ const origin = `http://127.0.0.1:${port}`;
 const assets = new Map([
  ['main', { id: 'main', name: 'Phone footage', type: 'video', durationSeconds: 60, width: 1080, height: 1920, file: 'main.mp4' }],
  ['secondary', { id: 'secondary', name: 'AI influencer', type: 'video', durationSeconds: 15, width: 720, height: 1280, file: 'reaction.mp4' }],
- ['music', { id: 'music', name: 'Music', type: 'audio', durationSeconds: 60, width: null, height: null, file: 'music.wav' }],
- ['voiceover', { id: 'voiceover', name: 'Voice over', type: 'audio', durationSeconds: 10, width: null, height: null, file: 'voice.wav' }],
+ ['music', { id: 'music', name: 'Music', type: 'audio', durationSeconds: 60, width: null, height: null, file: 'music-44100.mp3' }],
+ ['voiceover', { id: 'voiceover', name: 'Voice over', type: 'audio', durationSeconds: 10, width: null, height: null, file: 'voice-24000.wav' }],
 ]);
 let records = JSON.parse(await readFile(join(out, 'records.json'), 'utf8').catch(() => '[]'));
 const server = createServer(async (req, res) => {

@@ -46,3 +46,14 @@ it('preserves each portrait collage preset on save and reopen', async () => {
   expect((await response.json()).record.composition.layout).toBe(layout);
  }
 });
+
+it('saves independent audio layers but rejects foreign or wrong-kind media', async () => {
+ const music = { ...composition.main, assetId: 'music', trimStart: 0, trimEnd: 3, start: 1, gain: 0.2 };
+ const next = { ...composition, music, voiceover: { ...music, assetId: 'voiceover', start: 0, muted: true } };
+ mocks.asset.mockImplementation(async (_workspace, id) => ({ id, type: id === 'main' ? 'video' : 'audio', checksum: 'sha256:verified', width: 1080, height: 1920, durationSeconds: 10, metadata: { uploadState: 'ready' } }));
+ const response = await POST(request({ composition: next, idempotencyKey: 'audio-layers-001' }));
+ expect(response.status).toBe(200);
+ expect((await response.json()).record.composition).toMatchObject(next);
+ mocks.asset.mockResolvedValue(null);
+ expect((await POST(request({ composition: next, idempotencyKey: 'audio-layers-002' }))).status).toBe(400);
+});

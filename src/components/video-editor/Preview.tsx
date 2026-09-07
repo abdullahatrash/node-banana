@@ -47,6 +47,7 @@ export const Preview = forwardRef<PreviewHandle, { composition: Composition; med
    {composition.text && <TextOverlay value={composition.text} copy={copy} onSelect={onSelectText} onChange={text => onChange({ ...composition, text })} />}
    {!main && <p>{copy.select}</p>}
   </div>
+  {(['music', 'voiceover'] as const).map(role => { const clip = composition[role]; return clip && media[clip.assetId] && <audio key={role} aria-label={copy[role]} ref={element => { if (element) elements.current[role] = element; else delete elements.current[role]; }} src={media[clip.assetId].url} preload="metadata" crossOrigin="anonymous" onLoadedMetadata={() => sync(clock.current, playing, true)} />; })}
   <div className={styles.transport} dir="ltr">
    <button disabled={!main} aria-label={playing ? copy.pause : copy.play} onClick={() => { if (playing) pause(); else { sync(time >= seconds ? 0 : time, true, true); setPlaying(true); } }}>{playing ? 'Ⅱ' : '▶'}</button>
    <output>{time.toFixed(1)} / {seconds.toFixed(1)}</output>

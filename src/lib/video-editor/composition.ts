@@ -24,9 +24,12 @@ export const compositionSchema = z.object({
   title: z.string().trim().min(1).max(240),
   main: clipSchema.nullable(),
   text: textSchema.nullable().default(null),
+  music: clipSchema.nullable().default(null),
+  voiceover: clipSchema.nullable().default(null),
   secondary: clipSchema.nullable().default(null),
   layout: z.enum(['stacked', 'pip', 'side-by-side']).default('stacked'),
 }).strict().superRefine((composition, context) => {
+  for (const role of ['music', 'voiceover'] as const) { const clip = composition[role]; if (clip && clip.start + clipDuration(clip) > duration(composition) + 1e-6) context.addIssue({ code: 'custom', path: [role], message: 'Audio must fit the composition' }); }
   if (composition.secondary && (clipDuration(composition.secondary) > 15 || composition.secondary.start + clipDuration(composition.secondary) > duration(composition) + 1e-6)) context.addIssue({ code: 'custom', path: ['secondary'], message: 'Secondary video must fit the composition and last at most 15 seconds' });
   if (composition.main && (composition.main.start !== 0 || duration(composition) > MAX_DURATION)) {
     context.addIssue({ code: 'custom', path: ['main'], message: 'The main video starts at zero and lasts at most 60 seconds' });
@@ -34,12 +37,12 @@ export const compositionSchema = z.object({
 });
 export type Clip = z.infer<typeof clipSchema>;
 export type Composition = z.infer<typeof compositionSchema>;
-export type MediaRole = 'main' | 'secondary';
-export const roles: MediaRole[] = ['main', 'secondary'];
+export type MediaRole = 'main' | 'secondary' | 'music' | 'voiceover';
+export const roles: MediaRole[] = ['main', 'secondary', 'music', 'voiceover'];
 export function duration(composition: { main: { trimEnd: number; trimStart: number } | null }) {
   return composition.main ? composition.main.trimEnd - composition.main.trimStart : 0;
 }
-export function emptyComposition(title = 'Untitled video'): Composition { return { version: 1, title, main: null, text: null, secondary: null, layout: 'stacked' }; }
+export function emptyComposition(title = 'Untitled video'): Composition { return { version: 1, title, main: null, text: null, music: null, voiceover: null, secondary: null, layout: 'stacked' }; }
 export function createClip(assetId: string, seconds: number): Clip {
   return { assetId, trimStart: 0, trimEnd: Math.min(seconds, MAX_DURATION), start: 0, gain: 1, muted: false };
 }
@@ -55,3 +58,5 @@ export function videoRects(_layout: Composition['layout'], secondaryActive: bool
  if (secondaryActive && _layout === 'side-by-side') return { main: { x: 0, y: 0, width: 0.5, height: 1 }, secondary: { x: 0.5, y: 0, width: 0.5, height: 1 } };
  return secondaryActive ? { main: { x: 0, y: 0.5, width: 1, height: 0.5 }, secondary: { x: 0, y: 0, width: 1, height: 0.5 } } : { main: { x: 0, y: 0, width: 1, height: 1 }, secondary: null };
 }
+
+export function mediaKind(role: MediaRole): 'audio' | 'video' { return role === 'main' || role === 'secondary' ? 'video' : 'audio'; }
